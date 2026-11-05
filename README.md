@@ -1,3 +1,15 @@
+## 本 fork 的 Hermit 部署
+
+在同时包含 `vm2api/` 和 `hermit/` 的 Linux amd64 Docker 宿主机运行：
+
+```sh
+python3 vm2api/deploy/hermit.py
+```
+
+命令自动构建集成镜像并启动控制面。不要用下文的上游安装或升级命令替换集成部署。详见 [Hermit 集成部署](docs/HERMIT.md)。
+
+---
+
 <div align="center">
 
 # vm2api

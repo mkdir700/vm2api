@@ -328,6 +328,15 @@ function classifyUpstreamResultRaw(
       retrySameAccount: false,
     }
   }
+  if (result.outcomeUnknown === true) {
+    return {
+      scope: 'request',
+      action: 'stop',
+      reason: 'execution_outcome_unknown',
+      cooldownUntil: null,
+      retrySameAccount: false,
+    }
+  }
   if (isContentFilterRefusal(result) && !result.committed) {
     return cacheRefusal('content_filter_refusal')
   }

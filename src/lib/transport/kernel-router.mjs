@@ -226,6 +226,7 @@ async function runHop({ mode, opts }) {
   const decision = resolveHopEngine(opts.exec?.vm, routing)
   let engine = 'rust'
   let reason = decision.reason
+  let hermitRuntime = false
   if (!decision.blocked) {
     const ready = await prepareRust(opts.exec, {
       ensure: opts.ensureRust,
@@ -233,6 +234,7 @@ async function runHop({ mode, opts }) {
       slotWaitMs: opts.slotWaitMs,
     })
     if (ready?.ok) {
+      hermitRuntime = ready.health?.runtime_flavor === 'hermit'
       if (opts.requestContext && opts.cliHop && ready.health?.classifier_request_context !== true) {
         return {
           ok: false,
@@ -272,10 +274,13 @@ async function runHop({ mode, opts }) {
     noteWrapHop(opts.exec)
     if (opts.signal?.aborted || isClientCancelledResult(result)) {
       result = clientCancelledResult(result)
-    } else if (result.transportError === true && result.committed !== true) {
+    } else if (!hermitRuntime && result.transportError === true && result.committed !== true) {
       result = await send(opts)
       result = { ...result, rust_transport_retried: true }
       noteWrapHop(opts.exec)
+    }
+    if (hermitRuntime && !isClientCancelledResult(result) && (result.transportError || result.terminalState === 'incomplete' || result.body?.error?.code === 'incomplete_response')) {
+      result = { ...result, outcomeUnknown: true, terminalState: 'unknown' }
     }
     if (!isClientCancelledResult(result) && isNeedsRefreshResult(result)) {
       const ensure = opts.ensureCredential || ensureWorkerCredential

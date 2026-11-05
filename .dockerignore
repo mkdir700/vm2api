@@ -25,3 +25,10 @@ worker/bin
 *.md
 !README.md
 !CHANGELOG.md
+
+# Private local state never belongs in a build context.
+**/.env*
+**/*.key
+**/*.sqlite*
+**/credentials.json
+**/.credentials.json

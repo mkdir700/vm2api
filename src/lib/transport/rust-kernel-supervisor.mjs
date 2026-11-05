@@ -46,6 +46,8 @@ import { RETIRE_LEGACY_TELEMETRY } from '../vm/slot-process-status.mjs'
 /** The native host is authenticated separately from account scheduling readiness. */
 function runtimeReady(health, allowMissingCredential) {
   if (!allowMissingCredential) return rustKernelReachable(health)
+  // Hermit starts without a resident CLI. Official telemetry is a separate capability.
+  if (health?.runtime_flavor === 'hermit') return rustKernelProcessUp(health) && health?.healthy !== false
   return (
     health?.vm_telemetry === true &&
     health?.telemetry_ready === true &&

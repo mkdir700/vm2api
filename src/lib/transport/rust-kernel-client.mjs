@@ -85,6 +85,7 @@ export function rustKernelBusy(health) {
   if (health?.healthy === false) return false
   if (health?.recovering === true) return true
   if (rustKernelCliReady(health)) return false
+  if (health?.runtime_flavor === 'hermit') return Number(health.active_requests) > 0
   const pid = finiteNumber(health?.cli_pid)
   return pid != null && pid > 0
 }

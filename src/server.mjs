@@ -1071,6 +1071,7 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, {
         status: 'ok',
         service: 'vm2api',
+        deployment_id: process.env.VM2API_DEPLOYMENT_ID || null,
         base_url: cfg.base_url,
         rewrite: cfg.rewrite.enabled ? 'on' : 'off',
         intercept_rules: cfg.intercept.rules.length,
