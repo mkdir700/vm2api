@@ -387,7 +387,7 @@ proxyPool = new ProxyPool({
   repairEgress: (proxy) =>
     proxy.managed_host_id && proxy.managed_host_id !== 'control-plane'
       ? { ok: false, error: 'managed_remote_helper_unavailable' }
-      : ensureProxyEgress(cfg.paths.project, proxy),
+      : ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(proxy.id)),
 })
 // Runtime access is lazy. An unavailable sing-box never prevents API startup.
 proxyPool.managedHost = new ManagedEgressHost({
@@ -456,8 +456,8 @@ proxyPool.managedHelperStatus = async (proxy) => {
 proxyPool.managedRepairHelper = async (proxy) => {
   if (proxy.enabled === false) return false
   if (proxy.managed_host_id !== 'control-plane') return remoteManagedEgress?.repairRouting(proxy) ?? false
-  if (egressPidsForProxyConfig(cfg.paths.project, proxy.id).length)
-    return false
+  if (egressPidsForProxyConfig(cfg.paths.project, proxy.id).length &&
+      (proxy.bound_vm_ids?.length || proxy.bound_vm_id)) return false
   const result = await ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(proxy.id))
   return result.ok === true
 }

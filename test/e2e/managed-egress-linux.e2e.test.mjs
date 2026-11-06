@@ -597,6 +597,21 @@ test('Linux containers use two managed Hysteria exits through real transparent h
     assert.equal(importedData.application_status, 'applied', 'import must apply without a second request')
     assert.equal(importedData.items[0].blocked_reason, null)
     assert.equal(importedData.items[0].exit_status, 'ready')
+    const initialProbe = await api(apiGateway, 'POST', `/api/panel/proxies/${httpId}/probe`)
+    assert.equal((initialProbe.json.data || initialProbe.json).probe.ok, true)
+    const probeHelperDir = egressRunDir(apiRoot, httpId)
+    const probeHelperConfig = JSON.parse(await readFile(path.join(probeHelperDir, 'egress.json'), 'utf8'))
+    assert.equal(probeHelperConfig.control_socket, path.join(probeHelperDir, 'drain.sock'),
+      'manual probe must preserve managed helper control before periodic inspection')
+    assert.equal((await new EgressDrainClient({ id: httpId, socketPath: probeHelperConfig.control_socket })
+      .request('GET', '/status')).paused, false)
+    await delay(17000)
+    const afterMonitor = (await api(apiGateway, 'GET', '/api/panel/proxies')).json.data.proxies.find(p => p.id === httpId)
+    assert.equal(afterMonitor.blocked_reason, null, 'manual probe must stay ready after monitor')
+    assert.equal(afterMonitor.observed_ip, '127.0.0.2')
+    const probeGeo = await api(apiGateway, 'POST', `/api/panel/proxies/${httpId}/geo`)
+    assert.equal(probeGeo.status, 200, 'geolocation must remain available after manual probe and monitor')
+    assert.equal((probeGeo.json.data || probeGeo.json).geo.ip, '127.0.0.2')
     const missingSlot = await api(apiGateway, 'POST', `/api/panel/proxies/${httpId}/bind`, {
       body: { vm_id: 'absent-slot' },
     })
@@ -923,6 +938,8 @@ test('Linux containers use two managed Hysteria exits through real transparent h
     apiExitIds.push(autoExitId)
     assert.equal((await api(apiGateway, 'POST', '/api/panel/proxies/apply')).status, 200)
     assert.equal(egressPidsForProxyConfig(apiRoot, autoExitId).length, 0)
+    // The earlier manual probe makes this used exit preferred over unknown exits.
+    assert.equal((await api(apiGateway, 'POST', `/api/panel/proxies/${httpId}/disable`)).status, 200)
     assert.equal((await api(apiGateway, 'POST', '/api/panel/proxies/px-local/disable')).status, 200)
     const autoId = `vm-auto-${nonce}`
     const autoCreated = await api(apiGateway, 'POST', '/api/panel/vms/create', {

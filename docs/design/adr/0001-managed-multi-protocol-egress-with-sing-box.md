@@ -186,3 +186,17 @@ Validation: the panel API E2E records failure retention and secret redaction. Th
 Linux E2E imports a controlled exit and assigns it to a slot without a separate
 apply request, then verifies real traffic through that exit. Both produce
 sanitized receipts under `.tmp/managed-egress-e2e/`.
+
+## Probe helper identity correction (2026-11-06)
+
+The manual probe repair callback must resolve the canonical authenticated proxy
+before creating a local helper. Persisted pool rows carry `managed_config`, while
+helper creation requires the explicit `managed` flag. Passing the persisted row
+created a helper without its drain control socket. Periodic inspection then
+rejected that helper and blocked otherwise healthy exit and geolocation traffic.
+Unbound helpers can be reconciled through the existing maintenance path. Bound
+helpers still require a verified drain path before replacement.
+
+The Linux E2E now probes an imported node before assignment, checks its drain
+control interface, waits for periodic inspection, and requests geolocation through
+the same panel API. The node must remain ready and report the controlled exit IP.
