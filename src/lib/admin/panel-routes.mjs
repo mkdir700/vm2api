@@ -5760,11 +5760,22 @@ export function createPanelHandler(ctx) {
             })
         if (result.ok === false)
           return json(res, 400, { ok: false, error: { code: result.error, message: result.error } })
+        if (managedImport) {
+          // Import is complete only after the host has applied the saved exit.
+          // Keep the saved row on failure so the operator can retry application.
+          const applied = await proxyPool.applyManaged({ hostId: body.host_id ?? 'control-plane' })
+          const ids = new Set(result.items.map((item) => item.id))
+          result.items = proxyPool.snapshot().proxies.filter((item) => ids.has(item.id))
+          result.application_status = applied.ok ? 'applied' : 'pending'
+          result.application_error = applied.ok ? null : applied.error
+        }
         let bound = null
         let worker = null
         let timezone = null
-        if (bindVmId && result.items?.[0]?.id) {
-          const bind = proxyPool.bind(result.items[0].id, bindVmId)
+        if (bindVmId && result.items?.[0]?.id && (!managedImport || result.application_status === 'applied')) {
+          const bind = managedImport
+            ? await bindManagedExit(result.items[0].id, bindVmId)
+            : proxyPool.bind(result.items[0].id, bindVmId)
           if (bind.ok) {
             bindVmProxy(cfg.paths.project, bindVmId, proxyPool.getProxyForVm(bindVmId))
             bound = bind.proxy

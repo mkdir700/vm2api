@@ -31,6 +31,8 @@ import { proxiesQueryOptions } from '@/features/proxies/queries'
 import { useLocalProxyLabelOpts } from '@/features/proxies/use-vps-ip'
 
 type ImportResp = {
+  application_status?: string
+  application_error?: string | null
   added?: number
   skipped?: number
   bound?: { id?: string; bound_vm_id?: string }
@@ -149,8 +151,13 @@ export function ImportProxyStep({
         body: JSON.stringify({ text, bind_vm_id: vmId }),
       })
       if (el) el.value = ''
+      if (d.application_status === 'pending') {
+        toast.error('节点已保存，但自动应用失败。请在代理管理中重试应用配置')
+        await refresh()
+        return false
+      }
       if (d.bound?.id || d.bound?.bound_vm_id) {
-        toast.success('已写入 SOCKS5 并绑到本槽')
+        toast.success('代理已就绪并分配到本槽')
         await refresh()
         return true
       }

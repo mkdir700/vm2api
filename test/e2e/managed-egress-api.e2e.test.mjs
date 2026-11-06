@@ -41,6 +41,8 @@ test('managed import persists through the real panel API without exposing listen
       assert.equal(result.status, 200, result.text)
       const data = result.json.data || result.json
       assert.equal(data.application_status, 'pending')
+      assert.equal(typeof data.application_error, 'string', 'import must attempt application and report failure')
+      assert.ok(data.application_error.length > 0)
       const row = data.items[0]
       rows.push(row)
       assert.equal(row.host, null)
@@ -185,6 +187,7 @@ test('managed import persists through the real panel API without exposing listen
             remote_host: 'unknown host rejected; non-administrator remote import denied',
             concurrent_import: 'unique ports',
             occupied_port: 'skipped',
+            automatic_application_failure: 'saved row retained; explicit application_error; no false readiness',
             pending_bind: 'rejected',
             internal_reveal: 'rejected',
             gateway_restart: 'IDs preserved',

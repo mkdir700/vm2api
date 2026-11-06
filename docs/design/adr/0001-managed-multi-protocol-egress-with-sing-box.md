@@ -165,3 +165,24 @@ kin-egress ← 绑定对应出口 ID 的槽位
 - [sing-box Docker 部署](https://sing-box.sagernet.org/installation/docker/)
 - [sing-box Hysteria 2 出站配置](https://sing-box.sagernet.org/configuration/outbound/hysteria2/)
 - [sing-box 路由规则](https://sing-box.sagernet.org/configuration/route/rule/)
+
+
+## Import readiness update (2026-11-06)
+
+The panel import endpoint saves a Hysteria 2 node and then applies the selected
+host configuration before responding. It uses the existing serialized apply,
+drain, validation, and rollback path. A successful application returns fresh node
+state with `application_status: applied`; the node can then be assigned to a slot
+on that host without a separate apply action. Inline slot assignment uses the
+managed binding path to initialize the slot helper.
+
+If application fails, the endpoint retains the saved node and returns
+`application_status: pending` with `application_error`. The panel reports this
+as a partial failure and offers application retry. It does not ask the user to
+import the same node again. Pending nodes remain unavailable for assignment.
+Existing explicit apply and recovery actions remain available for maintenance.
+
+Validation: the panel API E2E records failure retention and secret redaction. The
+Linux E2E imports a controlled exit and assigns it to a slot without a separate
+apply request, then verifies real traffic through that exit. Both produce
+sanitized receipts under `.tmp/managed-egress-e2e/`.

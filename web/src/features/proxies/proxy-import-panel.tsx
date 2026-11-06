@@ -11,6 +11,7 @@ import { useRefreshProxies } from './queries'
 
 type ImportResult = {
   application_status?: string
+  application_error?: string | null
   added?: number
   skipped?: number
   skip_details?: { line?: string; reason?: string }[]
@@ -70,6 +71,7 @@ export function ProxyImportPanel({
       (node) => node.id === hostId && node.link.state === 'ready'
     )
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null)
+  const [applicationError, setApplicationError] = useState<string | null>(null)
   const lines = countLines(raw)
 
   const importPx = useMutation({
@@ -86,8 +88,11 @@ export function ProxyImportPanel({
       const next = outcomeOf(data)
       setOutcome(next)
       setRaw('')
+      setApplicationError(data.application_error || null)
       if (data.application_status === 'pending')
-        toast.success('节点已保存，等待配置应用')
+        toast.error('节点已保存，但自动应用失败。请重试')
+      else if (data.application_status === 'applied')
+        toast.success('节点已就绪，可以分配到槽位')
       else if (next.added) toast.success(`已导入 ${next.added} 条`)
       else toast.warning('没有新增代理')
       await refresh()
@@ -101,7 +106,8 @@ export function ProxyImportPanel({
         body: JSON.stringify({ host_id: hostId }),
       }),
     onSuccess: async () => {
-      toast.success('受管出口配置已应用')
+      setApplicationError(null)
+      toast.success('节点已就绪，可以分配到槽位')
       await refresh()
     },
     onError: (error: Error) => toast.error(error.message),
@@ -242,8 +248,8 @@ export function ProxyImportPanel({
       <p className='mt-1.5 text-[11px] text-muted-foreground'>
         {protocol === 'hysteria2'
           ? hostId === 'control-plane'
-            ? '填写一条 hy2:// 或 hysteria2:// 链接。保存后等待配置应用，就绪后才能绑定槽位。'
-            : '节点会保存在所选宿主机。请选择同一宿主机的槽位，绑定时会检查出口和辅助进程。'
+            ? '填写一条 hy2:// 或 hysteria2:// 链接。导入后自动应用配置，就绪后即可分配到槽位。'
+            : '导入后自动在所选宿主机应用配置。就绪后可分配到同一宿主机的槽位。'
           : '也支持 host:port:user:pass。账密入库后不再回显，重复的自动跳过。'}
       </p>
       <div className='mt-3 flex flex-wrap items-center gap-2'>
@@ -259,7 +265,9 @@ export function ProxyImportPanel({
           title='Ctrl / ⌘ + Enter'
         >
           <Import aria-hidden='true' />
-          导入{lines ? ` ${lines} 条` : ''}
+          {importPx.isPending && protocol === 'hysteria2'
+            ? '正在导入并应用配置'
+            : `导入${lines ? ` ${lines} 条` : ''}`}
         </Button>
         <Button
           size='sm'
@@ -280,19 +288,21 @@ export function ProxyImportPanel({
             variant='outline'
             onClick={() => applyManaged.mutate()}
             disabled={
+              importPx.isPending ||
               applyManaged.isPending ||
               recoverManaged.isPending ||
               !hostAvailable
             }
             loading={applyManaged.isPending}
           >
-            应用受管出口配置
+            {applicationError ? '重试应用配置' : '应用受管出口配置'}
           </Button>
           <Button
             size='sm'
             variant='outline'
             onClick={() => recoverManaged.mutate()}
             disabled={
+              importPx.isPending ||
               recoverManaged.isPending ||
               applyManaged.isPending ||
               !hostAvailable
@@ -305,6 +315,12 @@ export function ProxyImportPanel({
             此操作应用所选宿主机的所有受管节点。应用时会等待在途请求结束。等待超时会保留原配置。
           </p>
         </div>
+      ) : null}
+      {applicationError ? (
+        <p role='alert' className='mt-3 text-sm text-destructive'>
+          节点已保存，但自动应用失败：{applicationError}
+          。节点尚不可分配，请重试应用配置。
+        </p>
       ) : null}
       {outcome ? <ImportSummary outcome={outcome} /> : null}
     </ProxyPanel>

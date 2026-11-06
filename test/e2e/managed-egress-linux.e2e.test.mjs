@@ -593,8 +593,10 @@ test('Linux containers use two managed Hysteria exits through real transparent h
     assert.equal(httpImported.status, 200, 'the real gateway must import the controlled exit')
     const httpId = (httpImported.json.data || httpImported.json).items[0].id
     apiExitIds.push(httpId)
-    const httpApplied = await api(apiGateway, 'POST', '/api/panel/proxies/apply')
-    assert.equal(httpApplied.status, 200, 'the real gateway must apply and verify the controlled exit')
+    const importedData = httpImported.json.data || httpImported.json
+    assert.equal(importedData.application_status, 'applied', 'import must apply without a second request')
+    assert.equal(importedData.items[0].blocked_reason, null)
+    assert.equal(importedData.items[0].exit_status, 'ready')
     const missingSlot = await api(apiGateway, 'POST', `/api/panel/proxies/${httpId}/bind`, {
       body: { vm_id: 'absent-slot' },
     })
