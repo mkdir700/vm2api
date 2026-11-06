@@ -36,6 +36,7 @@ export function ProxyEditDialog({
   onOpenChange: (open: boolean) => void
 }) {
   const qc = useQueryClient()
+  const [managedLink, setManagedLink] = useState('')
   const [host, setHost] = useState('')
   const [port, setPort] = useState('')
   const [username, setUsername] = useState('')
@@ -54,6 +55,7 @@ export function ProxyEditDialog({
   const proxyId = proxy?.id || ''
   useEffect(() => {
     if (!proxyId) return
+    setManagedLink('')
     setHost(String(proxy?.host || ''))
     setPort(String(proxy?.port || ''))
     setUsername('')
@@ -70,6 +72,7 @@ export function ProxyEditDialog({
       // 只发真正改动的键：网关按「键是否存在」区分「不动」与「清空」，
       // 无脑全量提交会把留空的账密框当成清除指令。
       const patch: Record<string, unknown> = {}
+      if (proxy?.managed && managedLink.trim()) patch.link = managedLink.trim()
       if (host.trim() && host.trim() !== proxy?.host) patch.host = host.trim()
       if (port.trim() && port.trim() !== String(proxy?.port ?? '')) {
         patch.port = Number(port.trim())
@@ -92,7 +95,8 @@ export function ProxyEditDialog({
     onSuccess: async (data) => {
       // 池已经改了，只是部分槽位或出口转发没跟上 —— 说清楚而不是笼统报成功。
       const out = editOutcome(data)
-      toast[out.level](out.text)
+      if (data.proxy?.managed) toast.success('节点已保存，等待配置应用')
+      else toast[out.level](out.text)
       onOpenChange(false)
       await Promise.all([
         qc.invalidateQueries({ queryKey: proxiesQueryOptions().queryKey }),
@@ -106,8 +110,12 @@ export function ProxyEditDialog({
   // 空值也算不合法：清空输入框并不表示「删除端口」，而且清空后 patch 里既不
   // 会带 host/port 也不带账密，提交出去只会换回一个 no_editable_fields 400。
   const portBad =
-    !port.trim() || !Number.isInteger(portNum) || portNum < 1 || portNum > 65535
-  const hostBad = !host.trim()
+    !proxy?.managed &&
+    (!port.trim() ||
+      !Number.isInteger(portNum) ||
+      portNum < 1 ||
+      portNum > 65535)
+  const hostBad = !proxy?.managed && !host.trim()
   // SOCKS5 没有「只有密码」的认证方式，后端 socks5Record() 见用户名为空就把
   // 密码一并丢掉。原本无账密的代理若只填密码，网关会以
   // password_without_username 拒掉 —— 在这里先拦住，别让用户白填一遍。
@@ -122,7 +130,9 @@ export function ProxyEditDialog({
   )
   const domainChanged =
     !localProxy && domainForward !== (proxy?.domain_forward === true)
-  const nothingChanged = !connectionChanged && !labelChanged && !domainChanged
+  const nothingChanged = proxy?.managed
+    ? !managedLink.trim() && !labelChanged
+    : !connectionChanged && !labelChanged && !domainChanged
 
   return (
     <Dialog open={!!proxy} onOpenChange={onOpenChange}>
@@ -140,97 +150,120 @@ export function ProxyEditDialog({
               placeholder='如：东京-2 号机、xx 机房'
             />
           </div>
-          <div className='grid gap-3 sm:grid-cols-[2fr_1fr]'>
+          {proxy?.managed ? (
             <div className='space-y-1'>
-              <Label>主机</Label>
+              <Label>Hysteria 2 节点链接</Label>
               <Input
-                value={host}
-                onChange={(e) => setHost(e.target.value)}
-                aria-invalid={hostBad}
+                type='password'
+                value={managedLink}
+                onChange={(event) => setManagedLink(event.target.value)}
+                placeholder='留空则保持节点配置'
+                autoComplete='off'
               />
+              <p className='text-xs text-muted-foreground'>
+                填写 hy2:// 或 hysteria2://
+                链接。保存后需要应用配置。应用时会先等待在途请求结束。
+              </p>
             </div>
-            <div className='space-y-1'>
-              <Label>端口</Label>
-              <Input
-                value={port}
-                inputMode='numeric'
-                onChange={(e) => setPort(e.target.value)}
-                aria-invalid={portBad}
-              />
-            </div>
-          </div>
-          {hostBad ? (
-            <p className='text-xs text-[color:var(--status-bad)]'>
-              主机不能为空。
-            </p>
-          ) : null}
-          {portBad ? (
-            <p className='text-xs text-[color:var(--status-bad)]'>
-              端口需在 1–65535 之间。
-            </p>
-          ) : null}
+          ) : (
+            <>
+              <div className='grid gap-3 sm:grid-cols-[2fr_1fr]'>
+                <div className='space-y-1'>
+                  <Label>主机</Label>
+                  <Input
+                    value={host}
+                    onChange={(e) => setHost(e.target.value)}
+                    aria-invalid={hostBad}
+                  />
+                </div>
+                <div className='space-y-1'>
+                  <Label>端口</Label>
+                  <Input
+                    value={port}
+                    inputMode='numeric'
+                    onChange={(e) => setPort(e.target.value)}
+                    aria-invalid={portBad}
+                  />
+                </div>
+              </div>
+              {hostBad ? (
+                <p className='text-xs text-[color:var(--status-bad)]'>
+                  主机不能为空。
+                </p>
+              ) : null}
+              {portBad ? (
+                <p className='text-xs text-[color:var(--status-bad)]'>
+                  端口需在 1–65535 之间。
+                </p>
+              ) : null}
 
-          <div className='space-y-1'>
-            <Label>用户名</Label>
-            <Input
-              value={username}
-              disabled={clearAuth}
-              onChange={(e) => setUsername(e.target.value)}
-              placeholder={proxy?.has_auth ? '留空则不修改' : '（当前无账密）'}
-            />
-          </div>
-          <div className='space-y-1'>
-            <Label>密码</Label>
-            <Input
-              type='password'
-              value={password}
-              disabled={clearAuth}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={proxy?.has_auth ? '留空则不修改' : '（当前无账密）'}
-            />
-          </div>
-          {proxy?.has_auth ? (
-            <label className='flex items-center gap-2 text-sm'>
-              <input
-                type='checkbox'
-                checked={clearAuth}
-                onChange={(e) => {
-                  setClearAuth(e.target.checked)
-                  // 勾上就把两个框清空：留着已输入的账密既不会提交（patch 只发
-                  // username: ''），取消勾选后又会突然复活，看着像输入被吞了。
-                  if (e.target.checked) {
-                    setUsername('')
-                    setPassword('')
+              <div className='space-y-1'>
+                <Label>用户名</Label>
+                <Input
+                  value={username}
+                  disabled={clearAuth}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder={
+                    proxy?.has_auth ? '留空则不修改' : '（当前无账密）'
                   }
-                }}
-              />
-              清除账密（改为免认证）
-            </label>
-          ) : null}
+                />
+              </div>
+              <div className='space-y-1'>
+                <Label>密码</Label>
+                <Input
+                  type='password'
+                  value={password}
+                  disabled={clearAuth}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder={
+                    proxy?.has_auth ? '留空则不修改' : '（当前无账密）'
+                  }
+                />
+              </div>
+              {proxy?.has_auth ? (
+                <label className='flex items-center gap-2 text-sm'>
+                  <input
+                    type='checkbox'
+                    checked={clearAuth}
+                    onChange={(e) => {
+                      setClearAuth(e.target.checked)
+                      // 勾上就把两个框清空：留着已输入的账密既不会提交（patch 只发
+                      // username: ''），取消勾选后又会突然复活，看着像输入被吞了。
+                      if (e.target.checked) {
+                        setUsername('')
+                        setPassword('')
+                      }
+                    }}
+                  />
+                  清除账密（改为免认证）
+                </label>
+              ) : null}
 
-          <p className='text-xs text-muted-foreground'>
-            账密不会回显。留空表示保持原值。
-          </p>
-          {localProxy ? null : (
-            <label className='flex items-center gap-2 text-sm'>
-              <input
-                type='checkbox'
-                checked={domainForward}
-                onChange={(e) => setDomainForward(e.target.checked)}
-              />
-              域名转发（IPv6-only 出口按主机名 CONNECT，不回落 IPv4）
-            </label>
+              <p className='text-xs text-muted-foreground'>
+                账密不会回显。留空表示保持原值。
+              </p>
+              {localProxy ? null : (
+                <label className='flex items-center gap-2 text-sm'>
+                  <input
+                    type='checkbox'
+                    checked={domainForward}
+                    onChange={(e) => setDomainForward(e.target.checked)}
+                  />
+                  域名转发（IPv6-only 出口按主机名 CONNECT，不回落 IPv4）
+                </label>
+              )}
+              {passwordWithoutUser ? (
+                <p className='text-xs text-[color:var(--status-bad)]'>
+                  只填密码不生效，SOCKS5 需要同时有用户名。
+                </p>
+              ) : null}
+              {boundCount && connectionChanged ? (
+                <p className='text-xs text-[color:var(--status-caution)]'>
+                  该代理已绑 {boundCount} 台槽位，保存后会重载它们的 worker。
+                </p>
+              ) : null}
+            </>
           )}
-          {passwordWithoutUser ? (
-            <p className='text-xs text-[color:var(--status-bad)]'>
-              只填密码不生效，SOCKS5 需要同时有用户名。
-            </p>
-          ) : null}
-          {boundCount && connectionChanged ? (
-            <p className='text-xs text-[color:var(--status-caution)]'>
-              该代理已绑 {boundCount} 台槽位，保存后会重载它们的 worker。
-            </p>
-          ) : null}
         </div>
         <DialogFooter>
           <Button variant='outline' onClick={() => onOpenChange(false)}>

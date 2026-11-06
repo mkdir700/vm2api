@@ -17,7 +17,7 @@ import { defaultSeedPolicy, isTelemetryEnabled } from '../protocol/seed-policy.m
 import { kernelBinPath, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 import { assertCliHopAllowed, resolveOfficialCcInference, resolveSlotPersonaPreset } from './slot-engine.mjs'
 import { profileForPreset } from '../identity/official-profiles.mjs'
-import { ensureSlotClaudeOwnership, chownSlotRuntimeFile, replaceSlotOwnedFile } from '../oauth/oauth-credentials.mjs'
+import { ensureSlotClaudeOwnership, chownSlotRuntimeFile, replaceSlotOwnedFile, slotRuntimeOwner } from '../oauth/oauth-credentials.mjs'
 import { materializeWrapCli } from './wrap-cli-runtime.mjs'
 import { ensureGuestMachineIdFile } from '../identity/workstation-fingerprint.mjs'
 import { ensureSlotComputer, rememberComputer } from '../identity/slot-computer.mjs'
@@ -259,8 +259,7 @@ function vmWantsOuterSocks(vm) {
 }
 
 export function socksUidFor(vm) {
-  const n = parseVmIndex(vm?.id) || parseVmIndex(vm?.name) || 1
-  return String(UID_BASE + n)
+  return String(slotRuntimeOwner(vm).uid)
 }
 
 export function ensureOuterSocks(vm) {

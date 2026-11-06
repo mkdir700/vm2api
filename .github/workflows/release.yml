@@ -40,9 +40,19 @@ jobs:
           }
       - name: stage pinned payload
         run: |
-          # Every amd64 asset, Go helpers included, is the pinned production build.
+          # Stage pinned VM assets; the egress helper is rebuilt from this release source below.
           node scripts/fetch-payload.mjs
           node scripts/fetch-payload.mjs --stage dist
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: worker/go.mod
+          cache-dependency-path: worker/go.sum
+      - name: build managed egress helper from release source
+        env:
+          CGO_ENABLED: '0'
+          GOOS: linux
+          GOARCH: amd64
+        run: cd worker && go build -buildvcs=false -trimpath -ldflags="-s -w" -o ../dist/kin-egress ./cmd/kin-egress
       - uses: actions/upload-artifact@v7
         with:
           name: linux-amd64

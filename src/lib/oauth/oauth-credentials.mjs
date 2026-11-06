@@ -315,8 +315,12 @@ export function slotRuntimeOwner(vm) {
   const n = slotIndexFromText(vm?.id) || slotIndexFromText(vm?.name) || 1
   const base = Number(process.env.KIN_VM_UID_BASE || 10000)
   const gid = Number(process.env.KIN_VM_GID || 987)
+  // Display names can change during package write-back. A deployed slot keeps
+  // the UID recorded at its first successful boot; imported slots have no user.
+  const savedUid = Number(String(vm?.runtime?.user || '').match(/^([1-9][0-9]*):[0-9]+$/)?.[1])
+  const pinnedUid = Number.isInteger(savedUid) && savedUid > 0 && savedUid < 0xffffffff ? savedUid : null
   return {
-    uid: (Number.isFinite(base) ? base : 10000) + n,
+    uid: pinnedUid ?? (Number.isFinite(base) ? base : 10000) + n,
     gid: Number.isFinite(gid) ? gid : 987,
   }
 }
@@ -369,6 +373,11 @@ export function slotUidGidFromHomeDir(homeDir) {
     .replace(/\\/g, '/')
     .match(/\/([^/]+)\/cli-home\/?$/i)?.[1]
   if (!id) return null
+  try {
+    const file = path.join(path.dirname(path.dirname(homeDir)), `${id}.json`)
+    const vm = JSON.parse(fs.readFileSync(file, 'utf8'))
+    if (vm.id === id) return slotRuntimeOwner(vm)
+  } catch {}
   return slotRuntimeOwner({ id })
 }
 

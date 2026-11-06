@@ -1,14 +1,18 @@
 /**
  * One finished slot as a portable JSON document.
  * Secrets stay on the returned object; callers must not log the package.
- * Runtime counters, fingerprints, and cluster placement are not part of the
+ * Runtime counters, fingerprints, and VM placement are not part of the
  * document: import mints a new workstation identity and never starts a container.
  */
 import fs from 'node:fs'
 import path from 'node:path'
 import { validTimezone } from '../core/timezone.mjs'
 import { normalizeAuthScheme } from '../oauth/auth-scheme.mjs'
-import { persistOauthToVm, readWorkerCredentialFile, writeWorkerCredentialFile } from '../oauth/oauth-credentials.mjs'
+import {
+  persistOauthToVm,
+  readWorkerCredentialFile,
+  writeWorkerCredentialFile,
+} from '../oauth/oauth-credentials.mjs'
 import { oauthToSub2apiExport, sub2apiAccountToOauth } from '../oauth/sub2api-account.mjs'
 import { parseScheduleLevelInput } from '../pool/credential-weight.mjs'
 import { applyScheduleOff, applyUnschedulable, migrateScheduleRecord } from '../pool/schedule-state.mjs'
@@ -30,6 +34,7 @@ import { parseSocks5Fields } from './proxy-pool.mjs'
 import { seedFreshCliHome } from './vm-recreate.mjs'
 import { atomicWriteJson, isValidVmId } from './vm-file.mjs'
 import { bindVmProxy, getVm, listVms } from './vm-registry.mjs'
+import { bindManagedVmExit } from './managed-egress-binding.mjs'
 import { isCodexVm, stampVmKind } from './vm-kind.mjs'
 import { normalizeVmConfig, resolveMachineSpec } from './machine-spec.mjs'
 import {
@@ -114,6 +119,14 @@ function policyFromVm(vm, codex) {
 
 function proxyDocument(proxy, label) {
   if (!proxy || typeof proxy !== 'object') return null
+  if (proxy.managed === true || proxy.scheme === 'hysteria2') {
+    return {
+      kind: 'managed',
+      id: proxy.id,
+      host_id: proxy.managed_host_id || null,
+      label: cleanText(label || proxy.label, 80) || null,
+    }
+  }
   if (isLocalEgressProxy(proxy)) return { kind: 'local' }
   const host = cleanText(proxy.host, 253)
   const port = Number(proxy.port)
@@ -207,7 +220,8 @@ function parsePolicy(raw, codex) {
     value.maxConcurrency = raw.maxConcurrency
     value.concurrencyOverride = raw.concurrencyOverride !== false
   } else if (has(raw, 'concurrencyOverride')) {
-    if (typeof raw.concurrencyOverride !== 'boolean') return fail('invalid_package', 'concurrencyOverride 必须是布尔')
+    if (typeof raw.concurrencyOverride !== 'boolean')
+      return fail('invalid_package', 'concurrencyOverride 必须是布尔')
     value.concurrencyOverride = raw.concurrencyOverride
   }
   if (has(raw, 'maxRpm')) {
@@ -265,6 +279,17 @@ function parseProxy(raw) {
   if (raw == null) return { ok: true, value: null }
   if (typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_package', 'proxy 必须是对象或 null')
   const kind = cleanText(raw.kind || raw.scheme, 16).toLowerCase()
+  if (kind === 'managed') {
+    const id = String(raw.id ?? '').trim()
+    const hostId = String(raw.host_id ?? '').trim()
+    if (!/^[a-zA-Z0-9_-]{1,128}$/.test(id) || !/^[a-zA-Z0-9_-]{1,128}$/.test(hostId))
+      return fail('invalid_proxy', '受管出口引用需要有效的出口 ID 和宿主机 ID')
+    return {
+      ok: true,
+      value: { kind: 'managed', id, host_id: hostId, label: cleanText(raw.label, 80) || null },
+    }
+  }
+  if (kind && !['local', 'socks5', 'socks5h'].includes(kind)) return fail('invalid_proxy', '不支持此出口类型')
   if (kind === 'local' || raw.host === 'local') return { ok: true, value: { kind: 'local' } }
   if (raw.password && !cleanText(raw.username ?? raw.user, 200)) {
     return fail('invalid_proxy', 'SOCKS5 不能只有密码没有用户名')
@@ -291,7 +316,8 @@ function parseProxy(raw) {
 
 function parseCredential(raw, codex) {
   if (raw == null) return { ok: true, value: null }
-  if (typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_package', 'credential 必须是对象或 null')
+  if (typeof raw !== 'object' || Array.isArray(raw))
+    return fail('invalid_package', 'credential 必须是对象或 null')
   const platform = cleanText(raw.platform, 16).toLowerCase()
   if (codex || platform === 'openai') {
     if (!codex) return fail('credential_kind_mismatch', 'Claude 槽的包不能带 Codex 凭证')
@@ -315,7 +341,8 @@ function parseCredential(raw, codex) {
 }
 
 export function parseVmPackage(doc) {
-  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return fail('invalid_package', '包必须是 JSON 对象')
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc))
+    return fail('invalid_package', '包必须是 JSON 对象')
   if (doc.type !== VM_PACKAGE_TYPE || doc.version !== VM_PACKAGE_VERSION) {
     return fail('invalid_package', '不是 vm2api 单槽包')
   }
@@ -374,7 +401,8 @@ export function parseVmPackage(doc) {
         schedulable: vm.schedulable !== false,
         schedule_manual: vm.schedule_manual === true,
         policy: policy.value,
-        seed_policy: vm.seed_policy && typeof vm.seed_policy === 'object' ? defaultSeedPolicy(vm.seed_policy) : null,
+        seed_policy:
+          vm.seed_policy && typeof vm.seed_policy === 'object' ? defaultSeedPolicy(vm.seed_policy) : null,
       },
       proxy: proxy.value,
       credential: credential.value,
@@ -487,7 +515,10 @@ function writeCredential(projectRoot, id, spec) {
   const oauth = spec.credential.oauth
   const file = writeWorkerCredentialFile(home, oauth)
   if (!file) return fail('credential_required', 'Claude 包需要 access_token、refresh_token 或 api_key')
-  persistOauthToVm(path.join(projectRoot, 'vms', `${id}.json`), oauth, { acceptLiveGrant: true, operatorImport: true })
+  persistOauthToVm(path.join(projectRoot, 'vms', `${id}.json`), oauth, {
+    acceptLiveGrant: true,
+    operatorImport: true,
+  })
   return { ok: true }
 }
 
@@ -511,6 +542,10 @@ function mirrorCodex(vm, account) {
 function proxyBindAllowed(spec, vm, role, proxyPool) {
   if (!spec.proxy) return true
   let owner = null
+  if (spec.proxy.kind === 'managed') {
+    const row = proxyPool.getManagedReference(spec.proxy.id)
+    return !!row && canBindProxyToVm(row, vm, { role })
+  }
   if (spec.proxy.kind === 'local') {
     if (role === 'user') return false
   } else {
@@ -525,6 +560,10 @@ async function attachProxy(projectRoot, id, spec, proxyPool, ownerUserId) {
     proxyPool.unbindVm?.(id)
     bindVmProxy(projectRoot, id, null)
     return { ok: true }
+  }
+  if (spec.proxy.kind === 'managed') {
+    const bound = await bindManagedVmExit({ proxyPool, projectRoot, proxyId: spec.proxy.id, vmId: id })
+    return bound.ok ? { ok: true } : fail(bound.error || 'proxy_bind_failed', '绑定受管出口失败')
   }
   if (spec.proxy.kind === 'local') {
     const ensured = proxyPool.ensureLocal()
@@ -563,7 +602,9 @@ export function exportVmPackage(projectRoot, id, proxyPool, now = new Date()) {
   const vm = getVm(projectRoot, id)
   if (!vm) return fail('vm_not_found', 'VM not found')
   const proxyId = vm.proxy?.id || null
-  const proxy = proxyId && proxyPool?.getProxyByIdWithAuth ? proxyPool.getProxyByIdWithAuth(proxyId) : null
+  const reference = proxyId && proxyPool?.getManagedReference?.(proxyId)
+  const savedManaged = vm.proxy?.managed === true || vm.proxy?.scheme === 'hysteria2'
+  const proxy = reference || (savedManaged ? vm.proxy : proxyId && proxyPool?.getProxyByIdWithAuth?.(proxyId))
   const label = proxyId && proxyPool?.labelOf ? proxyPool.labelOf(proxyId) : null
   const home = path.join(projectRoot, 'vms', id, 'cli-home')
   return {
@@ -596,16 +637,42 @@ export async function commitVmPackage({
   const create = mode === 'create'
   let id = create ? spec.id : targetId
   let renamedFrom = null
-  if (!isValidVmId(id)) return { ok: false, status: 400, error: { code: 'invalid_id', message: 'vm.id 无效' } }
+  if (!isValidVmId(id))
+    return { ok: false, status: 400, error: { code: 'invalid_id', message: 'vm.id 无效' } }
   if (create && fs.existsSync(path.join(projectRoot, 'vms', `${id}.json`))) {
     renamedFrom = id
     id = nextFreePackageVmId(projectRoot, occupied)
     const oldLabel = slotLabel(renamedFrom)
-    if (!spec.vm.name || spec.vm.name === oldLabel || spec.vm.name === renamedFrom) spec.vm.name = slotLabel(id)
+    if (!spec.vm.name || spec.vm.name === oldLabel || spec.vm.name === renamedFrom)
+      spec.vm.name = slotLabel(id)
   }
   const file = path.join(projectRoot, 'vms', `${id}.json`)
   if (!create && !fs.existsSync(file)) {
     return { ok: false, status: 404, error: { code: 'vm_not_found', message: 'VM not found' } }
+  }
+
+  // A package references the existing host service. Refuse invalid placement and
+  // unavailable exits before generating identity files or replacing credentials.
+  if (spec.proxy?.kind === 'managed') {
+    const row = proxyPool.getManagedReference(spec.proxy.id)
+    const target = create
+      ? { id, owner_user_id: owner.role === 'user' ? normalizeOwnerId(owner.userId) : null }
+      : getVm(projectRoot, id)
+    let error = null
+    let status = 409
+    if (!row) error = 'managed_exit_not_found'
+    else if (!canBindProxyToVm(row, target, { role: owner.role })) {
+      error = 'proxy_forbidden'
+      status = 403
+    } else if (
+      row.managed_host_id !== spec.proxy.host_id ||
+      row.managed_host_id !== (target.node_id || 'control-plane')
+    )
+      error = 'managed_host_unsupported'
+    else if (!row.enabled || row.status === 'dead' || row.removal_pending) error = 'proxy_disabled'
+    else if (row.blocked_reason) error = row.blocked_reason
+    else if (!row.bound_vm_ids.includes(id) && row.bound_count >= row.bind_limit) error = 'proxy_bind_limit'
+    if (error) return { ok: false, status, error: { code: error, message: '受管出口不能用于此槽位包' } }
   }
 
   let status = 'stopped'
@@ -614,7 +681,13 @@ export async function commitVmPackage({
     const existing = listVms(projectRoot)
     const generated = assignComputerFingerprint(
       projectRoot,
-      { id, kernel: spec.vm.kernel, timezone: spec.vm.timezone, locale: spec.vm.locale, runtime: { type: 'docker' } },
+      {
+        id,
+        kernel: spec.vm.kernel,
+        timezone: spec.vm.timezone,
+        locale: spec.vm.locale,
+        runtime: { type: 'docker' },
+      },
       { taken: takenFingerprintKeys(existing) },
     )
     vm = {
@@ -628,7 +701,14 @@ export async function commitVmPackage({
       region: null,
       note: '',
       proxy: null,
-      policy: { maxConcurrency: 0, concurrencyOverride: false, maxRpm: 0, rpmOverride: false, weight: 1, inflight: 0 },
+      policy: {
+        maxConcurrency: 0,
+        concurrencyOverride: false,
+        maxRpm: 0,
+        rpmOverride: false,
+        weight: 1,
+        inflight: 0,
+      },
       fingerprint: applyGeneratedFingerprint({}, generated),
       stats: {},
       created_at: new Date().toISOString(),

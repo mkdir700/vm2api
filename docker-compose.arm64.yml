@@ -20,3 +20,10 @@ services:
       - ./.local/arm64/bin:/opt/vm2api/bin
       - ./.local/arm64/share:/opt/vm2api/share
       - ./.local/arm64/config:/opt/vm2api/src/config
+
+  sing-box-init:
+    volumes:
+      - ./.local/arm64/data/managed-egress:/var/lib/vm2api-egress
+  sing-box:
+    volumes:
+      - ./.local/arm64/data/managed-egress:/var/lib/vm2api-egress:ro

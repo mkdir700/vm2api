@@ -172,6 +172,22 @@ export class ClusterManager {
     this.slotRelays.clear()
   }
 
+  /** Restored endpoints/credentials must not inherit a live connection to the old ledger. */
+  async rebind(repo) {
+    this.repo = repo
+    await this.stop()
+    this.hosts = new WeakMap()
+    this.hostFacts.clear()
+    this.health.clear()
+    this.directState.clear()
+    this.tickets.clear()
+    this.installs.clear()
+    this._local = null
+    this._localAt = 0
+    this.start()
+    await this.restoreSlotRelays()
+  }
+
   bridgeSocketPath(id) {
     return path.join(this.socketDir, id, 'docker.sock')
   }
@@ -328,13 +344,16 @@ export class ClusterManager {
 
   /** Ping the gate; a good answer lifts the SSH fallback early, a bad one starts it. */
   async _probeDirect(id) {
-    const cfg = this.repo.getDirectLink(id)
+    const repo = this.repo
+    const cfg = repo.getDirectLink(id)
     if (!cfg?.certSha256) return
     const checked_at = new Date().toISOString()
     try {
       const ms = await pingGate(cfg)
+      if (this.repo !== repo) return
       this._directPatch(id, { latency_ms: Math.round(ms), error: null, downUntil: 0, checked_at })
     } catch (err) {
+      if (this.repo !== repo) return
       this._directPatch(id, {
         latency_ms: null,
         error: err.code || 'gate_unreachable',
@@ -732,7 +751,9 @@ export class ClusterManager {
     if (cached) return cached
     const pending = readNodeHost(client)
     pending.then(
-      (host) => this._learnHost(id, host),
+      (host) => {
+        if (this.links.get(id)?.client === client) this._learnHost(id, host)
+      },
       () => this.hosts.delete(client),
     )
     this.hosts.set(client, pending)

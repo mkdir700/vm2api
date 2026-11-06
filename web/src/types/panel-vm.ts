@@ -38,7 +38,15 @@ export type VmProxySnap = {
   label?: string | null
   status?: string
   enabled?: boolean
-  blocked_reason?: 'ipv6_disabled' | null
+  managed?: boolean
+  removal_pending?: boolean
+  application_status?: 'pending' | 'applied'
+  runtime_status?: 'unknown' | 'running' | 'unavailable'
+  exit_status?: 'pending' | 'ready' | 'unavailable'
+  observed_ip?: string | null
+  managed_host_id?: string
+  managed_host_name?: string
+  blocked_reason?: 'ipv6_disabled' | 'managed_egress_not_ready' | null
   address_family?: 4 | 6 | null
   latency_ms?: number
   last_error?: string

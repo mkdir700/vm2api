@@ -144,7 +144,11 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
     timezone: vm.timezone || null,
     timezone_source: vm.timezone_source || 'auto',
     locale: vm.locale || null,
-    proxy: vm.proxy ? { ...vm.proxy, password: vm.proxy.password ? '***' : (vm.proxy.password ?? null) } : null,
+    proxy: vm.proxy?.managed
+      ? { id: vm.proxy.id, managed: true, scheme: vm.proxy.scheme }
+      : vm.proxy
+        ? { ...vm.proxy, password: vm.proxy.password ? '***' : (vm.proxy.password ?? null) }
+        : null,
     claude_code_version: vm.claude_code_version || null,
     stats: vm.stats || {},
     fingerprint: vm.fingerprint || null,
@@ -703,6 +707,9 @@ export function bindVmProxy(projectRoot, id, proxyInfo) {
   vm.proxy = proxyInfo
     ? {
         id: proxyInfo.id,
+        managed: proxyInfo.managed === true,
+        managed_host_id: proxyInfo.managed === true ? proxyInfo.managed_host_id : undefined,
+        managed_listener_port: proxyInfo.managed === true ? proxyInfo.managed_listener_port : undefined,
         host: proxyInfo.host,
         port: proxyInfo.port,
         scheme: proxyInfo.scheme || proxyInfo.kind || 'socks5',

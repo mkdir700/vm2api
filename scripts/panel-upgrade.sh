@@ -21,6 +21,66 @@ compose() {
     --project-directory "$ROOT" --project-name "$PROJECT" "$@"
 }
 
+# Release-owned deployment files travel with the selected image. Operator state
+# and overlays stay in place. Older target images retain their existing manifest.
+refresh_image_deployment() {
+  target_image=$(compose config --format json | docker exec -i "$CONTAINER" node -e '
+    let input = "";
+    process.stdin.on("data", chunk => input += chunk);
+    process.stdin.on("end", () => {
+      const image = JSON.parse(input).services.vm2api.image;
+      if (typeof image !== "string" || !image) process.exit(1);
+      process.stdout.write(image);
+    });
+  ')
+  deployment_stage=$(mktemp -d "$ROOT/.upgrade-deploy.XXXXXX")
+  target_container=''
+  cleanup_deployment() {
+    [ -z "$target_container" ] || docker rm "$target_container" >/dev/null 2>&1 || true
+    rm -rf "$deployment_stage"
+  }
+  trap cleanup_deployment EXIT HUP INT TERM
+  target_container=$(docker create --entrypoint /bin/true "$target_image")
+  bundle_version=$(docker inspect --format '{{index .Config.Labels "vm2api.deployment-bundle"}}' "$target_container")
+  if [ "$bundle_version" != 1 ]; then
+    echo 'Target image has no deployment bundle; retaining existing manifest'
+    cleanup_deployment
+    trap - EXIT HUP INT TERM
+    return
+  fi
+  docker cp "$target_container:/opt/vm2api/image-deploy/docker-compose.yml" \
+    "$deployment_stage/docker-compose.yml" >/dev/null
+  if grep -q '^  sing-box-init:' "$deployment_stage/docker-compose.yml"; then
+    docker cp "$target_container:/opt/vm2api/image-deploy/deploy/init-managed-egress.sh" \
+      "$deployment_stage/init-managed-egress.sh" >/dev/null
+  fi
+  previous_files=$COMPOSE_FILE_LIST
+  staged_files=''
+  selected_base=0
+  old_ifs=$IFS
+  IFS=:
+  for file in $previous_files; do
+    if [ "$file" = "$ROOT/docker-compose.yml" ] || [ "$file" = docker-compose.yml ]; then
+      file="$deployment_stage/docker-compose.yml"
+      selected_base=1
+    fi
+    if [ -n "$staged_files" ]; then staged_files="$staged_files:"; fi
+    staged_files="$staged_files$file"
+  done
+  IFS=$old_ifs
+  [ "$selected_base" = 1 ] || { echo 'Standard deployment manifest is not selected' >&2; exit 1; }
+  COMPOSE_FILE_LIST=$staged_files
+  compose config --quiet
+  COMPOSE_FILE_LIST=$previous_files
+  if [ -f "$deployment_stage/init-managed-egress.sh" ]; then
+    mkdir -p "$ROOT/deploy"
+    mv "$deployment_stage/init-managed-egress.sh" "$ROOT/deploy/init-managed-egress.sh"
+  fi
+  mv "$deployment_stage/docker-compose.yml" "$ROOT/docker-compose.yml"
+  cleanup_deployment
+  trap - EXIT HUP INT TERM
+}
+
 # Use the HTTP server's kernel client, so this also catches auth/protocol regressions.
 # Busy kernels may have no idle slots; process health still has to survive the update.
 probe() {
@@ -124,6 +184,13 @@ else
     printf '\nVM2API_IMAGE_TAG=%s\n' "$IMAGE_TAG" >> .env
   fi
   compose pull vm2api
+  refresh_image_deployment
+fi
+
+# Add a missing shared runtime without restarting an existing runtime and its requests.
+# Older release manifests do not contain this service.
+if compose config --services | grep -qx sing-box; then
+  compose up -d --no-recreate sing-box
 fi
 
 compose up -d --no-deps --force-recreate vm2api

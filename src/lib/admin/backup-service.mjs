@@ -74,6 +74,7 @@ export class BackupService {
     this._timer = null
     this._bootTimer = null
     this._rebindStores = null // set via onRestored()
+    this._prepareRestore = null
   }
 
   _repo() {
@@ -96,6 +97,11 @@ export class BackupService {
   /** Register the callback that re-binds stores to the new DB after restore. */
   onRestored(fn) {
     this._rebindStores = typeof fn === 'function' ? fn : null
+  }
+
+  /** Settle external state holders before the database swap; return a resume callback. */
+  onRestoring(fn) {
+    this._prepareRestore = typeof fn === 'function' ? fn : null
   }
 
   // ---------- schedule config ----------
@@ -278,7 +284,9 @@ export class BackupService {
 
     this.isRestoring = true
     let tmp = null
+    let resume = null
     try {
+      if (this._prepareRestore) resume = await this._prepareRestore()
       // 0. safety net snapshot of the current state
       const pre = await this.createBackup({ kind: 'pre_restore', note: `before restore of ${rec.id}` })
 
@@ -382,15 +390,19 @@ export class BackupService {
       // 7. re-bind stores to the fresh connection. A failed rebind leaves the
       //    process partially attached to the closed database, so it must make
       //    the restore fail instead of reporting a false success.
-      if (this._rebindStores) this._rebindStores(db)
+      if (this._rebindStores) await this._rebindStores(db)
 
       return { ok: true, restored: rec.id, pre_restore: pre.id }
     } finally {
-      this.isRestoring = false
-      if (tmp) {
-        try {
-          fs.rmSync(tmp, { recursive: true, force: true })
-        } catch {}
+      try {
+        if (tmp) {
+          try {
+            fs.rmSync(tmp, { recursive: true, force: true })
+          } catch {}
+        }
+        if (typeof resume === 'function') await resume()
+      } finally {
+        this.isRestoring = false
       }
     }
   }

@@ -48,6 +48,7 @@ function sftpError(err, what) {
 
 /** SFTP WRITE payloads stay under the 32 KiB every server accepts. */
 const WRITE_CHUNK = 32 * 1024
+const WRITE_CONCURRENCY = 16
 
 /**
  * Atomic, symlink-safe write. `owner` is only set when the SSH user is root (the
@@ -60,9 +61,16 @@ export async function writeRemoteFile(sftp, file, data, { mode = 0o600, owner = 
   let handle = null
   try {
     handle = await call((cb) => sftp.open(tmp, 'wx', { mode }, cb))
-    for (let off = 0; off < data.length; off += WRITE_CHUNK) {
-      const len = Math.min(WRITE_CHUNK, data.length - off)
-      await call((cb) => sftp.write(handle, data, off, len, off, cb))
+    for (let base = 0; base < data.length; base += WRITE_CHUNK * WRITE_CONCURRENCY) {
+      const writes = []
+      for (let off = base; off < Math.min(data.length, base + WRITE_CHUNK * WRITE_CONCURRENCY); off += WRITE_CHUNK) {
+        const len = Math.min(WRITE_CHUNK, data.length - off)
+        writes.push(call((cb) => sftp.write(handle, data, off, len, off, cb)))
+      }
+      // Settle the whole batch before failure cleanup closes its shared handle.
+      const results = await Promise.allSettled(writes)
+      const failed = results.find((result) => result.status === 'rejected')
+      if (failed) throw failed.reason
     }
     await call((cb) => sftp.fchmod(handle, mode, cb))
     if (owner) await call((cb) => sftp.fchown(handle, owner.uid, owner.gid, cb))

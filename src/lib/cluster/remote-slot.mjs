@@ -11,10 +11,10 @@
  */
 
 import crypto from 'node:crypto'
+import { remoteEgressProxyUrl } from './remote-egress-proxy.mjs'
 import path from 'node:path'
 import { ensureGuestMachineIdFile } from '../identity/workstation-fingerprint.mjs'
 import {
-  boundProxyUrl,
   bridgeName,
   chainName,
   configuredDnsUpstream,
@@ -385,7 +385,16 @@ export function slotEgressNames(vmId) {
  * (kincli) could not open the root-owned file and crash-looped on EACCES. The
  * user is part of the digest so a helper created under the old spec is rebuilt.
  */
-export function remoteEgressContainer({ vmId, proxyId, dir, imageRef, body, host, binaryDigest = '' }) {
+export function remoteEgressContainer({
+  vmId,
+  proxyId,
+  dir,
+  imageRef,
+  body,
+  host,
+  binaryDigest = '',
+  controlDir = null,
+}) {
   const user = `${host.uid}:${host.gid}`
   const digest = crypto
     .createHash('sha256')
@@ -393,6 +402,7 @@ export function remoteEgressContainer({ vmId, proxyId, dir, imageRef, body, host
     .update(imageRef)
     .update(user)
     .update(binaryDigest)
+    .update(controlDir || '')
     .digest('hex')
     .slice(0, 16)
   return {
@@ -410,7 +420,11 @@ export function remoteEgressContainer({ vmId, proxyId, dir, imageRef, body, host
       },
       HostConfig: {
         NetworkMode: 'host',
-        Binds: [`${dir}:/etc/kin-egress:ro`, `${path.posix.join(dir, '..', 'slot-bin')}:${LIVE_BIN}:ro`],
+        Binds: [
+          `${dir}:/etc/kin-egress:ro`,
+          `${path.posix.join(dir, '..', 'slot-bin')}:${LIVE_BIN}:ro`,
+          ...(controlDir ? [`${controlDir}:/run/kin-egress:rw`] : []),
+        ],
         RestartPolicy: { Name: 'unless-stopped' },
         ReadonlyRootfs: true,
         CapDrop: ['ALL'],
@@ -449,7 +463,12 @@ export async function ensureRemoteEgress(session, vm, { imageRef, binaryDigest =
     return { ok: true, mode: 'local', network: net.name, egress: null }
   }
   const proxyId = proxy?.id
-  const proxyUrl = boundProxyUrl(proxy)
+  let proxyUrl
+  try {
+    proxyUrl = remoteEgressProxyUrl(proxy, session.nodeId)
+  } catch (error) {
+    return { ok: false, code: error.code || 'proxy_required', error: error.code || 'proxy_required' }
+  }
   if (!proxyId || !proxyUrl) {
     return { ok: false, code: 'proxy_required', error: 'bound SOCKS5 id and url required; refusing fallback' }
   }
@@ -470,6 +489,7 @@ export async function ensureRemoteEgress(session, vm, { imageRef, binaryDigest =
   const cfg = {
     proxy_id: proxyId,
     proxy_url: proxyUrl,
+    ...(proxy?.managed ? { control_socket: '/run/kin-egress/drain.sock' } : {}),
     listen_tcp: `${net.gateway}:${names.ports.tcp}`,
     listen_dns: `${net.gateway}:${names.ports.dns}`,
   }
@@ -480,6 +500,12 @@ export async function ensureRemoteEgress(session, vm, { imageRef, binaryDigest =
   const body = `${JSON.stringify(cfg, null, 2)}\n`
   // Beside the slot tree, outside every guest bind: the guest never sees the proxy password.
   const dir = `${remoteSlotDir(session.host, vm.id)}/egress`
+  const controlDir = proxy?.managed ? `${remoteSlotDir(session.host, vm.id)}/egress-control` : null
+  if (controlDir)
+    await runRemote(
+      session.client,
+      `umask 077 && mkdir -p ${shellQuote(controlDir)} && chmod 700 ${shellQuote(controlDir)}`,
+    )
   const { digest, spec } = remoteEgressContainer({
     vmId: vm.id,
     proxyId,
@@ -488,6 +514,7 @@ export async function ensureRemoteEgress(session, vm, { imageRef, binaryDigest =
     body,
     host: session.host,
     binaryDigest,
+    controlDir,
   })
   const existing = await inspectContainerOrNull(session.docker, names.egress)
   if (!canReuseRemoteEgress(existing, digest)) {
@@ -524,7 +551,9 @@ export async function setRemoteProxyEgressEnabled(vm, projectRoot, enabled) {
       if (blocked) return { ok: false, code: blocked, error: blocked }
       const name = vm.runtime?.network === networkName(vm.proxy?.id) ? legacy : current
       const existing = await inspectContainerOrNull(session.docker, name)
-      if (existing) {
+      // A managed rebind must compare the desired listener/configuration digest.
+      // Merely starting the previous helper would retain its previous exit.
+      if (existing && !vm.proxy?.managed) {
         if (!existing.State?.Running) await containerAction(session.docker, name, 'start')
         return { ok: true }
       }

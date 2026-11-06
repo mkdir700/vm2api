@@ -1,3 +1,4 @@
+import { withManagedEgressOperation } from '../vm/managed-egress-admission.mjs'
 import http from 'node:http'
 import { randomUUID } from 'node:crypto'
 import fs from 'node:fs'
@@ -502,7 +503,7 @@ function mockScenario(exec) {
   }
 }
 
-export async function callGoWorker({
+async function callGoWorkerAdmitted({
   requestContext = null,
   exec,
   body,
@@ -614,7 +615,7 @@ export async function callGoWorker({
   }
 }
 
-export async function streamGoWorker({
+async function streamGoWorkerAdmitted({
   requestContext = null,
   exec,
   body,
@@ -1011,7 +1012,7 @@ export async function workerHealth(exec, { timeoutMs = 3000, signal } = {}) {
   }
 }
 
-export async function ensureWorkerCredential(exec, { force = false } = {}) {
+async function ensureWorkerCredentialAdmitted(exec, { force = false } = {}) {
   if (isCrsMock()) {
     return {
       ok: true,
@@ -1134,7 +1135,7 @@ function credentialSummary(credential, now = Date.now()) {
   }
 }
 
-export async function importWorkerCredential(exec, credential, { timeoutMs = 60000, signal } = {}) {
+async function importWorkerCredentialAdmitted(exec, credential, { timeoutMs = 60000, signal } = {}) {
   try {
     writeWorkerCredentialFile(exec.homeDir, credential)
     // Import is the one case where the control plane's credential replaces the slot's copy.
@@ -1158,7 +1159,7 @@ export async function importWorkerCredential(exec, credential, { timeoutMs = 600
   }
 }
 
-export async function callWorkerPost(exec, requestPath, body, { timeoutMs = 20000, signal } = {}) {
+async function callWorkerPostAdmitted(exec, requestPath, body, { timeoutMs = 20000, signal } = {}) {
   try {
     const response = await workerRequest(exec, {
       method: 'POST',
@@ -1188,7 +1189,7 @@ export async function callWorkerPost(exec, requestPath, body, { timeoutMs = 2000
   }
 }
 
-export async function callWorkerGet(exec, requestPath, { timeoutMs = 30000, signal } = {}) {
+async function callWorkerGetAdmitted(exec, requestPath, { timeoutMs = 30000, signal } = {}) {
   if (isCrsMock()) {
     if (requestPath === '/internal/v1/models') {
       return {
@@ -1280,9 +1281,32 @@ export async function callWorkerGet(exec, requestPath, { timeoutMs = 30000, sign
   }
 }
 
-export async function countTokensViaWorker(exec, { body, headers = {}, timeoutMs = 45000 } = {}) {
+async function countTokensViaWorkerAdmitted(exec, { body, headers = {}, timeoutMs = 45000 } = {}) {
   if (isCrsMock()) {
     return { ok: true, status: 200, body: { input_tokens: 8 }, headers: {}, via: 'go-worker-mock' }
   }
   return runSlotOauth(exec, 'count-tokens', { body, headers, timeoutMs })
+}
+
+export function callGoWorker(options = {}) {
+  return withManagedEgressOperation(options.exec?.vm?.proxy, () => callGoWorkerAdmitted(options))
+}
+export function streamGoWorker(options = {}) {
+  return withManagedEgressOperation(options.exec?.vm?.proxy, () => streamGoWorkerAdmitted(options))
+}
+export function callWorkerPost(exec, ...args) {
+  return withManagedEgressOperation(exec?.vm?.proxy, () => callWorkerPostAdmitted(exec, ...args))
+}
+export function callWorkerGet(exec, ...args) {
+  return withManagedEgressOperation(exec?.vm?.proxy, () => callWorkerGetAdmitted(exec, ...args))
+}
+export function importWorkerCredential(exec, ...args) {
+  return withManagedEgressOperation(exec?.vm?.proxy, () => importWorkerCredentialAdmitted(exec, ...args))
+}
+export function countTokensViaWorker(exec, ...args) {
+  return withManagedEgressOperation(exec?.vm?.proxy, () => countTokensViaWorkerAdmitted(exec, ...args))
+}
+
+export function ensureWorkerCredential(exec, ...args) {
+  return withManagedEgressOperation(exec?.vm?.proxy, () => ensureWorkerCredentialAdmitted(exec, ...args))
 }

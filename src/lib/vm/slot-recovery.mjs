@@ -32,6 +32,7 @@ import { slotExec, startSlotReady, stopSlot } from './slot-runtime.mjs'
 import { isCodexVm } from './vm-kind.mjs'
 import { isKvmRuntime } from './runtime-kind.mjs'
 import { slotDockerCpus } from './machine-spec.mjs'
+import { bindManagedVmExit } from './managed-egress-binding.mjs'
 import { bindVmProxy, getVm, patchVmRecord, vmHasSchedulableCredential } from './vm-registry.mjs'
 import {
   applyClearUnschedulable,
@@ -387,7 +388,24 @@ export async function powerOnSlot({
   } catch (error) {
     return { ok: false, status: 400, code: error.code, error: error.message }
   }
-  const bound = proxyPool.ensureBoundToVm(id, vm.proxy?.id || null)
+  const retained = proxyPool
+    .snapshot()
+    .proxies.find((proxy) => proxy.bound_vm_id === id || proxy.bound_vm_ids?.includes(id))
+  const savedManaged = !retained && (vm.proxy?.managed === true || vm.proxy?.scheme === 'hysteria2')
+  // A restored managed snapshot pins its exit even when the pool row is absent.
+  // Only slots without that saved intent may enter generic automatic allocation.
+  let managedId = retained?.managed ? retained.id : savedManaged ? vm.proxy?.id : null
+  if (savedManaged && !managedId) return { ok: false, status: 409, code: 'proxy_required', error: '受管出口标识缺失' }
+  let bound
+  if (!managedId) {
+    bound = proxyPool.ensureBoundToVm(id, vm.proxy?.id || null)
+    if (bound?.managed) managedId = bound.id
+  }
+  if (managedId) {
+    const initialized = await bindManagedVmExit({ proxyPool, projectRoot, proxyId: managedId, vmId: id })
+    if (!initialized.ok) return { ok: false, status: 409, code: initialized.error, error: initialized.error }
+    bound = proxyPool.getProxyForVm(id)
+  }
   if (!bound) {
     return { ok: false, status: 409, code: 'proxy_required', error: 'No SOCKS5 is bound or free for this VM' }
   }

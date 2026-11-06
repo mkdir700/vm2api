@@ -486,6 +486,37 @@ function ProxyDetail({
       className='mx-4 mb-2.5 space-y-3 rounded-lg border bg-background/60 px-4 py-3 text-xs'
     >
       <dl className='grid gap-x-6 gap-y-2.5 sm:grid-cols-[auto_minmax(0,1fr)]'>
+        {proxy.managed ? (
+          <>
+            {proxy.managed_host_name ? (
+              <DetailField label='宿主机'>
+                {proxy.managed_host_name}
+              </DetailField>
+            ) : null}
+            <DetailField label='配置'>
+              {proxy.removal_pending
+                ? '待删除，需要应用配置'
+                : proxy.application_status === 'applied'
+                  ? '已应用'
+                  : '待应用'}
+            </DetailField>
+            <DetailField label='运行实例'>
+              {proxy.runtime_status === 'running'
+                ? '运行中'
+                : proxy.runtime_status === 'unavailable'
+                  ? '不可用'
+                  : '未检查'}
+            </DetailField>
+            <DetailField label='出口状态'>
+              {proxy.exit_status === 'ready'
+                ? '就绪'
+                : proxy.exit_status === 'unavailable'
+                  ? '不可用'
+                  : '待检查'}
+              {proxy.observed_ip ? ` · ${proxy.observed_ip}` : ''}
+            </DetailField>
+          </>
+        ) : null}
         <DetailField label='地址'>
           <span className='field-host'>{proxyHostText(proxy)}</span>
           {local ? (

@@ -222,6 +222,7 @@ import {
 } from '../vm/slot-runtime.mjs'
 import { recreateVmFiles, seedFreshCliHome } from '../vm/vm-recreate.mjs'
 import { diagnoseSlotServices, powerOnSlot, recoverSlot } from '../vm/slot-recovery.mjs'
+import { bindManagedVmExit } from '../vm/managed-egress-binding.mjs'
 import { commitVmPackage, exportVmPackage, parseVmPackage } from '../vm/vm-package.mjs'
 import { preflightNode } from '../cluster/placement.mjs'
 import { probeLocalKvm } from '../vm/kvm-host.mjs'
@@ -630,6 +631,8 @@ export function createPanelHandler(ctx) {
   const stickyRouter = ctx.stickyRouter
   const accountQuota = ctx.accountQuota
   const proxyPool = ctx.proxyPool
+  const bindManagedExit = (proxyId, vmId) =>
+    bindManagedVmExit({ proxyPool, projectRoot: cfg.paths.project, proxyId, vmId })
   const apiKeyStore = ctx.apiKeyStore
   const apiEndpointStore = ctx.apiEndpointStore
   const apiScheduler = ctx.apiScheduler
@@ -725,7 +728,17 @@ export function createPanelHandler(ctx) {
     if (!hasBoundExit(vm.proxy)) {
       startError = 'no_exit'
     } else {
-      const boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
+      let boot
+      if (vm.proxy?.managed) {
+        const started = await powerOnSlot({
+          projectRoot: cfg.paths.project,
+          id,
+          proxyPool,
+          routing: ctx.routingConfig,
+          fillTimezone: fillTimezoneFromExit,
+        })
+        boot = started.ok ? started.boot : started
+      } else boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
       vm = getVm(cfg.paths.project, id) || vm
       if (!boot?.ok) {
         startError = boot?.error || boot?.reason || 'runtime start failed'
@@ -3449,7 +3462,17 @@ export function createPanelHandler(ctx) {
               destroyed: gone.action,
             })
           }
-          const boot = await startSlotReady(vm, cfg.paths.project, { recreate: true, routing: ctx.routingConfig })
+          let boot
+          if (vm.proxy?.managed) {
+            const started = await powerOnSlot({
+              projectRoot: cfg.paths.project,
+              id,
+              proxyPool,
+              routing: ctx.routingConfig,
+              fillTimezone: fillTimezoneFromExit,
+            })
+            boot = started.ok ? started.boot : started
+          } else boot = await startSlotReady(vm, cfg.paths.project, { recreate: true, routing: ctx.routingConfig })
           if (!boot.ok) {
             vm =
               (patchVmRecord(cfg.paths.project, id, { status: 'stopped' }),
@@ -4186,7 +4209,8 @@ export function createPanelHandler(ctx) {
         const vm = {
           id,
           name: body.name || padVm(idx),
-          status: startNow ? 'running' : body.status || 'stopped',
+          // The watchdog may only revive a slot after its first successful boot.
+          status: startNow ? 'stopped' : body.status || 'stopped',
           kernel: wantKernel,
           timezone: requestedTimezone || null,
           // Only an explicit zone is a pin. An empty zone stays unset so the
@@ -4300,7 +4324,8 @@ export function createPanelHandler(ctx) {
         const hasExit = (v) => !!(v?.proxy?.url || isLocalEgressProxy(v?.proxy))
         if (wantProxy && !hasExit(vm)) {
           if (pickedProxyId) {
-            const bound = proxyPool.bind(pickedProxyId, id)
+            const managed = proxyPool.snapshot().proxies.find((proxy) => proxy.id === pickedProxyId)?.managed
+            const bound = managed ? await bindManagedExit(pickedProxyId, id) : proxyPool.bind(pickedProxyId, id)
             if (bound.ok) allocated = bound.proxy
             else proxyError = bound.error || 'proxy_bind_failed'
           } else {
@@ -4310,6 +4335,14 @@ export function createPanelHandler(ctx) {
                 role: ident.role,
               })
             } catch (e) {}
+          }
+          if (!pickedProxyId && allocated?.managed) {
+            const initialized = await bindManagedExit(allocated.id, id)
+            if (initialized.ok) allocated = initialized.proxy
+            else {
+              proxyError = initialized.error || 'managed_helper_setup_failed'
+              allocated = null
+            }
           }
           if (allocated) {
             bindVmProxy(cfg.paths.project, id, proxyPool.getProxyForVm(id))
@@ -4332,7 +4365,16 @@ export function createPanelHandler(ctx) {
         if (startNow && hasExit(vm)) {
           let boot
           try {
-            boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
+            if (vm.proxy?.managed) {
+              const started = await powerOnSlot({
+                projectRoot: cfg.paths.project,
+                id,
+                proxyPool,
+                routing: ctx.routingConfig,
+                fillTimezone: fillTimezoneFromExit,
+              })
+              boot = started.ok ? started.boot : started
+            } else boot = await startSlotReady(vm, cfg.paths.project, { routing: ctx.routingConfig })
           } catch (e) {
             boot = { ok: false, error: String(e?.message || e) }
           }
@@ -5673,6 +5715,24 @@ export function createPanelHandler(ctx) {
         proxyPool.syncLocalNodes(clusterNodesOf(ctx).map((node) => node.id))
         return json(res, 200, panel.ok(result))
       }
+      if (req.method === 'POST' && ['/api/panel/proxies/apply', '/api/panel/proxies/recover'].includes(p)) {
+        if (panelIdentity(req).role !== 'admin')
+          return json(res, 403, { ok: false, error: { code: 'admin_required', message: '需要管理员权限' } })
+        const body = await readBody(req, 4096)
+        const hostId = body.host_id ?? 'control-plane'
+        if (typeof hostId !== 'string' || !hostId || hostId.length > 128)
+          return json(res, 400, { ok: false, error: { code: 'invalid_managed_host', message: '宿主机标识无效' } })
+        const result = p.endsWith('/recover')
+          ? await proxyPool.recoverManaged({ hostId })
+          : await proxyPool.applyManaged({ hostId })
+        return json(
+          res,
+          result.ok ? 200 : 409,
+          result.ok
+            ? panel.ok(result)
+            : { ok: false, error: { code: result.error, message: result.error }, runtime: result.runtime },
+        )
+      }
       if (req.method === 'POST' && p === '/api/panel/proxies/import') {
         const body = await readBody(req, 2 * 1024 * 1024)
         const text = body.text || body.lines || (Array.isArray(body) ? body.join('\n') : '')
@@ -5681,14 +5741,25 @@ export function createPanelHandler(ctx) {
         if (bindVmId && userMissesVmId(req, cfg.paths.project, bindVmId)) {
           return json(res, 404, { ok: false, error: { message: 'vm not found' } })
         }
-        const result = proxyPool.importLines(text, {
-          fields: body.proxies || body.entries || null,
-          host: body.host,
-          port: body.port,
-          username: body.username ?? body.user,
-          password: body.password ?? body.pass,
-          ownerUserId: ident.role === 'user' ? req.panelUserId : null,
-        })
+        const managedLink = /(?:hy2|hysteria2):\/\//i.test(text)
+        const managedImport = body.protocol === 'hysteria2' || !!body.link || managedLink
+        if (managedImport && body.host_id && body.host_id !== 'control-plane' && ident.role !== 'admin')
+          return json(res, 403, { ok: false, error: { code: 'admin_required', message: '需要管理员权限' } })
+        const result = managedImport
+          ? await proxyPool.importManaged(
+              { ...body, link: body.link || (managedLink ? text.trim() : undefined) },
+              { ownerUserId: ident.role === 'user' ? req.panelUserId : null },
+            )
+          : proxyPool.importLines(text, {
+              fields: body.proxies || body.entries || null,
+              host: body.host,
+              port: body.port,
+              username: body.username ?? body.user,
+              password: body.password ?? body.pass,
+              ownerUserId: ident.role === 'user' ? req.panelUserId : null,
+            })
+        if (result.ok === false)
+          return json(res, 400, { ok: false, error: { code: result.error, message: result.error } })
         let bound = null
         let worker = null
         let timezone = null
@@ -5776,7 +5847,8 @@ export function createPanelHandler(ctx) {
         for (const key of ['host', 'port', 'username', 'password', 'label', 'domain_forward']) {
           if (Object.prototype.hasOwnProperty.call(body, key)) patch[key] = body[key]
         }
-        const result = proxyPool.update(id, patch)
+        const managed = proxyPool.snapshot().proxies.find((entry) => entry.id === id)?.managed
+        const result = managed ? await proxyPool.updateManaged(id, body) : proxyPool.update(id, patch)
         if (!result.ok) {
           const status = result.error === 'proxy_not_found' ? 404 : 400
           const type = status === 404 ? 'not_found_error' : 'invalid_request_error'
@@ -5834,6 +5906,11 @@ export function createPanelHandler(ctx) {
           return json(res, 404, {
             ok: false,
             error: { type: 'not_found_error', code: 'proxy_not_found', message: 'proxy not found' },
+          })
+        if (full.managed)
+          return json(res, 409, {
+            ok: false,
+            error: { code: 'managed_endpoint_private', message: '受管入口不支持复制' },
           })
         // URI only — no split username/password fields, so there is nothing for
         // a caller to render into the DOM piecemeal.
@@ -5934,7 +6011,8 @@ export function createPanelHandler(ctx) {
             ok: false,
             error: { type: 'invalid_request_error', code: 'missing_field', message: 'vm_id required', param: 'vm_id' },
           })
-        const result = proxyPool.bind(id, vmId)
+        const managed = proxyPool.snapshot().proxies.find((proxy) => proxy.id === id)?.managed
+        const result = managed ? await bindManagedExit(id, vmId) : proxyPool.bind(id, vmId)
         if (!result.ok) {
           const message =
             result.error === 'proxy_bind_limit'
@@ -5948,7 +6026,7 @@ export function createPanelHandler(ctx) {
           })
         }
         bindVmProxy(cfg.paths.project, vmId, proxyPool.getProxyForVm(vmId))
-        if (egressEnabled()) {
+        if (egressEnabled() && !managed) {
           await ensureProxyEgress(
             cfg.paths.project,
             proxyPool.getProxyForVm(vmId) || proxyPool.getProxyByIdWithAuth(id),
@@ -5998,9 +6076,9 @@ export function createPanelHandler(ctx) {
         const id = p.split('/').pop()
         const snap = proxyPool.snapshot().proxies.find((proxy) => proxy.id === id)
         const targets = snap?.bound_vm_ids?.length ? snap.bound_vm_ids : snap?.bound_vm_id ? [snap.bound_vm_id] : []
-        const result = proxyPool.remove(id)
+        const result = snap?.managed ? await proxyPool.updateManaged(id, {}, { remove: true }) : proxyPool.remove(id)
         if (!result.ok)
-          return json(res, 404, {
+          return json(res, result.error === 'proxy_not_found' ? 404 : 409, {
             ok: false,
             error: { type: 'not_found_error', code: result.error, message: result.error },
           })
@@ -6009,7 +6087,11 @@ export function createPanelHandler(ctx) {
           markUnschedulable(cfg.paths.project, unboundId, 'proxy_required')
         }
         if (egressEnabled()) stopProxyEgress(cfg.paths.project, id)
-        return json(res, 200, panel.ok(result.removed))
+        return json(
+          res,
+          200,
+          panel.ok(snap?.managed ? { application_status: 'pending', proxy: result.proxy } : result.removed),
+        )
       }
       // Auto-allocate proxy for a VM
       if (req.method === 'POST' && /^\/api\/panel\/vms\/[^/]+\/allocate-proxy$/.test(p)) {
@@ -6021,7 +6103,14 @@ export function createPanelHandler(ctx) {
             error: { type: 'api_error', code: 'no_free_proxy', message: 'No free SOCKS5 in pool' },
           })
         bindVmProxy(cfg.paths.project, vmId, proxyPool.getProxyForVm(vmId))
-        if (egressEnabled()) await ensureProxyEgress(cfg.paths.project, proxyPool.getProxyForVm(vmId))
+        if (allocated.managed) {
+          const initialized = await bindManagedExit(allocated.id, vmId)
+          if (!initialized.ok)
+            return json(res, 409, {
+              ok: false,
+              error: { code: initialized.error, message: initialized.error, details: initialized },
+            })
+        } else if (egressEnabled()) await ensureProxyEgress(cfg.paths.project, proxyPool.getProxyForVm(vmId))
         let worker = null
         const timezone = await syncVmTimezoneFromProxy(cfg.paths.project, proxyPool, vmId, {
           proxyId: allocated?.id || null,

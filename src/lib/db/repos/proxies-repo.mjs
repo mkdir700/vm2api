@@ -5,6 +5,7 @@
  */
 
 import { getDb, withTransaction } from '../database.mjs'
+import { maybeEncrypt, maybeDecrypt } from '../secure.mjs'
 import { SettingsRepo } from './settings-repo.mjs'
 
 const CONFIG_KEY = 'proxy_pool_config'
@@ -48,10 +49,25 @@ const COLUMNS = [
   'created_at',
   'updated_at',
   'domain_forward',
+  'managed_config',
+  'managed_host_id',
+  'managed_delete_pending',
 ]
 
 function rowToProxy(row) {
   if (!row) return null
+  if (row.managed_config != null) {
+    try {
+      row = {
+        ...row,
+        managed_config: JSON.parse(maybeDecrypt(row.managed_config)),
+        username: maybeDecrypt(row.username),
+        password: maybeDecrypt(row.password),
+      }
+    } catch {
+      throw Object.assign(new Error('managed_egress_decryption_failed'), { code: 'managed_egress_decryption_failed' })
+    }
+  }
   // ProxyPool still speaks `scheme`; the column is sub2api's `protocol`.
   return { ...row, scheme: row.protocol, enabled: !!row.enabled, domain_forward: !!row.domain_forward }
 }
@@ -78,6 +94,11 @@ export class ProxiesRepo {
       for (const p of proxies) {
         this._insert.run(
           ...COLUMNS.map((c) => {
+            if (c === 'managed_config')
+              return p.managed_config == null ? null : maybeEncrypt(JSON.stringify(p.managed_config))
+            if (p.managed_config != null && (c === 'username' || c === 'password')) return maybeEncrypt(p[c])
+            if (p.managed_config != null && c === 'raw') return null
+            if (c === 'managed_delete_pending') return p.managed_delete_pending ? 1 : 0
             if (c === 'enabled') return p.enabled === false ? 0 : 1
             if (c === 'domain_forward') return p.domain_forward ? 1 : 0
             if (c === 'protocol') return p.protocol ?? p.scheme ?? 'socks5'

@@ -1,3 +1,4 @@
+import { withManagedProxyResponse } from './managed-egress-admission.mjs'
 /**
  * Proxy exit-node geolocation.
  *
@@ -84,7 +85,7 @@ function geoLookupEndpointForIp(ip, template) {
   return `${base}/${encodeURIComponent(ip)}?fields=status,message,query,country,countryCode,regionName,city,timezone,isp`
 }
 
-async function fetchThroughProxy(url, proxyUrl, { timeoutMs, fetchImpl, accept } = {}) {
+async function fetchThroughProxy(url, proxyUrl, { timeoutMs, fetchImpl, accept, verifyManaged = false } = {}) {
   const timeout = Math.max(1000, Number(timeoutMs) || DEFAULT_GEO_TIMEOUT_MS)
   const { default: nodeFetch } = await import('node-fetch')
   const impl = fetchImpl || nodeFetch
@@ -98,7 +99,7 @@ async function fetchThroughProxy(url, proxyUrl, { timeoutMs, fetchImpl, accept }
   }
   if (typeof AbortSignal !== 'undefined' && AbortSignal.timeout) opts.signal = AbortSignal.timeout(timeout)
   try {
-    return await impl(url, opts)
+    return await (verifyManaged ? impl(url, opts) : withManagedProxyResponse(proxyUrl, () => impl(url, opts)))
   } catch (error) {
     return { ok: false, error: `geo_transport_error:${String(error?.message || error).slice(0, 120)}` }
   }
@@ -108,12 +109,13 @@ async function fetchThroughProxy(url, proxyUrl, { timeoutMs, fetchImpl, accept }
  * Resolve the exit node's geolocation.
  * @returns {Promise<{ok: true, geo: object} | {ok: false, error: string}>}
  */
-export async function lookupProxyGeo(proxyUrl, { endpoint, timeoutMs, fetchImpl, ipv6Mode } = {}) {
+async function lookupProxyGeoImpl(proxyUrl, { endpoint, timeoutMs, fetchImpl, ipv6Mode, verifyManaged = false } = {}) {
   const url = endpoint || process.env.KIN_PROXY_GEO_URL || DEFAULT_GEO_ENDPOINT
   const res = await fetchThroughProxy(url, proxyUrl, {
     timeoutMs,
     fetchImpl,
     accept: 'application/json',
+    verifyManaged,
   })
   if (res?.error) {
     // The default service has no IPv6 transport. In the explicitly enabled
@@ -124,7 +126,10 @@ export async function lookupProxyGeo(proxyUrl, { endpoint, timeoutMs, fetchImpl,
     }
     return { ok: false, error: res.error }
   }
-  if (!res?.ok) return { ok: false, error: `geo_http_${res?.status || 0}` }
+  if (!res?.ok) {
+    res?.body?.destroy?.()
+    return { ok: false, error: `geo_http_${res?.status || 0}` }
+  }
   let payload
   try {
     payload = await res.json()
@@ -178,4 +183,12 @@ export async function lookupProxyGeoV6(proxyUrl, { ipEndpoint, geoEndpoint, time
   if (net.isIPv4(returnedIp || '')) return { ok: false, error: 'geo_ipv6_got_ipv4' }
   if (!sameIpv6Address(returnedIp || '', ip)) return { ok: false, error: 'geo_ipv6_ip_mismatch' }
   return { ok: true, geo: { ...geoResult.geo, ip } }
+}
+
+export function lookupProxyGeo(proxyUrl, options = {}) {
+  return lookupProxyGeoImpl(proxyUrl, { ...options, verifyManaged: false })
+}
+// Only the host runtime verifier imports this entry; panel options cannot enable it.
+export function verifyManagedProxyGeo(proxyUrl, options = {}) {
+  return lookupProxyGeoImpl(proxyUrl, { ...options, verifyManaged: true })
 }

@@ -1,3 +1,9 @@
+import { withManagedEgressOperation, withManagedEgressMaintenance } from './managed-egress-admission.mjs'
+import {
+  setManagedEgressReady,
+  registerManagedEgressEndpoint,
+  unregisterManagedEgressEndpoint,
+} from './managed-egress-readiness.mjs'
 /**
  * SOCKS5 Proxy Pool (SQLite-backed)
  * - Bulk import
@@ -9,6 +15,7 @@
  * Persistence: `proxies` table + `settings.proxy_pool_config`.
  * Working set stays in memory (probe loop mutates it); save() writes through.
  */
+import { managedEgressConfig, hysteria2Fields, parseHysteria2Link } from './managed-egress-config.mjs'
 import { EventEmitter } from 'node:events'
 import net from 'node:net'
 import crypto from 'node:crypto'
@@ -382,10 +389,15 @@ export class ProxyPool extends EventEmitter {
 
   /** Re-read working set from DB (startup + post-restore). */
   load() {
+    for (const p of this.state.proxies) if (p.managed_config != null) unregisterManagedEgressEndpoint(p.id)
     try {
       this.state.config = { ...DEFAULT_CONFIG, ...(this.repo.getConfig({}) || {}) }
       this.state.proxies = this.repo.loadAll().map(hydrateProxy)
-    } catch {
+      for (const p of this.state.proxies)
+        if (p.managed_config != null && p.managed_host_id === 'control-plane')
+          registerManagedEgressEndpoint(p.id, p.host, p.port)
+    } catch (error) {
+      if (error?.code === 'managed_egress_decryption_failed') throw error
       this.state = { config: { ...DEFAULT_CONFIG }, proxies: [] }
     }
   }
@@ -495,6 +507,17 @@ export class ProxyPool extends EventEmitter {
     snap.proxies = snap.proxies
       .map((p) => annotatePublicLocalProxy(p, { reveal, nodes: nodeList, ownerVmIds }))
       .filter(Boolean)
+    if (reveal) {
+      const rows = new Map(this.state.proxies.map((p) => [p.id, p]))
+      for (const proxy of snap.proxies)
+        if (proxy.managed) {
+          proxy.managed_host_id = rows.get(proxy.id)?.managed_host_id
+          proxy.managed_host_name =
+            proxy.managed_host_id === 'control-plane'
+              ? '本机'
+              : nodeList.find((node) => node.id === proxy.managed_host_id)?.label || proxy.managed_host_id
+        }
+    }
     return snap
   }
 
@@ -504,8 +527,15 @@ export class ProxyPool extends EventEmitter {
     const blocked = proxyBlockedReason(p, this.state.config.ipv6_enabled)
     return {
       id: p.id,
-      host: p.host,
-      port: p.port,
+      host: p.managed_config != null ? null : p.host,
+      port: p.managed_config != null ? null : p.port,
+      managed: p.managed_config != null,
+      removal_pending: !!p.managed_delete_pending,
+      runtime_status: p.managed_config != null ? p.managed_runtime_status || 'unknown' : undefined,
+      exit_status: p.managed_config != null ? p.managed_exit_status || 'pending' : undefined,
+      observed_ip: p.managed_config != null ? p.managed_observed_ip || null : undefined,
+      application_status: p.managed_config != null ? p.managed_application_status || 'pending' : undefined,
+      protocol: p.managed_config != null ? 'hysteria2' : p.scheme || 'socks5',
       label: p.label || null,
       has_auth: !!(p.username || p.password),
       status: p.status, // unknown | ok | fail | dead
@@ -678,6 +708,402 @@ export class ProxyPool extends EventEmitter {
     return { ok: true, created: true, proxy: this._withAuth(row) }
   }
 
+  managedRows(hostId) {
+    return this.state.proxies.filter((p) => p.managed_config != null && p.managed_host_id === hostId)
+  }
+
+  async managedRuntime(hostId) {
+    const runtime = hostId === 'control-plane' ? this.managedHost : await this.managedHostFor?.(hostId)
+    if (!runtime) throw new Error('managed_runtime_unavailable')
+    return runtime
+  }
+
+  /** Read-only startup reconciliation and periodic health verification. */
+  inspectManaged() {
+    const operation = async () => {
+      const hosts = [
+        ...new Set(this.state.proxies.filter((p) => p.managed_config != null).map((p) => p.managed_host_id)),
+      ]
+      const results = []
+      for (const hostId of hosts) {
+        const rows = this.managedRows(hostId)
+        const result = await this._inspectManagedRuntime(rows, hostId)
+        this._publishManagedInspection(rows, result)
+        results.push(result)
+      }
+      this.emit('change')
+      // Never expose active files: they contain credentials.
+      const failed = results.find((result) => !result.ok)
+      return { ok: !failed, error: failed?.error || null }
+    }
+    const pending = (this._managedMutation || Promise.resolve()).then(operation)
+    this._managedMutation = pending.catch(() => {})
+    return pending
+  }
+
+  async _inspectManagedRuntime(rows, hostId = 'control-plane', { recovering = false } = {}) {
+    let result
+    try {
+      result = await (await this.managedRuntime(hostId)).inspect()
+    } catch {
+      return { ok: false, error: 'managed_runtime_unavailable', exits: [] }
+    }
+    if (result.ok && this.managedHelperStatus)
+      for (const row of rows) {
+        let available = false
+        try {
+          available = await this.managedHelperStatus(row)
+        } catch {}
+        const verifiedExit = result.exits.find((exit) => exit.id === row.id)
+        if (
+          !available &&
+          row.enabled !== false &&
+          verifiedExit?.ready &&
+          !row.managed_delete_pending &&
+          this.managedRepairHelper &&
+          this._managedConfigMatches(row, result.config, { inboundOnly: recovering })
+        ) {
+          try {
+            available = await withManagedEgressMaintenance(row, async () => {
+              if (!(await this.managedRepairHelper(row))) return false
+              return await this.managedHelperStatus(row)
+            })
+          } catch {}
+        }
+        if (!available) {
+          const exit = result.exits.find((entry) => entry.id === row.id)
+          if (exit) {
+            exit.ready = false
+            exit.error = 'managed_helper_unavailable'
+          }
+        }
+      }
+    return result
+  }
+
+  _publishManagedInspection(rows, result) {
+    for (const p of rows) {
+      const observed = result.exits.find((exit) => exit.id === p.id)
+      // Match both sides of this row against the applied file. A pending edit
+      // cannot become ready just because its previous listener still works.
+      const matches = this._managedConfigMatches(p, result.config)
+      const ready = !p.managed_delete_pending && result.ok && observed?.ready === true && matches
+      p.managed_ready = ready
+      setManagedEgressReady(p.id, ready)
+      p.managed_application_status = matches ? 'applied' : 'pending'
+      p.managed_runtime_status = result.ok ? 'running' : 'unavailable'
+      p.managed_exit_status = ready ? 'ready' : !result.ok || matches ? 'unavailable' : 'pending'
+      p.managed_observed_ip = ready ? observed.ip : null
+    }
+  }
+
+  _managedConfigMatches(p, config, { inboundOnly = false } = {}) {
+    const expected = managedEgressConfig([
+      {
+        id: p.id,
+        protocol: 'hysteria2',
+        port: p.port,
+        username: p.username,
+        password: p.password,
+        config: p.managed_config,
+      },
+    ])
+    const inbound = config?.inbounds?.find((entry) => entry.tag === `in-${p.id}`)
+    const outbound = config?.outbounds?.find((entry) => entry.tag === `out-${p.id}`)
+    return (
+      JSON.stringify(inbound) === JSON.stringify(expected.inbounds[0]) &&
+      (inboundOnly || JSON.stringify(outbound) === JSON.stringify(expected.outbounds[0]))
+    )
+  }
+
+  startManagedMonitor() {
+    this.stopManagedMonitor()
+    const generation = this._managedMonitorGeneration
+    const poll = async () => {
+      if (generation !== this._managedMonitorGeneration || this._managedMonitorStopped) return
+      try {
+        await this.inspectManaged()
+      } catch {
+        for (const p of this.state.proxies)
+          if (p.managed_config != null) {
+            p.managed_ready = false
+            setManagedEgressReady(p.id, false)
+          }
+      }
+      if (generation === this._managedMonitorGeneration && !this._managedMonitorStopped) {
+        this._managedMonitor = setTimeout(poll, 15000)
+        this._managedMonitor.unref?.()
+      }
+    }
+    this._managedMonitorStopped = false
+    void poll()
+  }
+
+  stopManagedMonitor() {
+    this._managedMonitorGeneration = (this._managedMonitorGeneration || 0) + 1
+    this._managedMonitorStopped = true
+    clearTimeout(this._managedMonitor)
+  }
+
+  /** Restore maintenance pauses admission/monitoring before awaiting this queue. */
+  async whenManagedIdle() {
+    await this._managedMutation
+  }
+
+  updateManaged(proxyId, patch = {}, { remove = false } = {}) {
+    const operation = async () => {
+      const p = this.state.proxies.find((entry) => entry.id === proxyId)
+      if (!p || p.managed_config == null) return { ok: false, error: 'proxy_not_found' }
+      if (boundVmIdsOf(p).length && remove) return { ok: false, error: 'proxy_in_use' }
+      let config = p.managed_config
+      let label = p.label
+      if (!remove) {
+        if (p.managed_delete_pending) return { ok: false, error: 'managed_removal_pending' }
+        try {
+          if (Object.hasOwn(patch, 'link')) config = parseHysteria2Link(patch.link)
+          else if (Object.hasOwn(patch, 'config')) {
+            if (!patch.config || typeof patch.config !== 'object' || Array.isArray(patch.config))
+              throw new Error('invalid_config')
+            config = hysteria2Fields({ ...p.managed_config, ...patch.config })
+          } else if (!Object.hasOwn(patch, 'label')) return { ok: false, error: 'no_editable_fields' }
+        } catch {
+          return { ok: false, error: 'invalid_managed_egress_config' }
+        }
+        if (Object.hasOwn(patch, 'label')) {
+          if (typeof patch.label !== 'string') return { ok: false, error: 'invalid_label' }
+          label = patch.label.trim() || null
+          if (label && label.length > PROXY_LABEL_MAX) return { ok: false, error: 'label_too_long' }
+        }
+      }
+      const before = { ...p }
+      const changed = remove || JSON.stringify(config) !== JSON.stringify(p.managed_config)
+      p.managed_config = config
+      p.label = label
+      p.managed_delete_pending = remove
+      if (changed) {
+        p.managed_ready = false
+        p.managed_application_status = 'pending'
+        p.managed_observed_ip = null
+      }
+      try {
+        this.save()
+      } catch {
+        Object.assign(p, before)
+        return { ok: false, error: 'managed_persist_failed' }
+      }
+      if (changed) setManagedEgressReady(p.id, false)
+      return {
+        ok: true,
+        proxy: this.publicProxy(p),
+        application_status: changed ? 'pending' : 'applied',
+        connection_changed: false,
+      }
+    }
+    const pending = (this._managedMutation || Promise.resolve()).then(operation)
+    this._managedMutation = pending.catch(() => {})
+    return pending
+  }
+
+  recoverManaged({ hostId = 'control-plane' } = {}) {
+    const operation = async () => {
+      const rows = this.managedRows(hostId)
+      let runtime
+      try {
+        runtime = await this.managedRuntime(hostId)
+      } catch {
+        return { ok: false, error: 'managed_runtime_unavailable' }
+      }
+      this._managedApplying = true
+      for (const row of rows) {
+        row.managed_ready = false
+        setManagedEgressReady(row.id, false)
+      }
+      try {
+        const state = await runtime.recover()
+        const inspection = await this._inspectManagedRuntime(rows, hostId, { recovering: true })
+        this._publishManagedInspection(rows, inspection)
+        const verified = state.status === 'ready' && inspection.ok && inspection.exits.every((exit) => exit.ready)
+        this.emit('change')
+        return {
+          ok: verified,
+          error: verified ? null : state.error || inspection.error || 'managed_recovery_failed',
+          runtime: state,
+          pending_changes:
+            state.desired_version !== state.applied_version ||
+            rows.some((p) => p.managed_delete_pending || p.managed_application_status !== 'applied'),
+        }
+      } catch {
+        for (const p of rows) {
+          p.managed_ready = false
+          p.managed_exit_status = 'unavailable'
+          p.managed_observed_ip = null
+          setManagedEgressReady(p.id, false)
+        }
+        this.emit('change')
+        return { ok: false, error: 'managed_recovery_failed' }
+      } finally {
+        this._managedApplying = false
+      }
+    }
+    const pending = (this._managedMutation || Promise.resolve()).then(operation)
+    this._managedMutation = pending.catch(() => {})
+    return pending
+  }
+
+  applyManaged({ hostId = 'control-plane' } = {}) {
+    const operation = async () => {
+      const rows = this.managedRows(hostId)
+      let runtime
+      try {
+        runtime = await this.managedRuntime(hostId)
+      } catch {
+        return { ok: false, error: 'managed_runtime_unavailable' }
+      }
+      this._managedApplying = true
+      try {
+        if (hostId !== 'control-plane') await this.managedPrepareHost?.(hostId)
+        const state = await runtime.apply(
+          rows
+            .filter((p) => !p.managed_delete_pending)
+            .map((p) => ({
+              id: p.id,
+              protocol: 'hysteria2',
+              port: p.port,
+              username: p.username,
+              password: p.password,
+              config: p.managed_config,
+            })),
+        )
+        const ready = state.status === 'ready' && state.applied_version === state.desired_version && !state.error
+        for (const p of rows) {
+          p.managed_ready = ready && !p.managed_delete_pending
+          p.managed_application_status = ready ? 'applied' : 'pending'
+          p.managed_observed_ip = null
+          p.managed_exit_status = p.managed_ready ? 'ready' : 'pending'
+          p.managed_runtime_status = state.status === 'ready' ? 'running' : 'unavailable'
+          setManagedEgressReady(p.id, p.managed_ready)
+        }
+        if (!ready) this._publishManagedInspection(rows, await this._inspectManagedRuntime(rows, hostId))
+        if (ready) {
+          const beforeRemoval = this.state.proxies
+          this.state.proxies = this.state.proxies.filter(
+            (p) => p.managed_host_id !== hostId || !p.managed_delete_pending,
+          )
+          try {
+            this.save()
+          } catch {
+            this.state.proxies = beforeRemoval
+            throw new Error('managed_persist_failed')
+          }
+        }
+        if (ready) for (const p of rows) if (p.managed_delete_pending) unregisterManagedEgressEndpoint(p.id)
+        this.emit('change')
+        return { ok: ready, error: ready ? null : state.error || 'managed_apply_failed', runtime: state }
+      } catch {
+        for (const p of rows) {
+          p.managed_ready = false
+          p.managed_exit_status = 'unavailable'
+          p.managed_runtime_status = 'unknown'
+          p.managed_observed_ip = null
+          setManagedEgressReady(p.id, false)
+        }
+        this.emit('change')
+        return { ok: false, error: 'managed_apply_failed' }
+      } finally {
+        this._managedApplying = false
+      }
+    }
+    const pending = (this._managedMutation || Promise.resolve()).then(operation)
+    this._managedMutation = pending.catch(() => {})
+    return pending
+  }
+
+  /** Import one typed node into the existing pool. Applying it is a separate operation. */
+  importManaged(fields = {}, { ownerUserId = null } = {}) {
+    const operation = async () => {
+      const hostId = fields.host_id ?? 'control-plane'
+      if (typeof hostId !== 'string' || !hostId || hostId.length > 128)
+        return { ok: false, error: 'invalid_managed_host' }
+      let config
+      try {
+        config = fields.link ? parseHysteria2Link(fields.link) : hysteria2Fields(fields.config || fields)
+      } catch {
+        return { ok: false, error: 'invalid_managed_egress_config' }
+      }
+      if (fields.label != null && typeof fields.label !== 'string') return { ok: false, error: 'invalid_label' }
+      const label = String(fields.label || '').trim() || null
+      if (label && label.length > PROXY_LABEL_MAX) return { ok: false, error: 'label_too_long' }
+      let occupied = null
+      if (hostId !== 'control-plane') {
+        if (!this.managedPortsFor) return { ok: false, error: 'managed_host_unsupported' }
+        try {
+          occupied = await this.managedPortsFor(hostId)
+          if (
+            !(occupied instanceof Set) ||
+            [...occupied].some((port) => !Number.isInteger(port) || port < 1 || port > 65535)
+          )
+            throw new Error()
+        } catch (error) {
+          return {
+            ok: false,
+            error:
+              error.code === 'node_not_found' || error.message === 'managed_host_unsupported'
+                ? 'managed_host_unsupported'
+                : 'managed_remote_host_unavailable',
+          }
+        }
+      }
+      let port = null
+      for (let candidate = 24000; candidate <= 24999; candidate++) {
+        if (this.state.proxies.some((p) => p.managed_host_id === hostId && p.port === candidate)) continue
+        const available = occupied
+          ? !occupied.has(candidate)
+          : await new Promise((resolve) => {
+              const listener = net.createServer()
+              listener.once('error', () => resolve(false))
+              listener.listen({ port: candidate, host: '127.0.0.1', exclusive: true }, () =>
+                listener.close(() => resolve(true)),
+              )
+            })
+        if (available) {
+          port = candidate
+          break
+        }
+      }
+      if (port == null) return { ok: false, error: 'managed_port_range_exhausted' }
+      const proxy = {
+        id: uid('px'),
+        scheme: 'hysteria2',
+        host: '127.0.0.1',
+        port,
+        username: crypto.randomBytes(18).toString('hex'),
+        password: crypto.randomBytes(24).toString('hex'),
+        managed_config: config,
+        managed_host_id: hostId,
+        managed_ready: false,
+        label,
+        enabled: true,
+        status: 'unknown',
+        owner_user_id: normalizeOwnerId(ownerUserId),
+        bound_vm_ids: [],
+        bound_vm_id: null,
+        created_at: new Date().toISOString(),
+      }
+      this.state.proxies.push(proxy)
+      try {
+        this.save()
+      } catch {
+        this.state.proxies = this.state.proxies.filter((p) => p !== proxy)
+        return { ok: false, error: 'managed_persist_failed' }
+      }
+      if (hostId === 'control-plane') registerManagedEgressEndpoint(proxy.id, proxy.host, proxy.port)
+      return { ok: true, added: 1, skipped: 0, items: [this.publicProxy(proxy)], application_status: 'pending' }
+    }
+    const pending = (this._managedMutation || Promise.resolve()).then(operation)
+    this._managedMutation = pending.catch(() => {})
+    return pending
+  }
+
   importLines(text, extra = {}) {
     const parsed = []
     for (const line of String(text || '').split(/\r?\n/)) {
@@ -751,6 +1177,12 @@ export class ProxyPool extends EventEmitter {
    */
   ensureBoundToVm(vmId, preferredId = null) {
     if (!vmId) return null
+    if (
+      this.state.proxies.some(
+        (p) => proxyHasVm(p, vmId) && p.managed_config != null && !this._managedPlacementFits(p, vmId),
+      )
+    )
+      return null
     if (this.state.proxies.some((p) => proxyHasVm(p, vmId) && proxyBlockedReason(p, this.state.config.ipv6_enabled)))
       return null
     const existing = this.getProxyForVm(vmId)
@@ -767,6 +1199,12 @@ export class ProxyPool extends EventEmitter {
   /** Allocate one healthy proxy with remaining capacity and bind to vmId */
   allocateForVm(vmId, { ownerUserId = null, role = 'admin' } = {}) {
     if (!vmId) return null
+    if (
+      this.state.proxies.some(
+        (p) => proxyHasVm(p, vmId) && p.managed_config != null && !this._managedPlacementFits(p, vmId),
+      )
+    )
+      return null
     if (this.state.proxies.some((p) => proxyHasVm(p, vmId) && proxyBlockedReason(p, this.state.config.ipv6_enabled)))
       return null
     const existing = this.state.proxies.find(
@@ -782,6 +1220,7 @@ export class ProxyPool extends EventEmitter {
     }
     const candidates = this.state.proxies.filter((p) => {
       if (isLocalEgressProxy(p) && p.id !== localTarget) return false
+      if (p.managed_config != null && !this._managedPlacementFits(p, vmId)) return false
       if (!p.enabled || p.status === 'dead' || p.status === 'fail') return false
       if (proxyBlockedReason(p, this.state.config.ipv6_enabled)) return false
       if (boundVmIdsOf(p).length >= limit) return false
@@ -809,11 +1248,18 @@ export class ProxyPool extends EventEmitter {
     }
     const p = this.state.proxies.find((x) => x.id === proxyId)
     if (!p) return { ok: false, error: 'proxy_not_found' }
+    if (p.managed_config != null && this._managedApplying) return { ok: false, error: 'managed_apply_in_progress' }
+    if (p.managed_config != null && !this._managedPlacementFits(p, vm))
+      return { ok: false, error: 'managed_host_unsupported' }
     // Migration moves a slot onto its node row even while that row is marked down.
     if (!force && (!p.enabled || p.status === 'dead')) return { ok: false, error: 'proxy_disabled' }
     const blocked = proxyBlockedReason(p, this.state.config.ipv6_enabled)
     if (blocked) return { ok: false, error: blocked }
     if (!vm) return { ok: false, error: 'vm_id_required' }
+    const ids = boundVmIdsOf(p)
+    const limit = this.bindLimit()
+    if (!force && !ids.includes(vm) && ids.length >= limit)
+      return { ok: false, error: 'proxy_bind_limit', max: limit, bound_vm_ids: ids }
     for (const x of this.state.proxies) {
       if (x.id === proxyId) continue
       const ids = boundVmIdsOf(x)
@@ -823,21 +1269,99 @@ export class ProxyPool extends EventEmitter {
           ids.filter((id) => id !== vm),
         )
     }
-    const ids = boundVmIdsOf(p)
     if (ids.includes(vm)) {
       this.save()
       return { ok: true, proxy: this.publicProxy(p) }
-    }
-    const limit = this.bindLimit()
-    if (!force && ids.length >= limit) {
-      return { ok: false, error: 'proxy_bind_limit', max: limit, bound_vm_ids: ids }
     }
     setBoundVmIds(p, [...ids, vm])
     this.save()
     return { ok: true, proxy: this.publicProxy(p) }
   }
 
+  _managedPlacementFits(proxy, vmId) {
+    const nodeId = this.vmNodeOf ? this._vmNodeOrUndefined(vmId) : null
+    if (proxy.managed_host_id === 'control-plane') return nodeId === null
+    if (!nodeId || nodeId !== proxy.managed_host_id) return false
+    try {
+      return this.managedPlacementSupported?.(proxy, nodeId) === true
+    } catch {
+      return false
+    }
+  }
+
+  /** Commit a binding, initialize its helper, and verify it before restoring admission. */
+  bindManaged(proxyId, vmId, prepare) {
+    const operation = async () => {
+      const row = this.state.proxies.find((p) => p.id === proxyId && p.managed_config != null)
+      if (!row || typeof prepare !== 'function') return { ok: false, error: 'proxy_not_found' }
+      let bound
+      if (
+        proxyHasVm(row, vmId) &&
+        proxyBlockedReason(row, this.state.config.ipv6_enabled) === 'managed_egress_not_ready'
+      ) {
+        // Retry only a retained binding. Verify the complete applied row before
+        // allowing setup through the private maintenance admission context.
+        try {
+          const verified = await (await this.managedRuntime(row.managed_host_id)).inspect()
+          if (!proxyHasVm(row, vmId)) return { ok: false, error: 'managed_binding_changed' }
+          if (
+            row.enabled === false ||
+            row.managed_delete_pending ||
+            !verified.ok ||
+            !verified.exits.some((exit) => exit.id === row.id && exit.ready) ||
+            !this._managedConfigMatches(row, verified.config)
+          )
+            return { ok: false, error: 'managed_egress_not_ready', binding_committed: true }
+          bound = await withManagedEgressMaintenance(row, () => this.bind(proxyId, vmId))
+        } catch {
+          return { ok: false, error: 'managed_egress_not_ready', binding_committed: true }
+        }
+      } else bound = this.bind(proxyId, vmId)
+      if (!bound.ok) return bound
+      this._managedApplying = true
+      let setup = false
+      try {
+        setup = await withManagedEgressMaintenance(row, async () => (await prepare(this._withAuth(row)))?.ok === true)
+        const inspection = await this._inspectManagedRuntime(this.managedRows(row.managed_host_id), row.managed_host_id)
+        this._publishManagedInspection(this.managedRows(row.managed_host_id), inspection)
+        const ready = setup && row.managed_ready === true
+        if (!ready) {
+          row.managed_ready = false
+          row.managed_exit_status = 'unavailable'
+          row.managed_observed_ip = null
+          setManagedEgressReady(row.id, false)
+        }
+        this.emit('change')
+        return {
+          ok: ready,
+          error: ready ? null : 'managed_helper_setup_failed',
+          proxy: this.publicProxy(row),
+          binding_committed: true,
+        }
+      } catch {
+        row.managed_ready = false
+        row.managed_exit_status = 'unavailable'
+        row.managed_observed_ip = null
+        setManagedEgressReady(row.id, false)
+        this.emit('change')
+        return {
+          ok: false,
+          error: 'managed_helper_setup_failed',
+          proxy: this.publicProxy(row),
+          binding_committed: true,
+        }
+      } finally {
+        this._managedApplying = false
+      }
+    }
+    const pending = (this._managedMutation || Promise.resolve()).then(operation)
+    this._managedMutation = pending.catch(() => {})
+    return pending
+  }
+
   unbind(proxyId, vmId = null) {
+    if (this._managedApplying && this.state.proxies.some((p) => p.id === proxyId && p.managed_config != null))
+      return { ok: false, error: 'managed_apply_in_progress' }
     const p = this.state.proxies.find((x) => x.id === proxyId)
     if (!p) return { ok: false, error: 'proxy_not_found' }
     const ids = boundVmIdsOf(p)
@@ -863,6 +1387,8 @@ export class ProxyPool extends EventEmitter {
   }
 
   setEnabled(proxyId, enabled) {
+    if (this._managedApplying && this.state.proxies.some((p) => p.id === proxyId && p.managed_config != null))
+      return { ok: false, error: 'managed_apply_in_progress' }
     const p = this.state.proxies.find((x) => x.id === proxyId)
     if (!p) return { ok: false, error: 'proxy_not_found' }
     p.enabled = !!enabled
@@ -881,6 +1407,9 @@ export class ProxyPool extends EventEmitter {
   remove(proxyId) {
     const idx = this.state.proxies.findIndex((x) => x.id === proxyId)
     if (idx < 0) return { ok: false, error: 'proxy_not_found' }
+    const target = this.state.proxies[idx]
+    if (target.managed_config != null && boundVmIdsOf(target).length) return { ok: false, error: 'proxy_in_use' }
+    if (target.managed_config != null) return { ok: false, error: 'managed_apply_required' }
     const [p] = this.state.proxies.splice(idx, 1)
     this.save()
     return { ok: true, removed: this.publicProxy(p) }
@@ -901,6 +1430,7 @@ export class ProxyPool extends EventEmitter {
     if (!p) return { ok: false, error: 'proxy_not_found' }
     const has = (k) => Object.prototype.hasOwnProperty.call(patch, k)
     const connection = ['host', 'port', 'username', 'password'].some(has)
+    if (p.managed_config != null && connection) return { ok: false, error: 'managed_endpoint_read_only' }
     if (!connection && !has('label') && !has('domain_forward')) {
       return { ok: false, error: 'no_editable_fields' }
     }
@@ -1082,6 +1612,16 @@ export class ProxyPool extends EventEmitter {
    * an HTTP port that accepts the socket and never answers 0x05 is a failure.
    */
   async probeOne(proxy) {
+    try {
+      return await withManagedEgressOperation(proxy, () => this._probeOneAdmitted(this._controlProxy(proxy)))
+    } catch (error) {
+      if (['managed_egress_not_ready', 'managed_remote_endpoint_unavailable'].includes(error?.code))
+        return { ok: false, scope: 'pending', error: error.code, latency_ms: null }
+      throw error
+    }
+  }
+
+  async _probeOneAdmitted(proxy) {
     const blocked = proxyBlockedReason(proxy, this.state.config.ipv6_enabled)
     if (blocked) return { ok: false, scope: 'policy', error: blocked, latency_ms: null }
     if (isLocalEgressProxy(proxy)) {
@@ -1106,14 +1646,14 @@ export class ProxyPool extends EventEmitter {
     if (socks.scope === 'policy') return socks
     if (!socks.ok) return { ...socks, scope: 'socks' }
     if (typeof this.egressCheck !== 'function') return { ...socks, scope: 'socks' }
-    let eg = this.egressCheck(proxy)
+    let eg = await this.egressCheck(proxy)
     if (!eg?.ok && typeof this.repairEgress === 'function') {
       try {
         await this.repairEgress(proxy)
       } catch {
         /* keep egress failure */
       }
-      eg = this.egressCheck(proxy)
+      eg = await this.egressCheck(proxy)
     }
     if (eg?.ok) return { ...socks, scope: 'socks' }
     return {
@@ -1148,7 +1688,17 @@ export class ProxyPool extends EventEmitter {
     return last
   }
 
-  _socksProbe(proxy, host, timeout, target = null) {
+  async _socksProbe(proxy, host, timeout, target = null) {
+    try {
+      return await withManagedEgressOperation(proxy, () => this._socksProbeAdmitted(proxy, host, timeout, target))
+    } catch (error) {
+      if (error?.code === 'managed_egress_not_ready')
+        return { ok: false, scope: 'pending', error: error.code, latency_ms: null }
+      throw error
+    }
+  }
+
+  _socksProbeAdmitted(proxy, host, timeout, target = null) {
     return new Promise((resolve) => {
       const socket = net.connect({ host, port: proxy.port })
       this._probeSockets.set(socket, proxy)
@@ -1315,7 +1865,12 @@ export class ProxyPool extends EventEmitter {
     }
     // Control-plane local egress has no SOCKS URL: the lookup leaves over the
     // host default route. A node row looks up through that node's own route.
-    let url = this._withAuth(p).url
+    let url
+    try {
+      url = this._withAuth(p).url
+    } catch (error) {
+      return { ok: false, error: error.code || 'proxy_unavailable', proxy: this.publicProxy(p) }
+    }
     const nodeId = isLocalEgressProxy(p) ? localEgressNodeId(p.id) : null
     if (isLocalEgressProxy(p)) url = ''
     if (nodeId) {
@@ -1513,6 +2068,7 @@ export class ProxyPool extends EventEmitter {
         !proxyBlockedReason(x, this.state.config.ipv6_enabled),
     )
     if (!p) return null
+    if (p.managed_config != null && !this._managedPlacementFits(p, vmId)) return null
     return this._withAuth(p)
   }
 
@@ -1529,6 +2085,12 @@ export class ProxyPool extends EventEmitter {
   /** Display name only — safe for panel responses, unlike getProxyByIdWithAuth(). */
   labelOf(proxyId) {
     return this.state.proxies.find((x) => x.id === proxyId)?.label || null
+  }
+
+  /** Stable managed identity and policy, available even while its SSH bridge is down. */
+  getManagedReference(proxyId) {
+    const row = this.state.proxies.find((p) => p.id === proxyId && p.managed_config != null)
+    return row ? { ...this.publicProxy(row), managed_host_id: row.managed_host_id } : null
   }
 
   getProxyByIdWithAuth(proxyId) {
@@ -1550,16 +2112,44 @@ export class ProxyPool extends EventEmitter {
         password: null,
       }
     }
+    const endpoint = this._controlProxy(p)
     return {
       id: p.id,
-      url: socksProxyUrl(p, 'socks5'),
-      host: p.host,
-      port: p.port,
+      url: socksProxyUrl(endpoint, 'socks5'),
+      managed: p.managed_config != null,
+      scheme: p.managed_config != null ? 'hysteria2' : 'socks5',
+      managed_ready: p.managed_ready === true,
+      managed_host_id: p.managed_config != null ? p.managed_host_id : undefined,
+      managed_listener_port: p.managed_config != null ? p.port : undefined,
+      host: endpoint.host,
+      port: endpoint.port,
       username: p.username || null,
       password: p.password == null ? null : p.password,
       // startProxyEgress reads this to write kin-egress domain_forward; without
       // it the toggle is stored but every helper keeps forwarding IP literals.
       domain_forward: p.domain_forward === true,
+    }
+  }
+
+  /** Persisted remote loopback addresses are meaningful only on their own host. */
+  _controlProxy(proxy) {
+    if (proxy.managed_config == null || proxy.managed_host_id === 'control-plane') return proxy
+    try {
+      const endpoint = this.managedEndpointFor?.(proxy)
+      if (
+        endpoint?.host !== '127.0.0.1' ||
+        !Number.isInteger(endpoint.port) ||
+        endpoint.port < 1 ||
+        endpoint.port > 65535
+      )
+        throw new Error()
+      return { ...proxy, url: undefined, host: endpoint.host, port: endpoint.port }
+    } catch {
+      setManagedEgressReady(proxy.id, false)
+      throw Object.assign(new Error('受管远程出口入口不可用'), {
+        code: 'managed_remote_endpoint_unavailable',
+        status: 409,
+      })
     }
   }
 }

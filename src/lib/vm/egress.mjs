@@ -1,3 +1,4 @@
+import { withManagedEgressOperation } from './managed-egress-admission.mjs'
 /**
  * Remote SOCKS5: one docker net per proxy, kin-egress REDIRECTs that bridge.
  * Local egress (`px-local` / scheme=local) is the host default route. Do not
@@ -473,6 +474,7 @@ export async function startEgressProcess({
   dnsUpstream = '',
   dnsEmptyTypes = [],
   domainForward = false,
+  managedControl = false,
 }) {
   const blocked = proxyBlockedReason({ url: proxyUrl })
   if (blocked) return { ok: false, error: blocked }
@@ -481,6 +483,7 @@ export async function startEgressProcess({
   fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
   const pidFile = path.join(dir, 'egress.pid')
   const cfgPath = path.join(dir, 'egress.json')
+  const controlSocket = managedControl ? path.join(dir, 'drain.sock') : ''
   const listenTcp = `${listenHost}:${tcpPort}`
   const listenDns = `${listenHost}:${dnsPort}`
   const existing = readPid(pidFile)
@@ -489,6 +492,7 @@ export async function startEgressProcess({
     try {
       const old = JSON.parse(fs.readFileSync(cfgPath, 'utf8'))
       if (
+        (old.control_socket || '') === controlSocket &&
         old.listen_tcp === listenTcp &&
         old.listen_dns === listenDns &&
         old.proxy_url === proxyUrl &&
@@ -529,6 +533,7 @@ export async function startEgressProcess({
     listen_tcp: listenTcp,
     listen_dns: listenDns,
   }
+  if (controlSocket) cfg.control_socket = controlSocket
   if (dnsUpstream) cfg.dns_upstream = dnsUpstream
   if (dnsEmptyTypes.length) cfg.dns_empty_types = dnsEmptyTypes
   if (domainForward) cfg.domain_forward = true
@@ -797,12 +802,14 @@ export async function runExclusiveProxyEgress(projectRoot, proxyId, fn) {
   }
 }
 
-export async function ensureProxyEgress(projectRoot, proxy, opts = {}) {
+async function ensureProxyEgressAdmitted(projectRoot, proxy, opts = {}) {
+  if (proxy?.managed && proxy.managed_host_id && proxy.managed_host_id !== 'control-plane')
+    return { ok: false, error: 'managed_host_mismatch' }
   if (isLocalEgressProxy(proxy)) return ensureLocalProxyEgress(proxy, { runDocker: opts.runDocker })
   return runExclusiveProxyEgress(projectRoot, proxy?.id, () => startProxyEgress(projectRoot, proxy, opts))
 }
 
-export async function startProxyEgress(
+async function startProxyEgressAdmitted(
   projectRoot,
   proxy,
   {
@@ -815,6 +822,8 @@ export async function startProxyEgress(
     listenHost: listenHostOverride,
   } = {},
 ) {
+  if (proxy?.managed && proxy.managed_host_id && proxy.managed_host_id !== 'control-plane')
+    return { ok: false, error: 'managed_host_mismatch' }
   const blocked = proxyBlockedReason(proxy)
   if (blocked) return { ok: false, error: blocked }
   const proxyId = proxy?.id
@@ -845,6 +854,7 @@ export async function startProxyEgress(
     dnsUpstream,
     dnsEmptyTypes,
     domainForward: proxy?.domain_forward === true,
+    managedControl: proxy?.managed === true,
     ...(bin ? { bin } : {}),
   })
   if (!started.ok) return started
@@ -883,4 +893,22 @@ export function slotNetworkForVm(vm, _env = process.env) {
   const id = vm?.proxy?.id
   if (!id) return ''
   return networkName(id)
+}
+
+export async function ensureProxyEgress(projectRoot, proxy, options = {}) {
+  try {
+    return await withManagedEgressOperation(proxy, () => ensureProxyEgressAdmitted(projectRoot, proxy, options))
+  } catch (error) {
+    if (error?.code === 'managed_egress_not_ready') return { ok: false, error: error.code }
+    throw error
+  }
+}
+
+export async function startProxyEgress(projectRoot, proxy, options = {}) {
+  try {
+    return await withManagedEgressOperation(proxy, () => startProxyEgressAdmitted(projectRoot, proxy, options))
+  } catch (error) {
+    if (error?.code === 'managed_egress_not_ready') return { ok: false, error: error.code }
+    throw error
+  }
 }

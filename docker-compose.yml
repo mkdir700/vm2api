@@ -36,3 +36,29 @@ services:
       - ./bin:/opt/vm2api/bin
       - ./share:/opt/vm2api/share
       - ./src/config:/opt/vm2api/src/config
+
+  # Bootstrap has no dependency on the control plane. API readiness never waits for egress.
+  sing-box-init:
+    image: ghcr.io/sagernet/sing-box:v1.12.0@sha256:3c1ee82d450df9b336b6f63b1d272cf86e3835392d99596ef8c35f206a457999
+    restart: "no"
+    network_mode: none
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    entrypoint: ["/bin/sh", "/init-managed-egress.sh"]
+    volumes:
+      - ./deploy/init-managed-egress.sh:/init-managed-egress.sh:ro
+      - ./data/managed-egress:/var/lib/vm2api-egress
+
+  sing-box:
+    image: ghcr.io/sagernet/sing-box:v1.12.0@sha256:3c1ee82d450df9b336b6f63b1d272cf86e3835392d99596ef8c35f206a457999
+    restart: unless-stopped
+    network_mode: host
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    read_only: true
+    depends_on:
+      sing-box-init:
+        condition: service_completed_successfully
+    command: ["run", "-c", "/var/lib/vm2api-egress/config.json"]
+    volumes:
+      - ./data/managed-egress:/var/lib/vm2api-egress:ro

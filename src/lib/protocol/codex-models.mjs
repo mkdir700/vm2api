@@ -1,3 +1,4 @@
+import { withManagedProxyResponse } from '../vm/managed-egress-admission.mjs'
 /**
  * ChatGPT / Codex model catalog.
  * Live ids come from chatgpt.com/backend-api/models through the slot SOCKS.
@@ -246,7 +247,7 @@ export function makeProxyFetch(proxyUrl, timeoutMs = 15000, { maxMs = 30000 } = 
     const timer = setTimeout(() => ac.abort(), ms)
     const opts = { ...init, signal: ac.signal }
     if (agent) opts.agent = agent
-    return fetch(url, opts).finally(() => clearTimeout(timer))
+    return withManagedProxyResponse(px, () => fetch(url, opts)).finally(() => clearTimeout(timer))
   }
 }
 

@@ -1,3 +1,9 @@
+import { EgressDrainClient, acquireManagedDrain } from './lib/vm/managed-egress-drain.mjs'
+import { egressRunDir, egressPidsForProxyConfig } from './lib/vm/egress.mjs'
+import { ManagedEgressHost } from './lib/vm/managed-egress-host.mjs'
+import { ManagedEgressDocker } from './lib/vm/managed-egress-docker.mjs'
+import { RemoteManagedEgressHosts } from './lib/cluster/managed-egress-hosts.mjs'
+import { reserveAbsentManagedHelper } from './lib/vm/managed-egress-helper-absence.mjs'
 /**
  * vm2api — Node control plane.
  * Inference data plane: one long-lived Go slot worker per VM
@@ -343,6 +349,7 @@ requestLog.startCleanupScheduler()
 
 // Set once the cluster manager exists; node local rows probe through it.
 let localEgressCluster = null
+let remoteManagedEgress = null
 proxyPool = new ProxyPool({
   dataDir,
   // null = control plane; undefined = no such slot.
@@ -373,9 +380,87 @@ proxyPool = new ProxyPool({
     if (hold?.reason !== HOLD_PROXY) return
     clearScheduleHold(cfg.paths.project, vmId, HOLD_PROXY, { tag: hold.detail?.tag == null ? null : proxyId })
   },
-  egressCheck: (proxy) => proxyEgressReady(proxy, cfg.paths.project),
-  repairEgress: (proxy) => ensureProxyEgress(cfg.paths.project, proxy),
+  egressCheck: async (proxy) =>
+    proxy.managed_host_id && proxy.managed_host_id !== 'control-plane'
+      ? { ok: (await remoteManagedEgress?.helperStatus(proxy)) === true }
+      : proxyEgressReady(proxy, cfg.paths.project),
+  repairEgress: (proxy) =>
+    proxy.managed_host_id && proxy.managed_host_id !== 'control-plane'
+      ? { ok: false, error: 'managed_remote_helper_unavailable' }
+      : ensureProxyEgress(cfg.paths.project, proxy),
 })
+// Runtime access is lazy. An unavailable sing-box never prevents API startup.
+proxyPool.managedHost = new ManagedEgressHost({
+  db: proxyPool.db,
+  hostId: 'control-plane',
+  configDir: path.join(dataDir, 'managed-egress'),
+  runtime: new ManagedEgressDocker({ configDir: path.join(dataDir, 'managed-egress') }),
+  acquireDrain: async ({ recovery = false } = {}) => {
+    const rows = proxyPool.managedRows('control-plane')
+    const reservations = []
+    const lease = await acquireManagedDrain({
+      ids: rows.map((p) => p.id),
+      helpers: async () => {
+        const helpers = []
+        for (const p of rows) {
+          if (p.managed_host_id !== 'control-plane') throw new Error('managed_host_unsupported')
+          const pids = egressPidsForProxyConfig(cfg.paths.project, p.id)
+          if (pids.length > 1) throw new Error('managed_helper_ambiguous')
+          if (!pids.length) {
+            if (p.bound_vm_ids?.length || p.bound_vm_id) {
+              if (!recovery) throw new Error('managed_bound_helper_missing')
+              const dir = egressRunDir(cfg.paths.project, p.id)
+              reservations.push(
+                await reserveAbsentManagedHelper({
+                  id: p.id,
+                  configFile: path.join(dir, 'egress.json'),
+                  pidFile: path.join(dir, 'egress.pid'),
+                }),
+              )
+            }
+            continue
+          }
+          helpers.push(
+            new EgressDrainClient({
+              id: p.id,
+              socketPath: path.join(egressRunDir(cfg.paths.project, p.id), 'drain.sock'),
+            }),
+          )
+        }
+        return helpers
+      },
+    })
+    return {
+      wait: (timeout) => lease.wait(timeout),
+      release: async (options) => {
+        try {
+          await lease.release(options)
+        } finally {
+          await Promise.all(reservations.map((proof) => proof.close()))
+        }
+      },
+    }
+  },
+})
+proxyPool.managedHelperStatus = async (proxy) => {
+  if (proxy.managed_host_id !== 'control-plane') return remoteManagedEgress?.helperStatus(proxy) ?? false
+  const pids = egressPidsForProxyConfig(cfg.paths.project, proxy.id)
+  if (pids.length > 1) return false
+  if (!pids.length) return !(proxy.bound_vm_ids?.length || proxy.bound_vm_id)
+  const control = new EgressDrainClient({
+    id: proxy.id,
+    socketPath: path.join(egressRunDir(cfg.paths.project, proxy.id), 'drain.sock'),
+  })
+  return !(await control.request('GET', '/status')).paused
+}
+proxyPool.managedRepairHelper = async (proxy) => {
+  if (proxy.enabled === false) return false
+  if (proxy.managed_host_id !== 'control-plane') return remoteManagedEgress?.repairRouting(proxy) ?? false
+  if (egressPidsForProxyConfig(cfg.paths.project, proxy.id).length)
+    return false
+  const result = await ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(proxy.id))
+  return result.ok === true
+}
 // An upgrade replaces bin/ files; slots mounting data/run/slot-guest-bin must see the new ones.
 try {
   refreshSlotGuestBinDir(cfg.paths.project)
@@ -383,6 +468,7 @@ try {
   console.warn('[bootstrap] slot-guest-bin refresh failed:', err?.message || err)
 }
 proxyPool.startScheduler()
+proxyPool.startManagedMonitor()
 
 // 首次安装的出口池是空的，槽没有可绑出口就起不来。本机出口永远成立，先补上。
 try {
@@ -562,13 +648,21 @@ const backupService = new BackupService({
   projectRoot: cfg.paths.project,
   configDir: path.dirname(routingConfigPath),
 })
-backupService.onRestored((db) => {
+backupService.onRestoring(async () => {
+  proxyPool.stopManagedMonitor()
+  await proxyPool.whenManagedIdle()
+  return () => proxyPool.startManagedMonitor()
+})
+backupService.onRestored(async (db) => {
   // A restore swaps the DatabaseSync instance and routing files. Rebuild every
   // holder before reporting success; otherwise requests keep stale snapshots
   // or silently write through statements owned by the closed connection.
   for (const store of [apiKeyStore, apiEndpointStore, panelUsers, accountQuota, stickyRouter, proxyPool, requestLog]) {
     store.rebind(db)
   }
+  proxyPool.managedHost.rebind(db)
+  await clusterManager.rebind(new ClusterNodesRepo(db))
+  await remoteManagedEgress?.rebind(db)
   groupsRepo = new GroupsRepo(db)
   apiScheduler.reload(apiEndpointStore.listRaw())
 
@@ -904,19 +998,31 @@ const clusterManager = new ClusterManager({
         (Number(poolScheduler?.vmInflight?.get(vm.id) || 0) > 0 ||
           vmLockBusy(path.join(cfg.paths.project, 'vms', `${vm.id}.json`))),
     )
-    if (busy || nodeImageBuildRunning(nodeId)) {
+    if (busy || nodeImageBuildRunning(nodeId) || proxyPool._managedApplying) {
       throw new ClusterError(409, 'node_in_use', '节点仍有进行中的请求、虚拟机操作或镜像构建，请完成后重试')
     }
   },
   onNodesChanged: () => syncNodeLocalEgress(),
   // A node's local row follows its link: re-probe as soon as the link settles.
   onLinkState: (nodeId, state) => {
+    if (state !== 'ready') void remoteManagedEgress?.invalidate(nodeId).catch(() => {})
     if (state === 'ready' || state === 'error' || state === 'backoff') {
       proxyPool.probeLocalNode(nodeId).catch(() => {})
     }
   },
 })
 localEgressCluster = clusterManager
+remoteManagedEgress = new RemoteManagedEgressHosts({
+  db: proxyPool.db,
+  cluster: clusterManager,
+  rowsFor: (nodeId) => proxyPool.managedRows(nodeId),
+  socketDir: clusterManager.socketDir,
+})
+proxyPool.managedHostFor = (nodeId) => remoteManagedEgress.get(nodeId)
+proxyPool.managedEndpointFor = (proxy) => remoteManagedEgress.addressFor(proxy)
+proxyPool.managedPortsFor = (nodeId) => remoteManagedEgress.occupiedPorts(nodeId)
+proxyPool.managedPrepareHost = (nodeId) => remoteManagedEgress.ensureProvisioned(nodeId)
+proxyPool.managedPlacementSupported = (proxy, nodeId) => remoteManagedEgress.supportsPlacement(proxy, nodeId)
 bindPlacement({ manager: clusterManager, projectRoot: cfg.paths.project })
 await startNodeEgressSocks({ clientFor: (nodeId) => clusterManager.client(nodeId) })
 clusterManager.start()
@@ -1034,7 +1140,11 @@ const server = http.createServer(async (req, res) => {
 
     if (
       backupService.isRestoring &&
-      (p.startsWith('/v1/') || p === '/messages' || p === '/chat/completions' || p === '/responses')
+      (p.startsWith('/v1/') ||
+        p === '/messages' ||
+        p === '/chat/completions' ||
+        p === '/responses' ||
+        (p.startsWith('/api/panel/') && !['GET', 'HEAD', 'OPTIONS'].includes(req.method)))
     ) {
       return json(
         res,
@@ -1235,7 +1345,7 @@ process.on('unhandledRejection', (e) => console.error('[unhandled]', e))
 
 // Graceful shutdown: stop schedulers/watchers, close the DB (WAL checkpoint).
 let _shuttingDown = false
-function shutdown(signal) {
+async function shutdown(signal) {
   if (_shuttingDown) return
   _shuttingDown = true
   installJevUsageRecorder(null)
@@ -1247,6 +1357,7 @@ function shutdown(signal) {
     backupService.stopScheduler()
   } catch {}
   try {
+    proxyPool.stopManagedMonitor()
     proxyPool.stopScheduler()
   } catch {}
   try {
@@ -1278,7 +1389,10 @@ function shutdown(signal) {
     stopAllRustKernels()
   } catch {}
   try {
-    clusterManager.stop()
+    await remoteManagedEgress?.close()
+  } catch {}
+  try {
+    await clusterManager.stop()
   } catch {}
   try {
     server.close(() => {})

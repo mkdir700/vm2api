@@ -56,6 +56,9 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund
 COPY src ./src
 COPY scripts ./scripts
+COPY docker-compose.yml ./image-deploy/docker-compose.yml
+COPY deploy/init-managed-egress.sh ./image-deploy/deploy/init-managed-egress.sh
+LABEL vm2api.deployment-bundle="1"
 COPY VERSION CHANGELOG.md ./
 COPY docker/kin-os ./docker/kin-os
 COPY --from=web /src/web/dist ./web/dist

@@ -63,6 +63,7 @@ export function proxyHostText(
   opts?: LocalProxyLabelOpts | string | null
 ): string {
   if (proxyIsLocal(prx)) return proxyHostLabel(prx, opts)
+  if (prx.managed) return prx.managed_host_name || 'Hysteria 2'
   if (!prx.host) return `?:${prx.port ?? '?'}`
   const endpoint = proxyHostLabel(prx)
   return prx.port == null ? `${endpoint}:?` : endpoint
@@ -73,6 +74,10 @@ export function proxyLabel(
   prx: VmProxySnap,
   opts?: LocalProxyLabelOpts | string | null
 ): string {
+  if (prx.managed) {
+    const name = prx.label?.trim() || prx.id || 'Hysteria 2'
+    return prx.managed_host_name ? `${name} · ${prx.managed_host_name}` : name
+  }
   const host = proxyHostText(prx, opts)
   if (proxyIsLocal(prx)) return host
   const name = prx.label?.trim()
@@ -222,14 +227,17 @@ export function proxiesForVmBind(
   return sortedProxiesByAvailability(open, vmId, poolBindLimit)
 }
 
-/**
- * 本地代理只能绑到它所在 VPS 上的槽位。`vmNodeId` 未给出（undefined）时不过滤；
- * 网关仍会把通用 px-local 落到槽位自己的节点上，绑错机器会被拒。
- */
+/** Use visible placement metadata as a hint. The API validates role-redacted choices. */
 export function localProxyFitsNode(
   prx: VmProxySnap,
   vmNodeId: string | null | undefined
 ): boolean {
+  if (prx.managed)
+    return (
+      vmNodeId === undefined ||
+      prx.managed_host_id === undefined ||
+      prx.managed_host_id === (vmNodeId || 'control-plane')
+    )
   if (vmNodeId === undefined || !proxyIsLocal(prx)) return true
   return proxyLocalNodeId(prx) === (vmNodeId || null)
 }

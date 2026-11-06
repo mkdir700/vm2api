@@ -56,9 +56,7 @@ export function useCreateExit(nodeId: string): CreateExit {
   // 本地代理每台 VPS 一条：只列目标机器自己的那条。节点那条还没建时退回
   // 通用 px-local，网关会把它落到该节点上。
   const target = nodeId || null
-  const own = open.filter(
-    (p) => !proxyIsLocal(p) || localProxyFitsNode(p, target)
-  )
+  const own = open.filter((p) => localProxyFitsNode(p, target))
   const options =
     target && !own.some(proxyIsLocal)
       ? [...open.filter((p) => p.id === 'px-local'), ...own]

@@ -22,6 +22,7 @@ import (
 )
 
 type Config struct {
+	ControlSocket string   `json:"control_socket,omitempty"`
 	ProxyID       string   `json:"proxy_id"`
 	ProxyURL      string   `json:"proxy_url"`
 	ListenTCP     string   `json:"listen_tcp"`
@@ -82,6 +83,7 @@ var DefaultDNSUpstreams = []string{
 const dnsAttemptTimeout = 4 * time.Second
 
 type Server struct {
+	flows     flowGate
 	cfg       Config
 	dialer    *kinproxy.Dialer
 	http      *http.Client
@@ -142,6 +144,13 @@ func (s *Server) Serve(ctx context.Context) error {
 		return fmt.Errorf("listen tcp: %w", err)
 	}
 	defer tcpLn.Close()
+	control, err := s.controlListener()
+	if err != nil {
+		return fmt.Errorf("listen drain control: %w", err)
+	}
+	if control != nil {
+		defer control.Close()
+	}
 
 	var dnsUDP net.PacketConn
 	var dnsTCP net.Listener
@@ -164,6 +173,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	go func() {
 		<-ctx.Done()
 		_ = tcpLn.Close()
+		if control != nil {
+			_ = control.Close()
+		}
 		if dnsUDP != nil {
 			_ = dnsUDP.Close()
 		}
@@ -179,7 +191,11 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 			return acceptErr
 		}
-		go s.handleTCP(ctx, conn)
+		if !s.flows.begin() {
+			conn.Close()
+			continue
+		}
+		go func() { defer s.flows.end(); s.handleTCP(ctx, conn) }()
 	}
 }
 
@@ -325,9 +341,12 @@ func (s *Server) serveDNS(ctx context.Context, ln net.PacketConn) {
 			}
 			return
 		}
+		if !s.flows.begin() {
+			continue
+		}
 		query := make([]byte, n)
 		copy(query, buf[:n])
-		go s.handleDNS(ctx, ln, addr, query)
+		go func() { defer s.flows.end(); s.handleDNS(ctx, ln, addr, query) }()
 	}
 }
 
@@ -340,7 +359,11 @@ func (s *Server) serveDNSTCP(ctx context.Context, ln net.Listener) {
 			}
 			return
 		}
-		go s.handleDNSTCP(ctx, conn)
+		if !s.flows.begin() {
+			conn.Close()
+			continue
+		}
+		go func() { defer s.flows.end(); s.handleDNSTCP(ctx, conn) }()
 	}
 }
 

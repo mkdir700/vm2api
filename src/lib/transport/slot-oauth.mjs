@@ -1,3 +1,4 @@
+import { withManagedEgressOperation } from '../vm/managed-egress-admission.mjs'
 import { spawn } from 'node:child_process'
 import { randomUUID as cryptoRandomUUID } from 'node:crypto'
 import path from 'node:path'
@@ -110,7 +111,7 @@ function lastJsonLine(stdout) {
   }
 }
 
-export async function runSlotOauth(
+async function runSlotOauthAdmitted(
   exec,
   op,
   {
@@ -231,4 +232,8 @@ export async function runSlotOauth(
   if (telemetryError) response.telemetry_error = telemetryError
   if (status === 0) response.transportError = true
   return response
+}
+
+export function runSlotOauth(exec, ...args) {
+  return withManagedEgressOperation(exec?.vm?.proxy, () => runSlotOauthAdmitted(exec, ...args))
 }

@@ -525,6 +525,9 @@ fetch_release_files() {
   mkdir -p "${INSTALL_DIR}/deploy"
   info "下载部署文件 ${tag} → ${INSTALL_DIR}"
   fetch_file "$tag" docker-compose.yml "${INSTALL_DIR}/docker-compose.yml"
+  if grep -q '^  sing-box-init:' "${INSTALL_DIR}/docker-compose.yml"; then
+    fetch_file "$tag" deploy/init-managed-egress.sh "${INSTALL_DIR}/deploy/init-managed-egress.sh"
+  fi
   fetch_file "$tag" .env.example "${INSTALL_DIR}/.env.example"
   fetch_file "$tag" VERSION "${INSTALL_DIR}/VERSION"
   fetch_file "$tag" CHANGELOG.md "${INSTALL_DIR}/CHANGELOG.md" 1

@@ -44,6 +44,28 @@ export function poolProxyUnavailable(hit) {
 
 export function resolveImportProxy({ vm, proxyPool, overrideUrl = null } = {}) {
   const hit = poolHitForVm(proxyPool, vm)
+  const managed = hit ? hit.managed : vm?.proxy?.managed || vm?.proxy?.scheme === 'hysteria2'
+  if (managed) {
+    let allocated
+    try {
+      allocated = vm?.id && proxyPool?.getProxyForVm?.(vm.id)
+    } catch (error) {
+      return { ok: false, proxyUrl: null, blocked: true, reason: error.code || 'managed_egress_not_ready' }
+    }
+    if (!allocated?.managed || allocated.managed_host_id !== (vm?.node_id || 'control-plane'))
+      return { ok: false, proxyUrl: null, blocked: true, reason: hit?.blocked_reason || 'managed_host_unsupported' }
+    if (poolProxyUnavailable(hit)) return { ok: false, proxyUrl: null, blocked: true, reason: 'proxy_unavailable' }
+    const proxyUrl = String(allocated.url || '').replace(/^socks5:/i, 'socks5h:')
+    if (!proxyUrl) return { ok: false, proxyUrl: null, blocked: true, reason: 'managed_egress_not_ready' }
+    if (overrideUrl) {
+      try {
+        if (boundProxyUrl({ url: overrideUrl }) !== proxyUrl) throw new Error()
+      } catch {
+        return { ok: false, proxyUrl: null, blocked: true, reason: 'managed_proxy_override_forbidden' }
+      }
+    }
+    return { ok: true, proxyUrl, blocked: false, reason: null }
+  }
   const ipv6Enabled = proxyPool?.snapshot?.().config?.ipv6_enabled ?? configuredIpv6Enabled()
   const blocked = proxyBlockedReason(overrideUrl ? { url: overrideUrl } : hit || vm?.proxy, ipv6Enabled)
   if (blocked || hit?.blocked_reason) {

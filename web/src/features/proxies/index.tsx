@@ -209,11 +209,18 @@ export function ProxiesPage() {
   })
   const remove = useMutation({
     mutationFn: (id: string) =>
-      api(`/api/panel/proxies/${encodeURIComponent(id)}`, {
-        method: 'DELETE',
-      }),
-    onSuccess: async () => {
-      toast.success('已删除')
+      api<{ application_status?: string }>(
+        `/api/panel/proxies/${encodeURIComponent(id)}`,
+        {
+          method: 'DELETE',
+        }
+      ),
+    onSuccess: async (data) => {
+      toast.success(
+        data?.application_status === 'pending'
+          ? '删除已保存，应用配置后释放端口'
+          : '已删除'
+      )
       setDelId('')
       await refresh()
     },
@@ -518,7 +525,10 @@ export function ProxiesPage() {
                 followProxyTimezone={cfg.follow_proxy_timezone !== false}
               />
             ) : (
-              <ProxyImportPanel hasLocal={list.some(proxyIsControlLocal)} />
+              <ProxyImportPanel
+                hasLocal={list.some(proxyIsControlLocal)}
+                canManage={canManage}
+              />
             )}
           </div>
         </SheetContent>

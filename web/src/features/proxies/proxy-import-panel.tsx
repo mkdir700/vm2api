@@ -1,14 +1,16 @@
 import { useState } from 'react'
-import { useMutation } from '@tanstack/react-query'
+import { useMutation, useQuery } from '@tanstack/react-query'
 import { House, Import } from 'lucide-react'
 import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import { clusterNodesQueryOptions } from '@/features/cluster/queries'
 import { ProxyPanel } from './proxy-panel'
 import { useRefreshProxies } from './queries'
 
 type ImportResult = {
+  application_status?: string
   added?: number
   skipped?: number
   skip_details?: { line?: string; reason?: string }[]
@@ -44,9 +46,29 @@ function countLines(raw: string): number {
   }).length
 }
 
-export function ProxyImportPanel({ hasLocal }: { hasLocal: boolean }) {
+export function ProxyImportPanel({
+  hasLocal,
+  canManage = false,
+}: {
+  hasLocal: boolean
+  canManage?: boolean
+}) {
   const refresh = useRefreshProxies()
   const [raw, setRaw] = useState('')
+  const [protocol, setProtocol] = useState('socks5')
+  const [hostId, setHostId] = useState('control-plane')
+  const nodes = useQuery({
+    ...clusterNodesQueryOptions(),
+    enabled: canManage && protocol === 'hysteria2',
+  })
+  const remoteHosts = (nodes.data || []).filter(
+    (node) => node.platform !== 'darwin'
+  )
+  const hostAvailable =
+    hostId === 'control-plane' ||
+    remoteHosts.some(
+      (node) => node.id === hostId && node.link.state === 'ready'
+    )
   const [outcome, setOutcome] = useState<ImportOutcome | null>(null)
   const lines = countLines(raw)
 
@@ -54,14 +76,44 @@ export function ProxyImportPanel({ hasLocal }: { hasLocal: boolean }) {
     mutationFn: () =>
       api<ImportResult>('/api/panel/proxies/import', {
         method: 'POST',
-        body: JSON.stringify({ text: raw }),
+        body: JSON.stringify({
+          text: raw,
+          protocol,
+          host_id: protocol === 'hysteria2' ? hostId : undefined,
+        }),
       }),
     onSuccess: async (data) => {
       const next = outcomeOf(data)
       setOutcome(next)
       setRaw('')
-      if (next.added) toast.success(`已导入 ${next.added} 条`)
+      if (data.application_status === 'pending')
+        toast.success('节点已保存，等待配置应用')
+      else if (next.added) toast.success(`已导入 ${next.added} 条`)
       else toast.warning('没有新增代理')
+      await refresh()
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+  const applyManaged = useMutation({
+    mutationFn: () =>
+      api('/api/panel/proxies/apply', {
+        method: 'POST',
+        body: JSON.stringify({ host_id: hostId }),
+      }),
+    onSuccess: async () => {
+      toast.success('受管出口配置已应用')
+      await refresh()
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+  const recoverManaged = useMutation({
+    mutationFn: () =>
+      api('/api/panel/proxies/recover', {
+        method: 'POST',
+        body: JSON.stringify({ host_id: hostId }),
+      }),
+    onSuccess: async () => {
+      toast.success('运行配置已恢复。待应用变更已保留')
       await refresh()
     },
     onError: (error: Error) => toast.error(error.message),
@@ -80,7 +132,12 @@ export function ProxyImportPanel({ hasLocal }: { hasLocal: boolean }) {
   })
 
   const submit = () => {
-    if (!lines || importPx.isPending) return
+    if (
+      !lines ||
+      importPx.isPending ||
+      (protocol === 'hysteria2' && !hostAvailable)
+    )
+      return
     importPx.mutate()
   }
 
@@ -94,8 +151,70 @@ export function ProxyImportPanel({ hasLocal }: { hasLocal: boolean }) {
         </span>
       }
     >
+      <label htmlFor='proxy-protocol' className='mb-1 block text-xs'>
+        协议
+      </label>
+      <select
+        id='proxy-protocol'
+        value={protocol}
+        disabled={
+          importPx.isPending ||
+          applyManaged.isPending ||
+          recoverManaged.isPending
+        }
+        onChange={(event) => {
+          setProtocol(event.target.value)
+          setOutcome(null)
+        }}
+        className='mb-3 rounded-md border bg-background px-2 py-1 text-sm'
+      >
+        <option value='socks5'>SOCKS5</option>
+        <option value='hysteria2'>Hysteria 2</option>
+      </select>
+      {canManage && protocol === 'hysteria2' ? (
+        <div className='mb-3'>
+          <label htmlFor='proxy-managed-host' className='mb-1 block text-xs'>
+            宿主机
+          </label>
+          <select
+            id='proxy-managed-host'
+            value={hostId}
+            onChange={(event) => setHostId(event.target.value)}
+            disabled={
+              importPx.isPending ||
+              applyManaged.isPending ||
+              recoverManaged.isPending
+            }
+            className='w-full rounded-md border bg-background px-2 py-1 text-sm'
+          >
+            <option value='control-plane'>本机</option>
+            {remoteHosts.map((node) => (
+              <option
+                key={node.id}
+                value={node.id}
+                disabled={node.link.state !== 'ready'}
+              >
+                {node.label}
+                {node.link.state !== 'ready' ? '（未连接）' : ''}
+              </option>
+            ))}
+          </select>
+          {nodes.isError ? (
+            <p role='status' className='mt-1 text-xs text-destructive'>
+              无法读取宿主机列表。请稍后重试。
+            </p>
+          ) : null}
+          {!hostAvailable ? (
+            <p role='status' className='mt-1 text-xs text-destructive'>
+              所选宿主机不可用。
+            </p>
+          ) : null}
+        </div>
+      ) : null}
       <label htmlFor='proxy-import' className='sr-only'>
-        SOCKS5 列表，每行一条
+        {protocol === 'hysteria2'
+          ? 'Hysteria 2 节点链接，仅填写一条'
+          : 'SOCKS5 列表，每行一条'}
       </label>
       <Textarea
         id='proxy-import'
@@ -114,18 +233,28 @@ export function ProxyImportPanel({ hasLocal }: { hasLocal: boolean }) {
         spellCheck={false}
         autoComplete='off'
         placeholder={
-          'host:port\nuser:pass@host:port\nsocks5://user:pass@host:port'
+          protocol === 'hysteria2'
+            ? 'hy2://password@server:443/?sni=server'
+            : 'host:port\nuser:pass@host:port\nsocks5://user:pass@host:port'
         }
         className='field-host min-h-40 resize-y text-xs leading-relaxed'
       />
       <p className='mt-1.5 text-[11px] text-muted-foreground'>
-        也支持 host:port:user:pass。账密入库后不再回显，重复的自动跳过。
+        {protocol === 'hysteria2'
+          ? hostId === 'control-plane'
+            ? '填写一条 hy2:// 或 hysteria2:// 链接。保存后等待配置应用，就绪后才能绑定槽位。'
+            : '节点会保存在所选宿主机。请选择同一宿主机的槽位，绑定时会检查出口和辅助进程。'
+          : '也支持 host:port:user:pass。账密入库后不再回显，重复的自动跳过。'}
       </p>
       <div className='mt-3 flex flex-wrap items-center gap-2'>
         <Button
           size='sm'
           onClick={submit}
-          disabled={!lines || importPx.isPending}
+          disabled={
+            !lines ||
+            importPx.isPending ||
+            (protocol === 'hysteria2' && !hostAvailable)
+          }
           loading={importPx.isPending}
           title='Ctrl / ⌘ + Enter'
         >
@@ -144,6 +273,39 @@ export function ProxyImportPanel({ hasLocal }: { hasLocal: boolean }) {
           {hasLocal ? '已有本地代理' : '本地代理'}
         </Button>
       </div>
+      {canManage && protocol === 'hysteria2' ? (
+        <div className='mt-3'>
+          <Button
+            size='sm'
+            variant='outline'
+            onClick={() => applyManaged.mutate()}
+            disabled={
+              applyManaged.isPending ||
+              recoverManaged.isPending ||
+              !hostAvailable
+            }
+            loading={applyManaged.isPending}
+          >
+            应用受管出口配置
+          </Button>
+          <Button
+            size='sm'
+            variant='outline'
+            onClick={() => recoverManaged.mutate()}
+            disabled={
+              recoverManaged.isPending ||
+              applyManaged.isPending ||
+              !hostAvailable
+            }
+            loading={recoverManaged.isPending}
+          >
+            恢复运行配置
+          </Button>
+          <p className='mt-1.5 text-[11px] text-muted-foreground'>
+            此操作应用所选宿主机的所有受管节点。应用时会等待在途请求结束。等待超时会保留原配置。
+          </p>
+        </div>
+      ) : null}
       {outcome ? <ImportSummary outcome={outcome} /> : null}
     </ProxyPanel>
   )
