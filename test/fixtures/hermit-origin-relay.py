@@ -6,11 +6,17 @@ import sys
 
 
 class Relay(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.forward('GET')
+
     def do_POST(self):
+        self.forward('POST')
+
+    def forward(self, method):
         body = self.rfile.read(int(self.headers.get('Content-Length', '0')))
         upstream = http.client.HTTPConnection('198.18.0.1', int(sys.argv[1]), timeout=30)
         headers = {key: value for key, value in self.headers.items() if key.lower() not in ('host', 'connection')}
-        upstream.request('POST', self.path, body, headers)
+        upstream.request(method, self.path, body, headers)
         response = upstream.getresponse()
         payload = response.read()
         self.send_response(response.status)

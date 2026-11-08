@@ -1,4 +1,5 @@
 import test from 'node:test'
+import http from 'node:http'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -56,6 +57,12 @@ print(json.dumps({'ok':True,'status':200,'body':body,'headers':{}}))
     assert.ok(value, name)
   }
   let gw
+  let native
+  let nativeHealthy = true
+  let nativeFlavor = 'hermit'
+  let nativeOperations = []
+  let nativeModelStatus = 200
+  const nativeCalls = []
   let completed = false
   const responses = []
   const helperCalls = () =>
@@ -188,11 +195,82 @@ print(json.dumps({'ok':True,'status':200,'body':body,'headers':{}}))
       keyRefresh.status === 400 && keyRefresh.json.error?.code === 'credential_mode_unsupported',
     )
     check('api_key_refresh_starts_no_helper', helperCalls().length === callsBeforeCount)
+    const token = 'native-helper-fixture-internal-token'
+    const run = path.dirname(vm.runtime.worker_socket)
+    fs.mkdirSync(run, { recursive: true })
+    fs.writeFileSync(path.join(run, 'internal.token'), token, { mode: 0o600 })
+    native = http.createServer((req, res) => {
+      res.setHeader('content-type', 'application/json')
+      if (req.headers['x-kin-internal-token'] !== token) {
+        res.writeHead(401)
+        return res.end('{}')
+      }
+      if (req.url === '/internal/health')
+        return res.end(
+          JSON.stringify({
+            ok: true,
+            runtime_flavor: nativeFlavor,
+            healthy: nativeHealthy,
+            helper_operations: nativeOperations,
+          }),
+        )
+      nativeCalls.push({ path: req.url, internal_token_matches: req.headers['x-kin-internal-token'] === token })
+      if (nativeModelStatus !== 200) {
+        res.writeHead(nativeModelStatus)
+        return res.end(JSON.stringify({ error: { code: 'native_models_upstream_rejected' } }))
+      }
+      res.end(JSON.stringify({ data: [{ id: 'claude-native-helper-fixture', type: 'model' }], has_more: false }))
+    })
+    await new Promise((resolve) => native.listen(path.join(run, 'kernel.sock'), resolve))
+    const syncNative = () =>
+      api(gw, 'POST', '/api/panel/model-policy/sync-worker', {
+        headers: { cookie: keyLogin.headers.get('set-cookie') },
+        body: {},
+      })
+    nativeOperations = undefined
+    check(
+      'old_native_without_capability_stays_unsupported',
+      (await syncNative()).status === 501 && nativeCalls.length === 0,
+    )
+    nativeOperations = 'models'
+    check('malformed_capability_stays_unsupported', (await syncNative()).status === 501 && nativeCalls.length === 0)
+    nativeOperations = ['refresh']
+    check('unknown_capability_cannot_enable_models', (await syncNative()).status === 501 && nativeCalls.length === 0)
+    nativeOperations = ['models']
+    nativeFlavor = 'legacy'
+    check('foreign_runtime_cannot_enable_models', (await syncNative()).status === 501 && nativeCalls.length === 0)
+    nativeFlavor = 'hermit'
+    nativeHealthy = false
+    check('unhealthy_runtime_cannot_enable_models', (await syncNative()).status === 501 && nativeCalls.length === 0)
+    nativeHealthy = true
+    const nativeResult = await syncNative()
+    responses.push({ endpoint: 'native-capability-model-sync', status: nativeResult.status, body: nativeResult.json })
+    check('native_models_sync_succeeds', nativeResult.status === 200)
+    check(
+      'native_models_use_authenticated_kernel_socket',
+      nativeCalls.length === 1 &&
+        nativeCalls[0].path === '/internal/v1/models' &&
+        nativeCalls[0].internal_token_matches,
+    )
+    check('native_models_never_run_legacy_process', helperCalls().length === callsBeforeCount)
+    nativeModelStatus = 401
+    const nativeError = await syncNative()
+    check(
+      'native_failure_is_not_success_or_legacy_fallback',
+      nativeError.status === 502 &&
+        nativeError.json.error?.code === 'native_models_upstream_rejected' &&
+        helperCalls().length === callsBeforeCount,
+    )
+    fs.writeFileSync(path.join(out, 'native-helper-calls.json'), JSON.stringify(nativeCalls, null, 2))
     completed = true
   } finally {
     if (gw) {
       fs.writeFileSync(path.join(out, 'server-stderr.txt'), gw.stderr())
       await gw.stop()
+    }
+    if (native) {
+      native.closeAllConnections()
+      await new Promise((resolve) => native.close(resolve))
     }
     fs.writeFileSync(path.join(out, 'helper-calls.json'), JSON.stringify(helperCalls(), null, 2))
     fs.writeFileSync(path.join(out, 'responses.json'), JSON.stringify(responses, null, 2))

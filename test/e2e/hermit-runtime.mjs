@@ -34,6 +34,7 @@ const check = (name, value) => {
 const KEY = 'sk-ant-api03-p1-isolated-synthetic-key'
 const expected = JSON.parse(fs.readFileSync(receiptFile))
 const requests = []
+const modelRequests = []
 let gw, outer, mock, proxy
 let helperPID
 let completed = false
@@ -150,6 +151,23 @@ try {
     if (factory && req.url === '/geo') {
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify({ status: 'success', query: req.socket.remoteAddress, timezone: 'Etc/UTC' }))
+      return
+    }
+    if (req.method === 'GET' && req.url.split('?')[0].endsWith('/v1/models')) {
+      modelRequests.push({
+        path: req.url,
+        source: req.socket.remoteAddress,
+        api_key: req.headers['x-api-key'],
+        authorization: req.headers.authorization || null,
+      })
+      save('native-model-requests.json', modelRequests)
+      res.setHeader('content-type', 'application/json')
+      res.end(
+        JSON.stringify({
+          data: [{ id: 'claude-native-helper-fixture', type: 'model', display_name: 'Native helper fixture' }],
+          has_more: false,
+        }),
+      )
       return
     }
     const chunks = []
@@ -666,10 +684,26 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     if (factory && slotApiKey) {
       const helper = await api(gw, 'POST', '/api/panel/model-policy/sync-worker', { headers: { cookie }, body: {} })
       save('native-helper-rejected.json', helper)
+      const supportsModels = Boolean(manifest.source?.files?.['internal/nativebridge/models.go'])
       check(
-        'active_native_helper_rejects_legacy_fallback',
-        helper.status === 501 && helper.json.error?.code === 'native_operation_unsupported',
+        supportsModels ? 'active_native_models_sync_succeeds' : 'active_native_helper_rejects_legacy_fallback',
+        supportsModels
+          ? helper.status === 200
+          : helper.status === 501 && helper.json.error?.code === 'native_operation_unsupported',
       )
+      if (supportsModels) {
+        check(
+          'model_helper_uses_slot_key_and_exit',
+          modelRequests.length > 0 &&
+            modelRequests.every(
+              (row) => row.api_key === expectedSlotKey && row.authorization === null && row.source === '127.0.0.2',
+            ),
+        )
+        check(
+          'model_helper_keeps_cli_unlaunched',
+          !JSON.parse(fs.readFileSync(path.join(ownerRoot, 'owner.json'))).runtime_launch_attempted,
+        )
+      }
     }
     const preferences = {
       hasCompletedOnboarding: true,

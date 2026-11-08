@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { randomUUID as cryptoRandomUUID } from 'node:crypto'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
-import { postRustKernelTelemetryEvent } from './rust-kernel-client.mjs'
+import { postRustKernelTelemetryEvent, rustKernelHealth, getRustKernelHelper } from './rust-kernel-client.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
 import { slotExecArgv } from '../vm/slot-exec.mjs'
 
@@ -234,8 +234,21 @@ async function runSlotOauthAdmitted(
   return response
 }
 
-export function runSlotOauth(exec, ...args) {
+export async function runSlotOauth(exec, op, options = {}) {
   if (exec?.vm?.dataplane === 'hermit') {
+    if (op === 'models') {
+      const health = await rustKernelHealth(exec, { timeoutMs: Math.min(Number(options.timeoutMs) || 3000, 3000) })
+      if (
+        health?.runtime_flavor === 'hermit' &&
+        health.healthy === true &&
+        Array.isArray(health.helper_operations) &&
+        health.helper_operations.includes('models')
+      ) {
+        return withManagedEgressOperation(exec.vm.proxy, () =>
+          getRustKernelHelper(exec, '/internal/v1/models', options),
+        )
+      }
+    }
     return Promise.resolve({
       ok: false,
       status: 501,
@@ -251,5 +264,5 @@ export function runSlotOauth(exec, ...args) {
       transportError: false,
     })
   }
-  return withManagedEgressOperation(exec?.vm?.proxy, () => runSlotOauthAdmitted(exec, ...args))
+  return withManagedEgressOperation(exec?.vm?.proxy, () => runSlotOauthAdmitted(exec, op, options))
 }

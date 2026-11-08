@@ -3,7 +3,14 @@
  * go-worker-client; the socket is run/kernel.sock instead of worker.sock.
  */
 import path from 'node:path'
-import { callGoWorker, callWorkerPost, streamGoWorker, workerHealth, workerPaths } from './go-worker-client.mjs'
+import {
+  callGoWorker,
+  callWorkerGet,
+  callWorkerPost,
+  streamGoWorker,
+  workerHealth,
+  workerPaths,
+} from './go-worker-client.mjs'
 
 export function rustKernelPaths(exec = {}) {
   const base = workerPaths(exec)
@@ -46,6 +53,10 @@ export async function callRustKernel(opts = {}) {
 
 export async function streamRustKernel(opts = {}) {
   return remapVia(await streamGoWorker({ ...opts, exec: withRustKernelExec(opts.exec) }))
+}
+
+export async function getRustKernelHelper(exec, requestPath, options = {}) {
+  return remapVia(await callWorkerGet(withRustKernelExec(exec), requestPath, options))
 }
 
 export async function postRustKernelTelemetryEvent(exec, event, options = {}) {

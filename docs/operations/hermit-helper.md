@@ -2,11 +2,11 @@
 
 ## 当前行为
 
-Hermit 原生槽位尚未接入 helper。vm2api 根据活动槽位的 `dataplane` 选择 helper 行为。活动值为 `hermit` 时，统一 helper 入口直接返回不支持。
+Hermit 原生槽位现支持只读 `models` helper。vm2api 根据活动槽位的 `dataplane` 选择 helper 行为。活动值为 `hermit` 时，统一入口先核对实际内核能力。只有健康 Hermit 内核报告 `helper_operations` 含 `models` 时，入口才通过内部 socket 转发模型查询。其余 helper 操作仍返回不支持。
 
 该入口覆盖 `refresh`、`usage`、`profile`、`models`、`count-tokens`、`reset-status` 和 `reset-redeem`。Hermit 不应回退到 `/usr/local/bin/kin-worker oauth`，也不应读取旧 `/run/kin/worker.json` 来执行这些操作。
 
-统一返回值如下：
+不支持的操作返回以下结果：
 
 ```json
 {
@@ -26,7 +26,7 @@ Hermit 原生槽位尚未接入 helper。vm2api 根据活动槽位的 `dataplane
 
 | 接口 | 当前 Hermit 行为 |
 | --- | --- |
-| POST /api/panel/model-policy/sync-worker | 只有 Hermit 可选时返回 501 和不支持代码 |
+| POST /api/panel/model-policy/sync-worker | 有 models 能力时返回 200；缺少该能力时返回 501 |
 | POST /admin/vm/oauth/refresh | 实际需要调用 helper 的刷新返回 501 |
 | POST /api/panel/vms/:id/oauth/refresh | OAuth helper 刷新返回 501 |
 | GET /admin/vm/oauth | 不声明 OAuth 刷新者，`refresh_owner` 为 null |
@@ -61,7 +61,7 @@ python3 test/e2e/hermit-helper.py \
 
 真实控制容器回归还检查活动 Hermit 槽位的模型同步拒绝。该回归继续验证消息、Read、外部 MCP、换 Key、控制平面重启和出口故障恢复。
 
-## 2026-11-08 验收
+## 2026-11-08 拒绝契约验收（模型接入之前）
 
 primaryserver 的独立网络命名空间实验通过 17 项检查。实际 Compose 控制容器回归通过 81 项检查。两轮源码固定检查通过。helper 实验无残留进程；控制容器回归的进程、网络命名空间、daemon 和临时目录清理均通过。
 
@@ -85,4 +85,6 @@ sha256:5580ae9845944f986a8148964e30ca250619d72ba1075ee04952001fdaa54f8f
 
 本切片没有接入 OAuth 刷新。后续应先确定唯一刷新写入者，再接入原生 helper 配置和凭据存储。不要把原生 CLI 和旧 worker 同时配置为 refresh token 写入者。
 
-真实 OAuth、真实消息上游和生产部署仍为 NOT RUN。Go 代码和 hook 没有改变。
+真实 OAuth、真实消息上游和生产部署仍为 NOT RUN。只读 models 切片修改了 Hermit 的 Go 路由。hook 没有改变。
+
+模型接入、限制和新验收结果见 [原生 models 说明](hermit-models.md)。

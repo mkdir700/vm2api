@@ -1190,7 +1190,8 @@ async function callWorkerPostAdmitted(exec, requestPath, body, { timeoutMs = 200
 }
 
 async function callWorkerGetAdmitted(exec, requestPath, { timeoutMs = 30000, signal } = {}) {
-  if (isCrsMock()) {
+  const native = exec?.vm?.dataplane === 'hermit'
+  if (!native && isCrsMock()) {
     if (requestPath === '/internal/v1/models') {
       return {
         ok: true,
@@ -1251,15 +1252,15 @@ async function callWorkerGetAdmitted(exec, requestPath, { timeoutMs = 30000, sig
       }
     }
   }
-  if (requestPath === '/internal/v1/models') {
+  if (!native && requestPath === '/internal/v1/models') {
     return runSlotOauth(exec, 'models', { timeoutMs })
   }
-  if (requestPath === '/internal/oauth/usage') {
+  if (!native && requestPath === '/internal/oauth/usage') {
     return runSlotOauth(exec, 'usage', { timeoutMs })
   }
   try {
     const response = await workerRequest(exec, { requestPath, timeoutMs, signal })
-    const data = await readAll(response)
+    const data = await readAll(response, native ? 4 * 1024 * 1024 : MAX_BODY)
     return {
       ok: response.statusCode >= 200 && response.statusCode < 300,
       status: response.statusCode || 0,
