@@ -1506,6 +1506,19 @@ export function createPanelHandler(ctx) {
         })
         return json(res, 200, panel.ok(snapshot))
       }
+      if (req.method === 'GET' && p === '/api/panel/upgrade-task') {
+        if (panelIdentity(req).role !== 'admin') return json(res, 403, { ok: false, error: { message: '只有管理员可以查看升级任务' } })
+        const file = path.join(cfg.paths.data, 'upgrade-status.json')
+        if (!fs.existsSync(file)) return json(res, 200, panel.ok({ task: null }))
+        try {
+          const saved = JSON.parse(fs.readFileSync(file, 'utf8'))
+          if (saved.format !== 'vm2api-upgrade-task-1') throw new Error('invalid task')
+          const task = Object.fromEntries(['task_id', 'result', 'phase', 'source_revision', 'failure_phase', 'events'].map(key => [key, saved[key]]))
+          return json(res, 200, panel.ok({ task }))
+        } catch {
+          return json(res, 500, { ok: false, error: { code: 'upgrade_status_invalid', message: '升级任务记录无法读取' } })
+        }
+      }
       if (req.method === 'GET' && p === '/api/panel/version') {
         const status = await buildUpdateStatus({
           projectRoot: cfg?.paths?.project,
@@ -1520,6 +1533,9 @@ export function createPanelHandler(ctx) {
         return json(res, 200, panel.ok({ current, current_tag: `v${current}`, entries }))
       }
       if (req.method === 'POST' && p === '/api/panel/update') {
+        if (fs.existsSync(path.join(cfg.paths.data, 'upgrade-status.json'))) {
+          return json(res, 409, { ok: false, error: { code: 'offline_upgrade_required', message: '当前安装使用离线发布包，请从本机提交升级任务' } })
+        }
         const body = await readBody(req, 8192).catch(() => ({}))
         const result = await startHostUpgrade({
           projectRoot: cfg?.paths?.project,

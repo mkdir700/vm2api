@@ -1,0 +1,183 @@
+# 本机发布与线上离线升级
+
+## 当前范围
+
+本入口不要求把 fork 的 vm2api 或 Hermit 发布到 GitHub Release。
+线上安装不访问 Release，也不跟随原项目发布。
+构建仍使用 Dockerfile 和 `deploy/payload.json` 声明的依赖及固定载荷。
+发布端构建并验收镜像。
+安装端只校验、安装和切换。
+
+首版支持本机 Docker、Linux AMD64、host 网络和标准绑定目录。
+标准绑定目录包括 `data`、`vms`、`bin`、`share` 和 `src/config`。
+首版拒绝源码安装、数据库迁移文件变化和 wrap/crag 载荷变化。
+这些变化需要单独的协调升级方案。
+
+Hermit 包安装不会激活 Hermit，也不会改变槽位内核选择。
+本入口不解除 Hermit 的生产激活限制。
+
+## 1. 构建固定源码
+
+先提交本次发布的全部代码。
+再从 vm2api 仓库根目录运行：
+
+```sh
+python3 deploy/upgrade.py build
+```
+
+命令从 Git 提交导出构建目录。
+命令不会把本地凭据、配置和证据目录加入构建。
+输出镜像为 `local/vm2api-build:<完整提交>`。
+构建不上传镜像仓库。
+
+## 2. 完成发布验收
+
+用目标完整镜像运行发布验收。
+已有 Hermit factory 验收可输出 `factory-receipt.json`。
+收据中的 `control_image` 应等于目标镜像 ID。
+收据应包含源码固定、完整流程通过和清理通过结果。
+不要手工把失败结果改为 `PASS`。
+
+验收和构建属于发布准备。
+不能在生产停机期间运行这些步骤。
+离线升级测试夹具使用合成镜像，不是可部署的业务发布。
+不能把测试夹具收据用于真实发布。
+
+## 3. 打包
+
+以下命令只打包，不操作服务器：
+
+```sh
+python3 deploy/upgrade.py pack \
+  --image local/vm2api-build:<完整提交> \
+  --acceptance <OAuth验收目录>/factory-receipt.json \
+  --acceptance <API-Key验收目录>/factory-receipt.json \
+  --compatible-from sha256:<允许升级的原镜像ID> \
+  --hermit-package <Hermit包目录> \
+  --cli <固定官方Claude-Code文件> \
+  --output <新发布目录>
+```
+
+Hermit 包目录包含归档和 `release.json`。
+打包器校验归档、清单和官方 CLI 摘要。
+验收收据中的 Hermit 归档摘要应与包相同。
+目标已有相同摘要的官方 CLI 时，可省略 `--cli`。
+依赖缺失时，执行器会在暂停调度前拒绝升级。
+如果不安装 Hermit，省略 `--hermit-package` 和 `--cli`。
+
+`--compatible-from` 声明允许的来源镜像。
+安装端仍会检查数据库迁移文件和 wrap/crag 载荷。
+发布验收还应覆盖 helper 与原槽位的兼容关系。
+该声明不能跳过安装端检查。
+
+打包器还接受格式为 `vm2api-offline-acceptance-1` 的统一验收收据。
+统一收据包含目标镜像 ID、源码提交、兼容来源和通过的场景。
+原始验收收据按摘要保存在发布对象中。
+
+发布目录包含：
+
+```text
+release.json
+executor.py
+objects/<sha256>
+```
+
+镜像归档中的文件按摘要保存。
+相同镜像层、Hermit 包和官方 CLI 可跨发布复用。
+发布目录不包含生产账号或生产数据库。
+安装端把本机明确上传视为发布授权来源。
+SHA-256 用于校验完整性，不代替发布来源认证。
+
+## 4. 一条命令提交升级
+
+警告：以下命令会修改目标安装。
+先核对主机、安装目录、项目和容器名称。
+
+```sh
+python3 deploy/upgrade.py apply \
+  --release <发布目录> \
+  --host primaryserver \
+  --root /opt/vm2api \
+  --project vm2api \
+  --container vm2api
+```
+
+远端需要 Python 3.12 或更新版本、Docker 和有效的 SSH 权限。
+本机需要 Python 3.12 或更新版本、Docker、SSH 和 SCP。
+发布包内的控制平面镜像提供执行器需要的 Python、Docker 和 Compose。
+
+命令只传输缺失或损坏的对象。
+对象缓存位于 `/opt/vm2api/.upgrades/objects/`。
+命令随后启动独立执行器容器。
+返回 `STARTED` 只表示任务已提交。
+关闭页面或终端不会终止已提交的任务。
+
+如果只准备工件，添加 `--stage-only`。
+此选项不启动升级任务，也不停止服务。
+上传期间中断时，重复运行命令即可复用已完成对象。
+尚未结束的任务会阻止新的切换任务。
+
+## 5. 查询结果
+
+在服务器上读取同一份任务记录：
+
+```sh
+ssh primaryserver cat /opt/vm2api/.upgrades/current.json
+```
+
+面板“关于”显示任务阶段和已完成阶段的耗时。
+面板读取 `GET /api/panel/upgrade-task`。
+接口不返回备份路径、完整配置或凭据摘要。
+
+结果含义：
+
+| 结果 | 含义 |
+| --- | --- |
+| `RUNNING` | 任务仍在执行，或执行器中断后尚未恢复 |
+| `PASS` | 切换和验收成功，原调度状态已恢复 |
+| `FAIL` | 未完成切换，原版本保留 |
+| `ROLLED_BACK` | 升级失败，已恢复原版本并通过检查 |
+| `RECOVERY_REQUIRED` | 自动恢复未完成，需要人工核对 |
+
+独立任务记录位于 `.upgrades/tasks/<任务ID>/`。
+公开阶段记录位于 `data/upgrade-status.json`。
+备份和 `previous.json` 含生产配置，任务目录应保持私有。
+不要把任务目录整体提交到仓库或复制到公共证据目录。
+
+## 6. 执行器中断后恢复
+
+先检查任务状态和执行器容器。
+原执行器仍运行时，不执行恢复。
+执行器已退出时，使用该任务上传的同版脚本：
+
+```sh
+python3 <远端发布目录>/upgrade.py recover --root /opt/vm2api --wait
+```
+
+远端发布目录可从私有任务记录的 `release` 字段读取。
+恢复操作优先恢复原版本，不重新发送业务请求。
+恢复操作不覆盖当前数据库或已轮换的令牌。
+如果任务已经恢复调度，执行器应先再次排空，再停止服务。
+不能再次排空时，执行器保留服务并要求人工恢复。
+
+## 切换和备份规则
+
+执行器按顺序完成预检、排空、备份、切换、验证和恢复调度。
+预检容器使用合成配置、独立数据和 `none` 网络。
+预检容器不挂载生产数据库或 Docker socket。
+API 启动不再同步下载槽位基础镜像。
+新槽位仍通过既有创建流程准备基础镜像。
+
+执行器在停机前保存将被覆盖的程序文件。
+停机后保存可变状态，并通过 SQLite 一致性检查和备份接口保存数据库。
+停机备份不重复压缩不可变版本包和官方 CLI 缓存。
+只重建指定的 vm2api 服务，不执行整个项目的 `down`。
+
+线上验收检查 API、管理页资源、原健康槽位、凭据摘要和其他容器身份。
+凭据摘要变化时，执行器要求核对刷新，不直接覆盖凭据。
+常规升级不主动调用模型或刷新 OAuth。
+回滚只恢复镜像、环境配置和程序文件，不盲目恢复旧业务数据。
+
+进入离线升级模式后，旧面板 Release 入口和旧 `install.sh upgrade` 拒绝升级。
+首次安装入口保持原行为。
+本阶段面板只显示任务，不提供发布包上传和任务提交按钮。

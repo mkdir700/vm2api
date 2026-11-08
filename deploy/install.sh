@@ -777,6 +777,10 @@ cmd_install() {
 }
 
 cmd_upgrade() {
+  if [ -f "${INSTALL_DIR}/data/upgrade-status.json" ]; then
+    err "当前安装使用离线发布包。请使用 deploy/upgrade.py apply 提交升级任务。"
+    return 1
+  fi
   need_root
   require_cmds
   resolve_host_arch

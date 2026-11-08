@@ -86,11 +86,10 @@ if [ -f /opt/vm2api/image-crag/kin-kernel ]; then
   fi
 fi
 
+# Guest images are prepared before deployment or lazily on slot creation.
+# Registry access must not block the control-plane API startup.
 if [ ! -S /var/run/docker.sock ]; then
   echo "vm2api: /var/run/docker.sock not mounted; slot create/start will fail." >&2
-elif [ -f /opt/vm2api/docker/kin-os/build.mjs ]; then
-  # 只拉预构建客体镜像；拉不到不阻塞启动，建槽时再兜底构建。
-  node /opt/vm2api/docker/kin-os/build.mjs --pull-only ubuntu || true
 fi
 
 env_get_file() {

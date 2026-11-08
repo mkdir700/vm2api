@@ -1,5 +1,7 @@
 # 部署
 
+本 fork 的线上升级使用[本机发布与线上离线升级](operations/offline-upgrade.md)。该入口不依赖 GitHub Release。完成离线升级后，旧 Release 升级入口会拒绝继续更新该安装。
+
 推荐 **Docker Compose**，**拉预构建镜像**，不在你的机器上构建。安装目录任意（下文用 `/opt/vm2api`）。
 
 ## 机器

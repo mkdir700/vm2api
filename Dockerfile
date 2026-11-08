@@ -27,11 +27,14 @@ COPY deploy/payload.json deploy/payload.json
 COPY scripts/fetch-payload.mjs scripts/fetch-payload.mjs
 RUN node scripts/fetch-payload.mjs --dest /payload
 
+FROM docker:27-cli AS dockercli
+
 FROM node:22-bookworm-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates iptables iproute2 python3 \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=docker:27-cli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=dockercli /usr/local/bin/docker /usr/local/bin/docker
+COPY --from=dockercli /usr/local/libexec/docker/cli-plugins/docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose
 WORKDIR /opt/vm2api
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
