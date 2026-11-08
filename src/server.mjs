@@ -1,3 +1,4 @@
+import { stopAllHermitKernels } from './lib/transport/hermit-kernel-supervisor.mjs'
 import { EgressDrainClient, acquireManagedDrain } from './lib/vm/managed-egress-drain.mjs'
 import { egressRunDir, egressPidsForProxyConfig } from './lib/vm/egress.mjs'
 import { ManagedEgressHost } from './lib/vm/managed-egress-host.mjs'
@@ -456,8 +457,8 @@ proxyPool.managedHelperStatus = async (proxy) => {
 proxyPool.managedRepairHelper = async (proxy) => {
   if (proxy.enabled === false) return false
   if (proxy.managed_host_id !== 'control-plane') return remoteManagedEgress?.repairRouting(proxy) ?? false
-  if (egressPidsForProxyConfig(cfg.paths.project, proxy.id).length &&
-      (proxy.bound_vm_ids?.length || proxy.bound_vm_id)) return false
+  if (egressPidsForProxyConfig(cfg.paths.project, proxy.id).length && (proxy.bound_vm_ids?.length || proxy.bound_vm_id))
+    return false
   const result = await ensureProxyEgress(cfg.paths.project, proxyPool.getProxyByIdWithAuth(proxy.id))
   return result.ok === true
 }
@@ -1386,6 +1387,7 @@ async function shutdown(signal) {
     stopVmWatch()
   } catch {}
   try {
+    await stopAllHermitKernels()
     stopAllRustKernels()
   } catch {}
   try {

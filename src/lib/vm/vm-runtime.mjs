@@ -1,3 +1,5 @@
+import { kernelPackageRoot } from './kernel-packages.mjs'
+import { HERMIT_GUEST_PACKAGES } from './hermit-runtime.mjs'
 /**
  * Real VM runtime: one Docker container per kin VM.
  * Mixed guest OS: Ubuntu 24.04 / Debian 12 / Arch / Fedora 41.
@@ -15,9 +17,19 @@ import { runtimeKind, isKvmRuntime, RUNTIME_KVM } from './runtime-kind.mjs'
 import { isCodexVm } from './vm-kind.mjs'
 import { defaultSeedPolicy, isTelemetryEnabled } from '../protocol/seed-policy.mjs'
 import { kernelBinPath, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
-import { assertCliHopAllowed, resolveOfficialCcInference, resolveSlotPersonaPreset } from './slot-engine.mjs'
+import {
+  assertCliHopAllowed,
+  resolveOfficialCcInference,
+  resolveSlotPersonaPreset,
+  resolveKernelDataplane,
+} from './slot-engine.mjs'
 import { profileForPreset } from '../identity/official-profiles.mjs'
-import { ensureSlotClaudeOwnership, chownSlotRuntimeFile, replaceSlotOwnedFile, slotRuntimeOwner } from '../oauth/oauth-credentials.mjs'
+import {
+  ensureSlotClaudeOwnership,
+  chownSlotRuntimeFile,
+  replaceSlotOwnedFile,
+  slotRuntimeOwner,
+} from '../oauth/oauth-credentials.mjs'
 import { materializeWrapCli } from './wrap-cli-runtime.mjs'
 import { ensureGuestMachineIdFile } from '../identity/workstation-fingerprint.mjs'
 import { ensureSlotComputer, rememberComputer } from '../identity/slot-computer.mjs'
@@ -232,6 +244,7 @@ export const CODEX_SLOT_ROLE = 'codex'
  * few minutes under `--restart unless-stopped`.
  */
 export function slotContainerCommand(vm, { wrapKernel = false } = {}) {
+  if (vm?.dataplane === 'hermit') return ['sleep', 'infinity']
   if (isCodexVm(vm)) return ['sleep', 'infinity']
   return [
     wrapKernel ? '/home/kincli/.kin/kin-kernel' : '/usr/local/bin/kin-kernel',
@@ -985,7 +998,11 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
   const restartPolicy = updateSlotRestartPolicy(vm, existing, sh)
   if (!restartPolicy.ok) return { ok: false, error: restartPolicy.stderr || 'slot restart policy update failed' }
   const paths = workerPaths(projectRoot, vm.id)
-  const replace = recreate || !slotKernelAlive(existing, paths, vm) || codexContainerStale(existing, vm)
+  const hermit = resolveKernelDataplane(vm, resolvedRouting) === 'hermit'
+  if (hermit && kvm) return { ok: false, error: 'Hermit KVM 尚未验收' }
+  const roleMismatch = Boolean(existing) && (hermit ? existing.role !== 'hermit' : existing.role === 'hermit')
+  const replace =
+    recreate || (!hermit && !slotKernelAlive(existing, paths, vm)) || roleMismatch || codexContainerStale(existing, vm)
   // Node restart / 开机 must not bounce a live slot with a healthy worker.
   if (existing?.running && !replace) {
     runtimePatch(vm, existing, {
@@ -1000,15 +1017,15 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
     return { ok: true, action: 'already-running', runtime: vm.runtime }
   }
   const codex = isCodexVm(vm)
-  if (!codex) {
+  if (!codex && !hermit) {
     try {
       materializeWrapCli(projectRoot, vm, { uid: runtimeUidNum(vm), gid: Number(GID) })
     } catch {}
   }
   const wrapKernel = path.join(home, '.kin', 'kin-kernel')
   const kernelBin = kernelBinPath()
-  const mountKernel = !codex && !!kernelBin && fs.existsSync(kernelBin)
-  if (!codex && !fs.existsSync(wrapKernel) && !mountKernel) {
+  const mountKernel = !codex && !hermit && !!kernelBin && fs.existsSync(kernelBin)
+  if (!codex && !hermit && !fs.existsSync(wrapKernel) && !mountKernel) {
     return { ok: false, error: 'kin-kernel missing; wrap CLI sample not materialized' }
   }
 
@@ -1128,6 +1145,7 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
       netName,
       '--restart',
       slotRestartPolicy(vm),
+      ...(hermit ? ['--init'] : []),
       ...dockerSlotResourceArgs(vm, resolvedRouting),
       '--pids-limit',
       '256',
@@ -1153,7 +1171,8 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
       `kin.vm.os=${kernel}`,
       '--label',
       'kin.vm.runtime=docker',
-      ...(codex ? ['--label', `kin.vm.role=${CODEX_SLOT_ROLE}`] : []),
+      ...(codex ? ['--label', `kin.vm.role=${CODEX_SLOT_ROLE}`] : hermit ? ['--label', 'kin.vm.role=hermit'] : []),
+      ...(hermit ? ['-v', `${hostOf(kernelPackageRoot(projectRoot))}:${HERMIT_GUEST_PACKAGES}:ro`] : []),
       '-v',
       `${hostOf(home)}:/home/kincli`,
       '-v',

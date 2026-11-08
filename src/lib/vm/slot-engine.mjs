@@ -19,7 +19,7 @@ import { isCodexVm } from './vm-kind.mjs'
 export const INFERENCE_ENGINES = Object.freeze(['rust'])
 export const SLOT_PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero', OFFICIAL_303_PRESET])
 export const OFFICIAL_CC_INFERENCES = Object.freeze(['http', 'cli-hop'])
-export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'cc', 'crag'])
+export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'cc', 'crag', 'hermit'])
 export const CONTAINER_CLI_NODE_BIN = '/home/kincli/.kin/cli-node'
 export const CONTAINER_CC_NODE_BIN = '/home/kincli/.kin/cc-node'
 export const CONTAINER_CRAG_CLAUDE_BIN = CONTAINER_CC_NODE_BIN
@@ -63,6 +63,8 @@ export function normalizeSessionSlots(value, fallback = SESSION_SLOT_MAX) {
 }
 
 export function resolveSessionSlots(vm, routing = {}) {
+  // 当前原生内核每个进程只拥有一个外层会话，不能继承 wrap 的 20 会话容量。
+  if (resolveKernelDataplane(vm, routing) === 'hermit') return 1
   return normalizeSessionSlots(vm?.policy?.sessionSlots ?? vm?.session_slots, routing?.inference?.session_slots)
 }
 
@@ -150,6 +152,7 @@ export function normalizeKernelDataplane(value, { inherit = false } = {}) {
     return 'wrap'
   }
   if (raw === 'cc' || raw === 'cc-node') return 'cc'
+  if (raw === 'hermit') return 'hermit'
   if (raw === 'crag' || raw === 'official-cli' || raw === 'official-cc' || raw === 'claude-code') {
     return 'crag'
   }
@@ -168,7 +171,7 @@ export function parseKernelDataplanePatch(value) {
   const parsed = normalizeKernelDataplane(value, { inherit: true })
   if (!parsed) return { ok: true, value: '' }
   if (!KERNEL_DATAPLANES.includes(parsed)) {
-    return { ok: false, error: 'dataplane must be wrap, cc, or crag' }
+    return { ok: false, error: 'dataplane must be wrap, cc, crag, or hermit' }
   }
   return { ok: true, value: parsed }
 }
@@ -293,6 +296,7 @@ export function parseSlotEnginePolicyPatch(body = {}) {
   if (hasDataplane) {
     const parsed = parseKernelDataplanePatch(body.dataplane)
     if (!parsed.ok) return parsed
+    if (parsed.value === 'hermit') return { ok: false, error: '请通过内核包选择接口绑定 Hermit 版本' }
     patch.dataplane = parsed.value
   }
   return { ok: true, patch }
@@ -360,6 +364,7 @@ export function validateInferenceRoutingPatch(body = {}) {
     const parsed = parseKernelDataplanePatch(body.inference.dataplane)
     if (!parsed.ok) errors.push(parsed.error)
     else if (!parsed.value) errors.push('inference.dataplane 必须是 wrap、cc 或 crag')
+    else if (parsed.value === 'hermit') errors.push('Hermit 必须通过版本包接口绑定具体槽位')
   }
   return errors
 }

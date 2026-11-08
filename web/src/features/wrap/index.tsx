@@ -1,3 +1,4 @@
+import { HermitPackages } from './hermit-packages'
 import { useMemo, useRef, useState, type ReactNode } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
@@ -84,11 +85,11 @@ function engineOf(vm: Vm) {
 
 function selectedDataplane(
   value: string | null | undefined
-): 'wrap' | 'cc' | 'crag' {
-  return value === 'cc' || value === 'crag' ? value : 'wrap'
+): 'wrap' | 'cc' | 'crag' | 'hermit' {
+  return value === 'cc' || value === 'crag' || value === 'hermit' ? value : 'wrap'
 }
 
-function dataplaneOf(vm: Vm): 'wrap' | 'cc' | 'crag' | '—' {
+function dataplaneOf(vm: Vm): 'wrap' | 'cc' | 'crag' | 'hermit' | '—' {
   if (isCodexVm(vm)) return '—'
   return selectedDataplane(vm.resolved_dataplane)
 }
@@ -563,6 +564,7 @@ export function WrapSamplePage() {
           指向仓内 cc-node。未勾选槽时改全局默认；勾选后只切这些 Claude
           槽。Codex 不动。不改凭证、不删容器。
         </p>
+        <HermitPackages ids={selected.filter(id => { const vm=vms.find(item=>item.id===id); return Boolean(vm && !isCodexVm(vm)) })} />
         <Card className='mb-4'>
           <CardHeader>
             <CardTitle>内核</CardTitle>

@@ -1,3 +1,6 @@
+import { resolveHermitPackage, assertHermitActivation } from '../vm/hermit-runtime.mjs'
+import { ensureHermitKernel, stopHermitKernel } from '../transport/hermit-kernel-supervisor.mjs'
+import { installKernelPackage, listKernelPackages, MAX_KERNEL_PACKAGE_BYTES } from '../vm/kernel-packages.mjs'
 /**
  * /admin and /api/panel routes. Login / logout / me and { ok, data }
  * envelopes are unchanged; slot start/reload go through startSlotReady.
@@ -507,10 +510,13 @@ function mergeKernelReports(local, cluster) {
 // The entrypoint auto-sync and the panel upgrade can both ask at once; a slot must not be recreated twice concurrently.
 let kernelSyncTail = Promise.resolve()
 
-function syncInstalledKernels(args) {
-  const run = kernelSyncTail.then(() => runKernelSync(args))
+function serializeKernelChange(operation) {
+  const run = kernelSyncTail.then(operation)
   kernelSyncTail = run.catch(() => {})
   return run
+}
+function syncInstalledKernels(args) {
+  return serializeKernelChange(() => runKernelSync(args))
 }
 
 async function runKernelSync({
@@ -2388,6 +2394,25 @@ export function createPanelHandler(ctx) {
         })
         return json(res, 200, panel.ok(report))
       }
+      if (p === '/api/panel/kernel-packages' && ['GET', 'POST'].includes(req.method)) {
+        if (panelIdentity(req).role !== 'admin')
+          return json(res, 403, { ok: false, error: { code: 'admin_required', message: '只有管理员可以安装内核包' } })
+        if (req.method === 'GET') return json(res, 200, panel.ok(listKernelPackages(cfg.paths.project)))
+        try {
+          const raw = await readRawBody(req, MAX_KERNEL_PACKAGE_BYTES)
+          const installed = await installKernelPackage(cfg.paths.project, raw, {
+            sha256: String(req.headers['x-kernel-sha256'] || ''),
+            manifest_sha256: String(req.headers['x-kernel-manifest-sha256'] || ''),
+            bytes: Number(req.headers['x-kernel-bytes']),
+          })
+          return json(res, 200, panel.ok(installed))
+        } catch (error) {
+          return json(res, error.status || (error.code === 'package_version_conflict' ? 409 : 400), {
+            ok: false,
+            error: { code: error.code || 'kernel_package_invalid', message: error.message },
+          })
+        }
+      }
       if (req.method === 'GET' && p === '/api/panel/wrap-cli') {
         const sample = describeWrapSample(cfg.paths.project)
         return json(
@@ -2401,58 +2426,151 @@ export function createPanelHandler(ctx) {
       }
       if (req.method === 'POST' && p === '/api/panel/dataplane') {
         const body = await readBody(req, 8 * 1024).catch(() => ({}))
-        const parsed = parseKernelDataplanePatch(body.dataplane)
-        if (!parsed.ok || !parsed.value) {
-          return json(res, 400, {
-            ok: false,
-            error: { code: 'invalid_dataplane', message: parsed.error || 'dataplane must be wrap, cc, or crag' },
-          })
-        }
-        const targets = parseSlotPolicyTargets({
-          ids: body.ids,
-          all: body.all === true || !Array.isArray(body.ids),
-        })
-        if (!targets.ok) {
-          return json(res, 400, { ok: false, error: { message: targets.error } })
-        }
-        const previous = structuredClone(ctx.routingConfig)
-        try {
-          if (targets.all) {
-            await persistRoutingPatch({
-              inference: {
-                ...(ctx.routingConfig.inference || {}),
-                dataplane: parsed.value,
-              },
+        return serializeKernelChange(async () => {
+          const parsed = parseKernelDataplanePatch(body.dataplane)
+          if (!parsed.ok || !parsed.value) {
+            return json(res, 400, {
+              ok: false,
+              error: { code: 'invalid_dataplane', message: parsed.error || 'dataplane must be wrap, cc, or crag' },
             })
-          } else {
-            for (const id of targets.ids) {
-              persistSlotEnginePolicy(cfg.paths.project, id, { dataplane: parsed.value })
+          }
+          const targets = parseSlotPolicyTargets({
+            ids: body.ids,
+            all: body.all === true || !Array.isArray(body.ids),
+          })
+          if (!targets.ok) {
+            return json(res, 400, { ok: false, error: { message: targets.error } })
+          }
+          if (parsed.value === 'hermit') {
+            if (panelIdentity(req).role !== 'admin')
+              return json(res, 403, {
+                ok: false,
+                error: { code: 'admin_required', message: '只有管理员可以选择内核包' },
+              })
+            if (targets.all)
+              return json(res, 400, {
+                ok: false,
+                error: { code: 'hermit_explicit_slots_required', message: '请选择具体槽位' },
+              })
+            const binding = { runtime: 'hermit', target: body.target, version: body.version }
+            const newlyStarted = []
+            const createdSlots = []
+            const activatedSlots = []
+            try {
+              const installed = await resolveHermitPackage(cfg.paths.project, binding)
+              binding.manifest_sha256 = installed.manifest_sha256
+              const vms = targets.ids.map((id) => getVm(cfg.paths.project, id))
+              if (vms.some((vm) => !vm || isCodexVm(vm)))
+                throw Object.assign(new Error('槽位不存在或不是 Claude 槽位'), { code: 'invalid_hermit_slot' })
+              if (body.restart === false) {
+                for (const vm of vms)
+                  persistSlotEnginePolicy(cfg.paths.project, vm.id, { pending_kernel_package: binding })
+                return json(
+                  res,
+                  200,
+                  panel.ok({
+                    dataplane: 'hermit',
+                    activated: false,
+                    staged: true,
+                    package: binding,
+                    items: vms.map((vm) => ({ id: vm.id, ok: true, staged: true })),
+                  }),
+                )
+              }
+              for (const vm of vms) assertHermitActivation(vm, installed.manifest)
+              if (
+                ctx.routingConfig.compatibility?.official_cc_passthrough !== true ||
+                ctx.routingConfig.failover?.eager_tool_streaming !== false
+              )
+                throw Object.assign(new Error('Hermit 需要原版载荷透传，并关闭提前工具转发'), {
+                  code: 'hermit_protocol_profile_unsupported',
+                })
+              const items = []
+              for (const vm of vms) {
+                const proxy = proxyPool.getProxyByIdWithAuth(vm.proxy?.id)
+                if (!proxy) throw Object.assign(new Error('槽位缺少可用的出口绑定'), { code: 'proxy_required' })
+                const candidate = { ...vm, proxy, dataplane: 'hermit', kernel_package: binding }
+                const exec = slotExec(cfg.paths.project, candidate)
+                let result = await ensureHermitKernel(exec)
+                if (!result.ok && result.reason === 'hermit_holder_missing') {
+                  const boot = await startSlotReady(candidate, cfg.paths.project, { routing: ctx.routingConfig })
+                  if (boot.action === 'created') createdSlots.push(candidate)
+                  if (!boot.ok || boot.rust_ok === false)
+                    throw Object.assign(new Error(boot.error || boot.rust?.error || 'Hermit 槽位创建失败'), {
+                      code: boot.code || boot.rust?.reason || 'hermit_slot_start_failed',
+                    })
+                  result = await ensureHermitKernel(exec)
+                }
+                if (!result.ok) throw Object.assign(new Error(result.error || result.reason), { code: result.reason })
+                if (result.reason === 'started') newlyStarted.push(exec)
+                activatedSlots.push(candidate)
+                items.push({ id: vm.id, ok: true, manifest_sha256: binding.manifest_sha256 })
+              }
+              for (const vm of activatedSlots) {
+                persistSlotEnginePolicy(cfg.paths.project, vm.id, {
+                  dataplane: 'hermit',
+                  kernel_package: binding,
+                  pending_kernel_package: null,
+                })
+                patchVmRecord(cfg.paths.project, vm.id, { status: 'running', runtime: vm.runtime })
+              }
+              return json(res, 200, panel.ok({ dataplane: 'hermit', activated: true, package: binding, items }))
+            } catch (error) {
+              await Promise.all(newlyStarted.map((exec) => stopHermitKernel(exec)))
+              await Promise.all(createdSlots.map((vm) => stopSlot(vm)))
+              return json(
+                res,
+                [
+                  'hermit_protocol_profile_unsupported',
+                  'hermit_activation_unqualified',
+                  'hermit_holder_required',
+                  'hermit_placement_unsupported',
+                ].includes(error.code)
+                  ? 409
+                  : 400,
+                { ok: false, error: { code: error.code || 'hermit_selection_failed', message: error.message } },
+              )
             }
           }
-        } catch (error) {
-          ctx.routingConfig = previous
-          return json(res, 503, {
-            ok: false,
-            error: { code: 'dataplane_persist_failed', message: String(error?.message || error) },
+          const previous = structuredClone(ctx.routingConfig)
+          try {
+            if (targets.all) {
+              await persistRoutingPatch({
+                inference: {
+                  ...(ctx.routingConfig.inference || {}),
+                  dataplane: parsed.value,
+                },
+              })
+            } else {
+              for (const id of targets.ids) {
+                persistSlotEnginePolicy(cfg.paths.project, id, { dataplane: parsed.value })
+              }
+            }
+          } catch (error) {
+            ctx.routingConfig = previous
+            return json(res, 503, {
+              ok: false,
+              error: { code: 'dataplane_persist_failed', message: String(error?.message || error) },
+            })
+          }
+          const report = await runKernelSync({
+            project: cfg.paths.project,
+            routingConfig: ctx.routingConfig,
+            restartKernel: ctx.restartRustKernel,
+            body: {
+              ids: targets.all ? undefined : targets.ids,
+              restart: body.restart !== false,
+            },
           })
-        }
-        const report = await syncInstalledKernels({
-          project: cfg.paths.project,
-          routingConfig: ctx.routingConfig,
-          restartKernel: ctx.restartRustKernel,
-          body: {
-            ids: targets.all ? undefined : targets.ids,
-            restart: body.restart !== false,
-          },
+          return json(
+            res,
+            report.ok ? 200 : 503,
+            panel.ok({
+              dataplane: parsed.value,
+              ...report,
+            }),
+          )
         })
-        return json(
-          res,
-          report.ok ? 200 : 503,
-          panel.ok({
-            dataplane: parsed.value,
-            ...report,
-          }),
-        )
       }
       if (req.method === 'POST' && p === '/api/panel/wrap-cli/crag-kernel') {
         const raw = await readRawBody(req, 32 * 1024 * 1024)

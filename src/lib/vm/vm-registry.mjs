@@ -90,6 +90,9 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
     machine: vm.machine || null,
     inference_engine: vm.inference_engine || null,
     persona_preset: vm.persona_preset || null,
+    dataplane: vm.dataplane || null,
+    kernel_package: vm.kernel_package || null,
+    pending_kernel_package: vm.pending_kernel_package || null,
     seed_policy: vm.seed_policy || null,
     region: vm.region || vm.zone || null,
     node_id: vm.node_id || null,
@@ -424,6 +427,12 @@ export function persistVmScheduleLevel(projectRoot, vmId, value) {
 }
 
 function applySlotEnginePatch(vm, patch = {}) {
+  for (const name of ['kernel_package', 'pending_kernel_package']) {
+    if (Object.prototype.hasOwnProperty.call(patch, name)) {
+      if (patch[name]) vm[name] = structuredClone(patch[name])
+      else delete vm[name]
+    }
+  }
   if (Object.prototype.hasOwnProperty.call(patch, 'inference_engine')) {
     if (patch.inference_engine) vm.inference_engine = patch.inference_engine
     else delete vm.inference_engine

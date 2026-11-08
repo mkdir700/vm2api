@@ -1,3 +1,4 @@
+import { ensureHermitKernel, stopHermitSlot } from '../transport/hermit-kernel-supervisor.mjs'
 /**
  * Host-side slot lifecycle. Docker and KVM share slotHost(vm); guest identity
  * / SOCKS / TLS stay inside the rust kernel and must not branch here.
@@ -18,7 +19,7 @@ import {
 } from '../transport/codex-kernel-supervisor.mjs'
 import { runtimeKind, isKvmRuntime } from './runtime-kind.mjs'
 import { getVm, listVms, isCodexVm, persistVmRuntime } from './vm-registry.mjs'
-import { resolveInferenceEngine } from './slot-engine.mjs'
+import { resolveInferenceEngine, resolveKernelDataplane } from './slot-engine.mjs'
 import {
   containerHasKernelMount,
   containerName,
@@ -67,6 +68,8 @@ export async function startSlotReady(vm, projectRoot, opts = {}) {
 }
 
 export async function stopSlot(vm) {
+  const hermitStop = await stopHermitSlot(vm)
+  if (!hermitStop.ok) return hermitStop
   if (isCodexVm(vm)) stopCodexKernel(vm.id)
   return slotHost(vm).stop(vm)
 }
@@ -161,6 +164,8 @@ export async function ensureSlotInferenceRuntime(vm, projectRoot, opts = {}) {
   if (opts.allowMissingCredential !== true && !slotHasCredential(vm, projectRoot)) {
     return { ok: true, skipped: true, reason: 'no_credential', engine: 'rust' }
   }
+  if (resolveKernelDataplane(vm, routing) === 'hermit')
+    return ensureHermitKernel(slotExec(projectRoot, vm), { timeoutMs: opts.timeoutMs })
   // A baked slot image ships kernel and CLIs; there is no .kin to materialize or kernel to mount.
   // KVM bind-mounts payload at /opt/kin-guest, not /usr/local/bin/kin-kernel.
   if (!slotHost(vm).bakedKernel) {

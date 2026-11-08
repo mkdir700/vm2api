@@ -1,3 +1,5 @@
+import { ensureHermitKernel, stopHermitKernel, hasHermitKernel, selectedHermit } from './hermit-kernel-supervisor.mjs'
+import { writeHermitKernelConfig } from '../vm/hermit-runtime.mjs'
 /**
  * Rust gateway-worker lifecycle. kin-kernel is container PID 1.
  * Host writes credentials; slot kernel only reads AT for inference.
@@ -181,6 +183,7 @@ export async function reconcileCliHopRuntime(exec, { runDockerExec = runDocker }
 }
 
 export function stopRustKernel(exec = {}) {
+  if (hasHermitKernel(exec)) return stopHermitKernel(exec)
   const container = slotContainerName(exec)
   if (!container) return { ok: false, reason: 'container_missing' }
   if (slotHost(exec?.vm).native) return { ok: false, reason: 'native_node' }
@@ -302,6 +305,7 @@ export async function ensureRustKernel(
     allowMissingCredential = false,
   } = {},
 ) {
+  if (selectedHermit(exec)) return ensureHermitKernel(exec, { timeoutMs })
   const vmId = exec?.vmId || exec?.vm?.id || 'unknown'
   const pending = starts.get(vmId)
   if (pending && !force) {
@@ -380,6 +384,11 @@ export function wrapNewerThanKernel(exec) {
 }
 
 export async function restartRustKernel(exec, { timeoutMs = 30000, runDockerExec = runDocker } = {}) {
+  if (hasHermitKernel(exec)) {
+    const stopped = await stopHermitKernel(exec)
+    if (!stopped.ok) return stopped
+  }
+  if (selectedHermit(exec)) return ensureHermitKernel(exec, { timeoutMs })
   const run = slotRunner(exec, runDockerExec)
   await killWrapDataplane(exec, run)
   const paths = rustKernelPaths(exec)
@@ -762,6 +771,7 @@ export function writeKernelConfig(
   vm,
   { token, proxyUrl, proxyRequired, officialCcInference, timezone, routing, publish = true } = {},
 ) {
+  if (resolveKernelDataplane(vm, routing || {}) === 'hermit') return writeHermitKernelConfig(projectRoot, vm)
   const root = String(process.env.KIN_SLOT_RUN_ROOT || '').trim()
   const runDir = root ? path.join(root, vm.id) : path.join(projectRoot, 'vms', vm.id, 'run')
   const homeDir = path.join(projectRoot, 'vms', vm.id, 'cli-home')

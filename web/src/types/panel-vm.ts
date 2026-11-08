@@ -352,8 +352,8 @@ export type Vm = {
   resolved_inference_engine?: 'go' | 'rust' | null
   persona_preset?: string | null
   resolved_persona_preset?: string | null
-  dataplane?: 'wrap' | 'cc' | 'crag' | null
-  resolved_dataplane?: 'wrap' | 'cc' | 'crag' | null
+  dataplane?: 'wrap' | 'cc' | 'crag' | 'hermit' | null
+  resolved_dataplane?: 'wrap' | 'cc' | 'crag' | 'hermit' | null
   kernel?: string
   /** docker | kvm。缺省按 docker 展示。 */
   runtime_type?: RuntimeType | null

@@ -24,7 +24,7 @@ export const CLI_NODE_GUARD_INTERVAL_MS = 15_000
 const HARD_DOWN = new Set(['stopped', 'dead', 'error', 'disabled'])
 
 export function isCliNodeGuardTarget(vm) {
-  if (!vm?.id || isCodexVm(vm)) return false
+  if (!vm?.id || isCodexVm(vm) || vm.dataplane === 'hermit') return false
   return !HARD_DOWN.has(String(vm.status || '').toLowerCase())
 }
 

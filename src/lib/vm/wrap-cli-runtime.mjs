@@ -763,6 +763,17 @@ export function inspectKernelChanges(projectRoot, vms, { routing, nativeCliOptio
   for (const vm of vms || []) {
     if (isCodexVm(vm)) continue
     const dataplane = resolveKernelDataplane(vm, routing) || 'wrap'
+    if (dataplane === 'hermit') {
+      items.push({
+        id: vm.id,
+        dataplane,
+        ok: true,
+        kernel_changed: false,
+        skipped: true,
+        reason: 'independent_kernel_package',
+      })
+      continue
+    }
     const destDir = wrapCliHomeDir(projectRoot, vm.id)
     const src = dataplane === 'crag' ? crag.path : kernelPayloadPath(sample.dir, projectRoot)
     if (dataplane === 'crag' && !crag.ok) {
@@ -804,6 +815,17 @@ export function syncWrapSample(projectRoot, vms, { uidOf, routing } = {}) {
   for (const vm of vms || []) {
     if (isCodexVm(vm)) continue
     const dataplane = resolveKernelDataplane(vm, routing) || 'wrap'
+    if (dataplane === 'hermit') {
+      items.push({
+        id: vm.id,
+        dataplane,
+        ok: true,
+        kernel_changed: false,
+        skipped: true,
+        reason: 'independent_kernel_package',
+      })
+      continue
+    }
     if ((dataplane === 'wrap' || dataplane === 'cc') && !sample.ok) {
       items.push({ id: vm.id, dataplane, ok: false, code: sample.code, error: sample.error })
       continue
