@@ -713,6 +713,9 @@ export class FailoverRunner {
         pinBaseline.set(key, this.stickyRouter.resolve?.(key) || null)
       }
     }
+    // Attempt prebinding must not replace the conversation identity we can
+    // reuse when a later attempt returns to this request's original unit.
+    let requestSessionBound
     let lastResult = null
     let lastPolicy = null
     let repaired = false
@@ -826,6 +829,11 @@ export class FailoverRunner {
       repairPending = false
       snapshotPins()
       const attemptStickyBound = pinBaseline.get(stickyKey) || null
+      if (requestSessionBound === undefined) requestSessionBound = attemptStickyBound
+      const sessionBound =
+        requestSessionBound?.vmId === selected.vmId && requestSessionBound?.accountId === selected.accountId
+          ? requestSessionBound
+          : attemptStickyBound
       lastSelected = selected
       pinnedSlot = selected.slotIndex ?? null
       if (selected.seatMoved) seatMovedTo = selected.vmId
@@ -874,7 +882,7 @@ export class FailoverRunner {
                 ],
                 attemptStartedAt: attemptStarted,
                 freshSlot,
-                stickyBound: attemptStickyBound,
+                stickyBound: sessionBound,
               })
             : clone(attemptBody)
         const wrappedAttempt =
