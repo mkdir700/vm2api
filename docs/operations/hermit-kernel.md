@@ -49,7 +49,7 @@ share/kernel-packages/
 
 将请求发给 `POST /api/panel/dataplane`。接口校验安装内容，并将清单摘要绑定到 `pending_kernel_package`。暂存不改变运行内核。普通重启不会自动应用暂存版本。当前页面不提供生产激活按钮。接口拒绝全局选择和 Codex 槽位。
 
-`restart: true` 只供隔离实验。实验需要 `KIN_KERNEL_TEST_ENDPOINTS=1`、模拟密钥和回环上游地址。实验还要求 `official_cc_passthrough=true` 和 `eager_tool_streaming=false`。这些设置不证明生产认证或上游兼容。
+`restart: true` 只供隔离实验。实验需要 `KIN_KERNEL_TEST_ENDPOINTS=1`、合成凭据和显式上游地址。上游可使用 HTTP 回环地址，或包声明支持的固定 HTTPS 地址。实验还要求 `official_cc_passthrough=true` 和 `eager_tool_streaming=false`。这些设置不证明生产认证或上游兼容。
 
 同一槽位的策略变更串行执行。同一版本重复启动复用已有进程。运行中的槽位不能直接切换到另一版本。多个槽位先全部启动成功，再写入策略。文件系统在策略写入期间发生故障时，不能保证跨文件回滚。
 
@@ -97,3 +97,5 @@ Linux 入口需要网络命名空间权限。每次使用新的输出目录。�
 槽位 API Key 接入与实验边界见 [认证说明](hermit-authentication.md)。该切片保留生产激活限制。
 
 全部七项原生 helper 的协议、凭据所有权和失败处理见 [helper 契约](hermit-helper.md)。
+
+原生 HTTPS 的隔离结果与生产接入边界见 [HTTPS 验收](hermit-https.md)。

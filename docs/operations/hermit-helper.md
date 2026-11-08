@@ -14,7 +14,7 @@ Hermit 原生槽位现已接入全部七个 helper。新包通过内部 HTTP 接
 | reset-status | 支持 | 400 credential_mode_unsupported |
 | reset-redeem | 支持 | 400 credential_mode_unsupported |
 
-这些能力已接入模拟上游验收。真实账号和真实上游仍为 NOT RUN。包的 `production` 保持 `false`。消息和 helper 上游仍限于 HTTP 回环地址。公共计数接口仍返回 404。
+这些能力已接入模拟上游验收。真实账号和真实上游仍为 NOT RUN。包的 `production` 保持 `false`。消息和 helper 可使用 HTTP 回环地址，或包声明支持的固定 HTTPS 地址。当前配置和实验门禁见 [HTTPS 说明](hermit-https.md)。公共计数接口仍返回 404。
 
 ## 能力选择
 

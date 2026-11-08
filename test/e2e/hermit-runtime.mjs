@@ -12,6 +12,7 @@ import { writeWorkerCredentialFile, readWorkerCredentialFile } from '../../src/l
 import { startGateway, seedVm, api, pickFreePort, REPO_ROOT } from '../harness.mjs'
 
 const [out, archive, receiptFile, cliSource, apiKernel] = process.argv.slice(2)
+const tlsMode = process.env.HERMIT_E2E_TLS === '1'
 const oauthMode = process.env.HERMIT_E2E_OAUTH === '1'
 const OAUTH_AT = 'sk-ant-oat01-runtime-old'
 const OAUTH_RT = 'sk-ant-ort01-runtime-old'
@@ -48,6 +49,9 @@ let ownerRoot
 let factoryProxyId
 let managedFixture
 let controlFixture
+let httpsFixture
+let restartToolIssued = false
+const restartRelease = path.join(out, 'restart-tool-release')
 let socksUsername = 'fixture'
 const factoryProbeServers = []
 const factoryProbeSockets = new Set()
@@ -114,8 +118,11 @@ try {
   fs.writeFileSync(source, 'ONLY_OUTER_EXECUTES_READ\n')
   function sse(ordinal) {
     const tools = requests.at(-1).body.tools
-    const blocks =
-      ordinal === 1
+    const restartTool = tlsMode && !restartToolIssued && JSON.stringify(requests.at(-1).body.messages).includes('HERMIT_MANAGER_TURN_30')
+    if (restartTool) restartToolIssued = true
+    const blocks = restartTool
+      ? [{ type: 'tool_use', id: 'toolu_01HermitRestartPending0001', name: tools.find(tool => tool.name.includes('ExternalProbe')).name, input: { label: 'WAIT_FOR_RESTART' } }]
+      : ordinal === 1
         ? [
             { type: 'tool_use', id: 'native-read-1', name: 'mcp__outer__Read', input: { file_path: source } },
             {
@@ -160,22 +167,27 @@ try {
     events.push(
       {
         type: 'message_delta',
-        delta: { stop_reason: ordinal === 1 ? 'tool_use' : 'end_turn', stop_sequence: null },
+        delta: { stop_reason: blocks.some(block => block.type === 'tool_use') ? 'tool_use' : 'end_turn', stop_sequence: null },
         usage: { output_tokens: 10 },
       },
       { type: 'message_stop' },
     )
     return events.map((row) => `event: ${row.type}\ndata: ${JSON.stringify(row)}\n\n`).join('')
   }
-  mock = http.createServer(async (req, res) => {
+  const mockHandler = async (req, res) => {
     if (factory && req.url === '/geo') {
       res.setHeader('content-type', 'application/json')
       res.end(JSON.stringify({ status: 'success', query: req.socket.remoteAddress, timezone: 'Etc/UTC' }))
       return
     }
+    if (tlsMode && req.url.startsWith('/api/claude_code/')) {
+      res.writeHead(404, { 'content-type': 'application/json' });res.end('{"error":{"type":"not_found_error"}}');return
+    }
     if (req.method === 'GET' && req.url.split('?')[0].endsWith('/v1/models')) {
       modelRequests.push({
         path: req.url,
+        host: req.headers.host,
+        tls: !!req.socket.encrypted,
         source: req.socket.remoteAddress,
         api_key: req.headers['x-api-key'],
         authorization: req.headers.authorization || null,
@@ -213,7 +225,7 @@ try {
     }
     const body = JSON.parse(bytes)
     if (req.url.endsWith('/v1/oauth/token')) {
-      refreshRequests.push({ ...body, source: req.socket.remoteAddress })
+      refreshRequests.push({ ...body, source: req.socket.remoteAddress, host: req.headers.host, tls: !!req.socket.encrypted })
       save('oauth-refresh-requests.json', refreshRequests)
       res.setHeader('content-type', 'application/json')
       res.end(
@@ -234,12 +246,19 @@ try {
       auth: { api_key: req.headers['x-api-key'], authorization: req.headers.authorization || null },
       body,
       source: req.socket.remoteAddress,
+      host: req.headers.host,
+      tls: !!req.socket.encrypted,
       wire_base64: bytes.toString('base64'),
     })
     save('native-requests.json', requests)
     res.writeHead(200, { 'content-type': 'text/event-stream' })
     res.end(sse(requests.length))
-  })
+  }
+  mock = http.createServer(mockHandler)
+  if (tlsMode) {
+    const { prepareHTTPSFixture } = await import('../fixtures/hermit-https.mjs')
+    httpsFixture = await prepareHTTPSFixture({ root, project, out, handler: mockHandler })
+  }
   mock.listen(0, factory ? '0.0.0.0' : '127.0.0.1')
   await once(mock, 'listening')
   let socksPort
@@ -332,6 +351,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       apiKey: KEY,
       apiKernel,
       originPort: mock.address().port,
+      tls: tlsMode,
     })
   }
   const launchGateway = () =>
@@ -545,6 +565,22 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       }
     }
   }
+  if (tlsMode && slotApiKey) {
+    const validCA = fs.readFileSync(httpsFixture.ca)
+    const select = () => api(gw, 'POST', '/api/panel/dataplane', { headers: { cookie }, body: { dataplane: 'hermit', ids: ['vm-hermit'], target: 'linux-amd64', version: expected.version, restart: true } })
+    for (const [name, replace] of [
+      ['missing', () => fs.unlinkSync(httpsFixture.ca)],
+      ['symlink', () => { fs.unlinkSync(httpsFixture.ca);fs.symlinkSync(path.join(root, 'origin-ca.key'), httpsFixture.ca) }],
+      ['oversize', () => fs.writeFileSync(httpsFixture.ca, Buffer.alloc(1024 * 1024 + 1))],
+      ['invalid', () => fs.writeFileSync(httpsFixture.ca, 'invalid pem')],
+    ]) {
+      replace()
+      const denied = await select();save('tls-ca-'+name+'.json', denied)
+      check('tls_ca_'+name+'_rejected', denied.status !== 200 && denied.json.error?.code === 'hermit_ca_invalid')
+      check('tls_ca_'+name+'_creates_no_owner', !fs.existsSync(path.join(run, 'native-slot.json')))
+      fs.rmSync(httpsFixture.ca, { force: true });fs.writeFileSync(httpsFixture.ca, validCA)
+    }
+  }
   res = await fetch(gw.baseUrl + '/api/panel/dataplane', {
     method: 'POST',
     headers: { cookie, 'content-type': 'application/json' },
@@ -592,6 +628,10 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       const standardStart = await api(gw, 'POST', '/api/panel/vms/vm-hermit/start', { headers: { cookie } })
       save('standard-start.json', standardStart)
       check('standard_slot_start_endpoint', standardStart.status === 200)
+      if (tlsMode) {
+        const { configureTLSSlot } = await import('../fixtures/hermit-https.mjs')
+        check('tls_slot_dns_configured', configureTLSSlot(vm.runtime.container) === 'configured')
+      } else {
       fs.copyFileSync(
         path.join(REPO_ROOT, 'test/fixtures/hermit-origin-relay.py'),
         path.join(run, 'mock-origin-relay.py'),
@@ -607,6 +647,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
         String(mock.address().port),
       ])
       await new Promise((resolve) => setTimeout(resolve, 200))
+      }
     }
     const duplicate = await Promise.all(
       [1, 2].map(() =>
@@ -655,6 +696,10 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
         const restarted = await api(gw, 'POST', '/api/panel/vms/vm-hermit/start', { headers: { cookie } })
         save('auth-restarted.json', restarted)
         check('credential_rotation_starts_with_new_key', restarted.status === 200 && restarted.json.ok === true)
+        if (tlsMode) {
+          const { configureTLSSlot } = await import('../fixtures/hermit-https.mjs')
+          check('tls_slot_dns_restored_after_restart', configureTLSSlot(vm.runtime.container) === 'configured')
+        } else {
         // 模拟上游转发进程属于槽位；Docker stop 会终止该测试进程。
         execFileSync('/usr/bin/docker', [
           'exec',
@@ -678,6 +723,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
           { encoding: 'utf8' },
         )
         check('mock_origin_relay_restarted', relayReady.trim() === 'ready')
+        }
       }
       check('activation_response_contains_no_slot_key', !JSON.stringify(result).includes(SLOT_KEY))
     }
@@ -689,6 +735,11 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       check('config_uses_slot_key', config.session.managed.environment.includes('ANTHROPIC_API_KEY=' + expectedSlotKey))
       check('config_is_private', (fs.statSync(path.join(run, 'native-slot.json')).mode & 0o777) === 0o600)
       check('config_contains_no_refresh_token', !JSON.stringify(config).includes('never-forward'))
+    }
+    if (tlsMode) {
+      check('config_uses_fixed_https_origins', config.session.managed.upstream_url === 'https://api.anthropic.com' && config.helper.oauth_token_url === 'https://platform.claude.com/v1/oauth/token')
+      check('config_uses_slot_ca', config.session.managed.environment.includes('NODE_EXTRA_CA_CERTS=/run/kin/native-ca.pem'))
+      check('slot_ca_matches_control_ca', fs.readFileSync(path.join(run, 'native-ca.pem')).equals(fs.readFileSync(httpsFixture.ca)))
     }
     ownerRoot = realDocker ? config.session.root.replace('/run/kin', run) : config.session.root
     check(
@@ -730,6 +781,14 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       record.dataplane === 'hermit' && record.kernel_package.manifest_sha256 === expected.manifest_sha256,
     )
     if (factory && (slotApiKey || oauthMode)) {
+      if (tlsMode) {
+        const before = modelRequests.length
+        httpsFixture.certificate('wrong-name')
+        const denied = await api(gw, 'POST', '/api/panel/model-policy/sync-worker', { headers: { cookie }, body: {} })
+        save('tls-wrong-certificate.json', denied)
+        check('managed_tls_wrong_certificate_rejected', denied.status !== 200 && modelRequests.length === before)
+        httpsFixture.certificate('normal')
+      }
       const helper = await api(gw, 'POST', '/api/panel/model-policy/sync-worker', { headers: { cookie }, body: {} })
       save('native-helper-rejected.json', helper)
       if (manifest.capabilities.helper_integration) {
@@ -786,6 +845,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
               '--name',
               'ExternalProbe',
               '--echo-label',
+              ...(tlsMode ? ['--wait-label', 'WAIT_FOR_RESTART', '--release-path', restartRelease] : []),
             ],
           },
         },
@@ -884,7 +944,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
         if (line) lines.push(JSON.parse(line))
       }
     })
-    async function sendTurn(turn) {
+    async function sendTurn(turn, timeoutMs = 45000) {
       const before = lines.filter((row) => row.type === 'result').length
       outer.stdin.write(
         JSON.stringify({
@@ -893,7 +953,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
           message: { role: 'user', content: [{ type: 'text', text: 'HERMIT_MANAGER_TURN_' + turn }] },
         }) + '\n',
       )
-      const until = Date.now() + 45000
+      const until = Date.now() + timeoutMs
       while (Date.now() < until && lines.filter((row) => row.type === 'result').length === before)
         await new Promise((resolve) => setTimeout(resolve, 25))
       const results = lines.filter((row) => row.type === 'result')
@@ -958,6 +1018,19 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       ownerRoot = realDocker ? finalConfig.session.root.replace('/run/kin', run) : finalConfig.session.root
     }
     if (realDocker) {
+      let pendingTurn
+      let pendingToolID
+      if (tlsMode) {
+        pendingTurn = sendTurn(30, 240000)
+        pendingTurn.catch(() => {})
+        const until = Date.now() + 45000
+        while (!fs.existsSync(path.join(out, 'mcp-pending.json')) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 50))
+        check('outer_tool_pending_before_restart', fs.existsSync(path.join(out, 'mcp-pending.json')))
+        const call = lines.flatMap(row => Array.isArray(row.message?.content) ? row.message.content : []).find(block => block.type === 'tool_use' && block.input?.label === 'WAIT_FOR_RESTART')
+        pendingToolID = call?.id
+        check('pending_tool_id_observed_by_outer_client', typeof pendingToolID === 'string' && pendingToolID.startsWith('toolu_'))
+        save('pending-tool-link.json', { model_id: 'toolu_01HermitRestartPending0001', outer_id: pendingToolID })
+      }
       const previousRoot = ownerRoot
       gw.child.kill('SIGTERM')
       const until = Date.now() + 25000
@@ -1006,6 +1079,13 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       const fresh = JSON.parse(fs.readFileSync(path.join(run, 'native-slot.json')))
       ownerRoot = fresh.session.root.replace('/run/kin', run)
       check('control_plane_restart_uses_fresh_owner', ownerRoot !== previousRoot)
+      if (tlsMode) {
+        fs.writeFileSync(restartRelease, 'release')
+        await pendingTurn
+        check('pending_tool_result_restored_after_restart', requests.at(-1).body.messages.some(message => Array.isArray(message.content) && message.content.some(block => block.type === 'tool_result' && block.tool_use_id === pendingToolID && JSON.stringify(block.content).includes('WAIT_FOR_RESTART') && JSON.stringify(block.content).includes('P1_DYNAMIC_MCP_RESULT'))))
+        const receipts = fs.readFileSync(effects, 'utf8').trim().split('\n').map(line => JSON.parse(line))
+        check('pending_outer_tool_not_reexecuted', receipts.filter(row => row.arguments?.label === 'WAIT_FOR_RESTART').length === 1)
+      }
       await sendTurn(3)
       check(
         'restart_restores_outer_history',
@@ -1119,6 +1199,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
 } catch (error) {
   save('failure.json', { error: String(error), stack: error.stack })
 } finally {
+  if (tlsMode) fs.writeFileSync(restartRelease, 'cleanup release')
   cleaning = true
   if (outer) {
     outer.stdin.end()
@@ -1159,6 +1240,11 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
         refreshRequests.every((row) => row.source === '127.0.0.2'),
       )
   }
+  if (tlsMode && completed) {
+    check('messages_and_models_use_fixed_tls_api_host', [...requests, ...modelRequests].every(row => row.tls && row.host === 'api.anthropic.com' && row.source === '127.0.0.2'))
+    if (oauthMode) check('refresh_uses_separate_tls_host', refreshRequests.length === 2 && refreshRequests.every(row => row.tls && row.host === 'platform.claude.com' && row.source === '127.0.0.2'))
+    check('tls_sni_uses_expected_domains', httpsFixture.connections.some(row => row.sni === 'api.anthropic.com') && (!oauthMode || httpsFixture.connections.some(row => row.sni === 'platform.claude.com')))
+  }
   if (slotApiKey && completed) {
     check(
       'native_requests_use_slot_key',
@@ -1182,6 +1268,10 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
   if (proxy) {
     proxy.closeAllConnections()
     await new Promise((resolve) => proxy.close(resolve))
+  }
+  if (httpsFixture) {
+    httpsFixture.server.closeAllConnections()
+    await new Promise(resolve => httpsFixture.server.close(resolve))
   }
   if (mock) {
     mock.closeAllConnections()

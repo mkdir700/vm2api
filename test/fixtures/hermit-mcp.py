@@ -8,6 +8,7 @@ import struct
 from pathlib import Path
 import sys
 import zlib
+import time
 
 parser = argparse.ArgumentParser()
 parser.add_argument('receipt', type=Path)
@@ -19,6 +20,8 @@ parser.add_argument('--result-kind', choices=['text', 'image', 'structured', 're
 parser.add_argument('--elicitation', action='store_true')
 parser.add_argument('--echo-label', action='store_true')
 parser.add_argument('--error-label')
+parser.add_argument('--wait-label')
+parser.add_argument('--release-path', type=Path)
 args = parser.parse_args()
 receipt = args.receipt
 pending = None
@@ -57,6 +60,15 @@ for line in sys.stdin:
             (receipt.parent / 'mcp-elicitation-request.json').write_text(json.dumps(outgoing, indent=2) + '\n')
             print(json.dumps(outgoing), flush=True)
             continue
+        if args.wait_label and request['params']['arguments'].get('label') == args.wait_label:
+            if not args.release_path:
+                raise ValueError('A release path is required')
+            (receipt.parent/'mcp-pending.json').write_text(json.dumps(request, indent=2)+'\n')
+            deadline = time.monotonic()+180
+            while not args.release_path.exists() and time.monotonic()<deadline:
+                time.sleep(.05)
+            if not args.release_path.exists():
+                raise TimeoutError('The controlled outer tool was not released')
         result = {'content': [{'type': 'text', 'text': 'P1_DYNAMIC_MCP_RESULT'}], 'isError': False}
         if args.echo_label:
             result['content'][0]['text'] = json.dumps({'receipt': 'P1_DYNAMIC_MCP_RESULT', 'label': request['params']['arguments']['label']}, sort_keys=True)

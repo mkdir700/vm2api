@@ -5,7 +5,7 @@ import crypto from 'node:crypto'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { pickFreePort } from '../harness.mjs'
 
-export async function prepareControlFixture({ project, repo, root, out, apiKey, originPort, apiKernel }) {
+export async function prepareControlFixture({ project, repo, root, out, apiKey, originPort, apiKernel, tls = false }) {
   const control = 'hermit-managed-control'
   const port = await pickFreePort()
   const composeFile = path.join(project, 'docker-compose.yml')
@@ -20,7 +20,8 @@ export async function prepareControlFixture({ project, repo, root, out, apiKey, 
     VM2API_IMAGE: 'clearcc/hermit-control-e2e', VM2API_IMAGE_TAG: 'fixture', VM2API_CONTAINER_NAME: control,
     PORT: String(port), KIN_ADMIN_USER: 'admin', KIN_ADMIN_PASSWORD: 'testpass', VM2API_ADMIN_USER: 'admin', VM2API_ADMIN_PASSWORD: 'testpass',
     KIN_API_KEY: apiKey, VM2API_API_KEY: apiKey, KIN_DB_SECRET: '12'.repeat(32),
-    KIN_KERNEL_TEST_ENDPOINTS: '1', KIN_HERMIT_API_KEY: apiKey, KIN_HERMIT_UPSTREAM_URL: 'http://127.0.0.1:19081/inner',
+    KIN_KERNEL_TEST_ENDPOINTS: '1', KIN_HERMIT_API_KEY: apiKey, KIN_HERMIT_UPSTREAM_URL: tls ? 'https://api.anthropic.com' : 'http://127.0.0.1:19081/inner',
+    ...(tls ? { NODE_EXTRA_CA_CERTS: '/opt/vm2api/share/hermit-e2e-ca.pem' } : {}),
     KIN_CRS_MOCK: '0', KIN_AUTO_SYNC_WRAP: '0', KIN_OS_REGISTRY: '127.0.0.1:1/hermit-fixture',
     KIN_PROXY_GEO_URL: `http://198.18.0.1:${originPort}/geo`,
     KIN_ROUTING_FILE: '/opt/vm2api/src/config/routing.json', NODE_NO_WARNINGS: '1',

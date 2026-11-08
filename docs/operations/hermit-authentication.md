@@ -4,7 +4,7 @@
 
 vm2api 为 Hermit 读取槽位自己的 Console API Key。凭据源是 `vms/<id>/cli-home/.claude/credentials.json`。控制平面复用统一凭据读取器。该路径保留 API Key 认证。完整 helper 包现也支持 OAuth；见下文。hook 和固定官方 CLI 没有改变。
 
-该切片只验收合成 Key 和本地模拟上游。生产激活限制保持不变。消息上游仍应为 `http://127.0.0.1`，且应显式设置 `KIN_KERNEL_TEST_ENDPOINTS=1`。官方 CLI 支持 `ANTHROPIC_API_KEY`。参见 [官方认证说明](https://code.claude.com/docs/en/authentication)。
+该切片只验收合成 Key 和本地模拟上游。生产激活限制保持不变。受控实验支持 HTTP 回环或固定 HTTPS 上游。实验仍须显式设置 `KIN_KERNEL_TEST_ENDPOINTS=1`。参见 [HTTPS 说明](hermit-https.md)。官方 CLI 支持 `ANTHROPIC_API_KEY`。参见 [官方认证说明](https://code.claude.com/docs/en/authentication)。
 
 ## 凭据选择
 

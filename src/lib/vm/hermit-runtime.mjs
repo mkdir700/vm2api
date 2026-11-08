@@ -29,28 +29,47 @@ export async function resolveHermitPackage(project, binding) {
     throw Object.assign(new Error('版本清单摘要已改变'), { code: 'kernel_binding_mismatch' })
   return result
 }
+const HERMIT_API_ORIGIN = 'https://api.anthropic.com'
+const HERMIT_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
+function hermitUpstreamURLs() {
+  const upstream = process.env.KIN_HERMIT_UPSTREAM_URL || HERMIT_API_ORIGIN
+  const invalid = () => Object.assign(new Error('Hermit 上游地址不符合固定 HTTPS 或回环实验要求'), { code: 'hermit_environment_unsupported' })
+  if (upstream === HERMIT_API_ORIGIN) return { upstream, token: HERMIT_TOKEN_URL, https: true }
+  let url
+  try { url = new URL(upstream) } catch { throw invalid() }
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password || url.search || url.hash || upstream.includes('?') || upstream.includes('#')) throw invalid()
+  return { upstream, token: upstream.replace(/\/$/, '') + '/v1/oauth/token', https: false }
+}
 export function assertHermitActivation(vm, manifest) {
   if (isCodexVm(vm)) throw Object.assign(new Error('Codex 槽位不能选择 Hermit'), { code: 'hermit_codex_unsupported' })
   if (vm.node_id || runtimeKind(vm) !== 'docker')
     throw Object.assign(new Error('当前只验收本机 Docker 执行接口'), { code: 'hermit_placement_unsupported' })
-  // 当前生产认证、原生上游和 helper 均未验收。实验开关只用于隔离测试。
+  // 生产激活尚未验收。实验开关和显式上游地址仍为必要条件。
   if (process.env.KIN_KERNEL_TEST_ENDPOINTS !== '1' || !process.env.KIN_HERMIT_UPSTREAM_URL) {
     throw Object.assign(new Error('当前 Hermit 包只完成模拟验收，不能激活生产槽位'), {
       code: 'hermit_activation_unqualified',
     })
   }
-  const url = new URL(process.env.KIN_HERMIT_UPSTREAM_URL)
-  if (
-    url.protocol !== 'http:' ||
-    url.hostname !== '127.0.0.1' ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    manifest.target !== 'linux-amd64'
-  ) {
-    throw Object.assign(new Error('Hermit 实验环境不匹配'), { code: 'hermit_environment_unsupported' })
-  }
+  const urls = hermitUpstreamURLs()
+  if (urls.https) hermitExtraCA()
+  if (manifest.target !== 'linux-amd64') throw Object.assign(new Error('Hermit 实验环境不匹配'), { code: 'hermit_environment_unsupported' })
+  if (urls.https && manifest.capabilities.https_upstream !== true)
+    throw Object.assign(new Error('当前 Hermit 包没有固定 HTTPS 能力'), { code: 'hermit_https_unsupported' })
+}
+function hermitExtraCA() {
+  const file = process.env.NODE_EXTRA_CA_CERTS
+  if (!file) return null
+  const invalid = () => Object.assign(new Error('Hermit CA 文件无效'), { code: 'hermit_ca_invalid' })
+  try {
+    const stat = fs.lstatSync(file)
+    if (!path.isAbsolute(file) || path.normalize(file) !== file || !stat.isFile() || stat.size > 1024 * 1024) throw invalid()
+    const data = fs.readFileSync(file)
+    if (data.length > 1024 * 1024) throw invalid()
+    const certificates = data.toString('utf8').match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g)
+    if (!certificates?.length) throw invalid()
+    for (const certificate of certificates) new crypto.X509Certificate(certificate)
+    return data
+  } catch { throw invalid() }
 }
 export function hermitAuthentication(project, vm, { allowOAuth = false } = {}) {
   const invalid = () =>
@@ -117,6 +136,8 @@ export function writeHermitKernelConfig(project, vm, { force = false } = {}) {
   const authentication = hermitAuthentication(project, vm, {
     allowOAuth: manifest.capabilities.helper_integration === true,
   })
+  const urls = hermitUpstreamURLs()
+  const ca = urls.https ? hermitExtraCA() : null
   const runDir = vm.runtime?.worker_run_dir || path.join(project, 'vms', vm.id, 'run')
   fs.mkdirSync(runDir, { recursive: true, mode: 0o700 })
   fs.chmodSync(runDir, 0o700)
@@ -134,6 +155,7 @@ export function writeHermitKernelConfig(project, vm, { force = false } = {}) {
   privateFile(tokenPath, token + '\n', vm)
   if (force || !fs.existsSync(configPath)) {
     const root = `/run/kin/h-${crypto.randomBytes(5).toString('hex')}`
+    if (ca) privateFile(path.join(runDir, 'native-ca.pem'), ca, vm)
     const body = {
       session: {
         root,
@@ -148,16 +170,15 @@ export function writeHermitKernelConfig(project, vm, { force = false } = {}) {
               .filter(([n]) => n.startsWith('hooks/'))
               .map(([n, m]) => [path.basename(n), m.sha256]),
           ),
-          upstream_url: process.env.KIN_HERMIT_UPSTREAM_URL || 'http://127.0.0.1:1',
-          environment: authentication.environment,
+          upstream_url: urls.upstream,
+          environment: [...authentication.environment, ...(ca ? ['NODE_EXTRA_CA_CERTS=/run/kin/native-ca.pem'] : [])],
         },
       },
       ...(manifest.capabilities.helper_integration === true
         ? {
             helper: {
               credential_path: '/home/kincli/.claude/credentials.json',
-              oauth_token_url:
-                (process.env.KIN_HERMIT_UPSTREAM_URL || 'http://127.0.0.1:1').replace(/\/$/, '') + '/v1/oauth/token',
+              oauth_token_url: urls.token,
             },
           }
         : {}),
