@@ -721,7 +721,7 @@ function publicCredentialRefreshResult(vmId, result, { force = false, vm } = {})
   const out = {
     ok: !!result?.ok,
     vm_id: vmId,
-    refresh_owner: vm?.dataplane === 'hermit' ? null : 'go-slot-worker',
+    refresh_owner: vm?.dataplane === 'hermit' ? result?.refresh_owner || null : 'go-slot-worker',
     proxy_required: true,
     force: !!force,
     refreshed: !!result?.refreshed,

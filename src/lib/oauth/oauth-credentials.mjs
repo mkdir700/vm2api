@@ -806,6 +806,7 @@ export function classifyCredentialRefresh(result) {
     return 'fatal'
   }
   if (
+    code === 'native_helper_busy' ||
     status === 429 ||
     status >= 500 ||
     /timeout|transport|network|temporar|worker_unavailable|worker_timeout|worker_socket/.test(blob)

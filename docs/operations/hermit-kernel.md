@@ -4,7 +4,7 @@
 
 Hermit 是现有 Claude 槽位的内核选项。它与 `wrap`、`cc`、`crag` 并列。它复用槽位记录、调度、认证入口和内部 HTTP 传输。它不创建另一种槽位。
 
-本版本完成模拟上游验收，并已在 primaryserver 运行真实 Docker 容器实验。生产激活默认拒绝。标准槽位创建、带认证 SOCKS5 和受管 Hysteria 2 已完成隔离验收。真实控制平面容器、Compose 入口和路径换算已完成模拟上游验收。KVM、远端节点、真实上游和 OAuth helper 尚未验收。不要将隔离实验通过视为生产可用。
+本版本完成模拟上游验收，并已在 primaryserver 运行真实 Docker 容器实验。生产激活默认拒绝。标准槽位创建、带认证 SOCKS5 和受管 Hysteria 2 已完成隔离验收。真实控制平面容器、Compose 入口和路径换算已完成模拟上游验收。KVM、远端节点、真实上游尚未验收。OAuth helper 已完成合成凭据的隔离验收。不要将隔离实验通过视为生产可用。
 
 ## 安装与依赖
 
@@ -86,7 +86,7 @@ Linux 入口需要网络命名空间权限。每次使用新的输出目录。�
 
 `hermit-runtime.py --docker-image` 由测试驱动创建容器。新增 `hermit-factory.py` 则在独立 Docker daemon 中通过实际 HTTP 激活接口调用标准槽位创建路径。标准创建和带认证 SOCKS5 的联合实验已通过。受管 Hysteria 2 的隔离联合实验也已通过。已有槽位切换仍需单独验收。参见 [标准创建与出口](hermit-factory.md)。
 
-后续生产接入还需验证：OAuth 与 helper、真实上游、模型与计量接口、跨槽位恢复、版本切换和故障回滚。当前版本不承诺服务端无法识别桥接行为。
+后续生产接入还需验证：真实 OAuth 与上游、真实计量结果、跨槽位恢复、版本切换和故障回滚。当前版本不承诺服务端无法识别桥接行为。
 
 真实 Docker 模式还支持 `--docker-failure missing-tmux`、`--docker-failure no-init` 和 `--docker-failure container-exit`。前两项应拒绝激活，且保留原槽位策略。缺少 tmux 的实验应使用未包含 tmux 的固定镜像。正常模式验证控制平面重启，并使用完整外部历史恢复后续输入。容器退出实验不承诺执行中的工具可以恢复。
 
@@ -95,3 +95,5 @@ Linux 入口需要网络命名空间权限。每次使用新的输出目录。�
 真实控制平面容器验收见 [Compose 与路径说明](hermit-control.md)。该实验不设置宿主路径覆盖，并验证了实际入口、helper 摘要和重启后的工具续接。
 
 槽位 API Key 接入与实验边界见 [认证说明](hermit-authentication.md)。该切片保留生产激活限制。
+
+全部七项原生 helper 的协议、凭据所有权和失败处理见 [helper 契约](hermit-helper.md)。

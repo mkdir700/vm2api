@@ -1215,7 +1215,7 @@ export function createPanelHandler(ctx) {
     return {
       ok: !!health.ok,
       vm_id: vmId,
-      refresh_owner: exec.vm?.dataplane === 'hermit' ? null : 'go-slot-worker',
+      refresh_owner: exec.vm?.dataplane === 'hermit' ? health.refresh_owner || null : 'go-slot-worker',
       proxy_required: true,
       worker: health,
       credential: health.credential || null,

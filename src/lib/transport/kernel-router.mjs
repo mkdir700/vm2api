@@ -190,11 +190,15 @@ async function prepareRust(exec, { ensure, routing, slotWaitMs } = {}) {
   if (typeof ensure === 'function') return ensure(exec)
   await prepareSlotCredentials(exec)
   const ttl = rustHealthTtlMs(routing)
-  const cached = peekRustHealth(exec, ttl)
+  const cached = exec?.vm?.dataplane === 'hermit' ? null : peekRustHealth(exec, ttl)
   if (cached && rustKernelReachable(cached.health)) {
     return { ok: true, reason: 'health_cache', health: cached.health }
   }
   const health = await rustKernelHealth(exec, { timeoutMs: 800 })
+  if (health?.runtime_flavor === 'hermit' && health.helper_protocol === 'hermit-helper-1' && health.credential_stale) {
+    const { reloadHermitCredential } = await import('./hermit-kernel-supervisor.mjs')
+    return reloadHermitCredential(exec)
+  }
   if (rustKernelReachable(health)) {
     const ready = { ok: true, reason: 'already_up', health }
     rememberRustHealth(exec, ready)
@@ -279,7 +283,13 @@ async function runHop({ mode, opts }) {
       result = { ...result, rust_transport_retried: true }
       noteWrapHop(opts.exec)
     }
-    if (hermitRuntime && !isClientCancelledResult(result) && (result.transportError || result.terminalState === 'incomplete' || result.body?.error?.code === 'incomplete_response')) {
+    if (
+      hermitRuntime &&
+      !isClientCancelledResult(result) &&
+      (result.transportError ||
+        result.terminalState === 'incomplete' ||
+        result.body?.error?.code === 'incomplete_response')
+    ) {
       result = { ...result, outcomeUnknown: true, terminalState: 'unknown' }
     }
     if (!isClientCancelledResult(result) && isNeedsRefreshResult(result)) {

@@ -21,6 +21,7 @@ def sha(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--oauth', action='store_true', help='验证 OAuth helper 与刷新后消息续接')
     parser.add_argument('--slot-api-key', action='store_true', help='验证槽位独立 API Key')
     for name in ('out', 'node', 'archive', 'receipt', 'cli-source', 'api-kernel'):
         parser.add_argument('--'+name, required=True, type=Path)
@@ -52,7 +53,8 @@ def main():
             environment.update(HERMIT_E2E_DOCKER_CONTAINER=args.docker_container,
                 HERMIT_E2E_FIXTURE_ROOT=str(args.fixture_root),
                 HERMIT_E2E_DOCKER_FAILURE=args.docker_failure or '')
-        environment['HERMIT_E2E_SLOT_API_KEY'] = '1' if args.slot_api_key else ''
+        environment['HERMIT_E2E_OAUTH'] = '1' if args.oauth else ''
+        environment['HERMIT_E2E_SLOT_API_KEY'] = '1' if args.slot_api_key or args.oauth else ''
         result = subprocess.run(command, env=environment)
         return result.returncode
     out.mkdir(parents=True, exist_ok=False)
@@ -62,6 +64,8 @@ def main():
     command = ['/usr/bin/unshare', '--net', sys.executable, str(Path(__file__).resolve()), '--inside',
         '--out', str(out), '--node', str(args.node.resolve()), '--archive', str(args.archive.resolve()),
         '--receipt', str(args.receipt.resolve()), '--cli-source', str(args.cli_source.resolve()), '--api-kernel', str(args.api_kernel.resolve())]
+    if args.oauth:
+        command.append('--oauth')
     if args.slot_api_key:
         command.append('--slot-api-key')
     container = None
@@ -78,12 +82,13 @@ def main():
             pool = fixture/'p/share/kernel-packages'; pool.mkdir(parents=True)
             run = fixture/'p/vms/vm-hermit/run'; run.mkdir(parents=True)
             run.chmod(0o700); os.chown(run, 10001, 987)
+            home = fixture/'p/vms/vm-hermit/cli-home';home.mkdir(parents=True);os.chown(home,10001,987)
             container = 'hermit-e2e-'+fixture.name
             subprocess.run(['docker', 'create', '--pull=never', '--name', container,
                 '--label', 'hermit.e2e='+fixture.name, '--network', 'none', *([] if args.docker_failure == 'no-init' else ['--init']), '--read-only',
                 '--cap-drop', 'ALL', '--security-opt', 'no-new-privileges', '--user', '10001:987',
                 '--pids-limit', '256', '-e', 'HOME=/home/kincli', '--tmpfs', '/tmp:rw,noexec,nosuid,size=32m',
-                '--tmpfs', '/home/kincli:rw,uid=10001,gid=987,mode=700',
+                '--mount', 'type=bind,src='+str(home)+',dst=/home/kincli',
                 '--mount', 'type=bind,src='+str(pool)+',dst=/opt/kin-kernel-packages,readonly',
                 '--mount', 'type=bind,src='+str(run)+',dst=/run/kin',
                 args.docker_image, 'sleep', 'infinity'], check=True, capture_output=True)
@@ -95,7 +100,7 @@ def main():
             command[:2] = ['/usr/bin/nsenter', '--target', str(container_pid), '--net']
             command += ['--docker-container', container, '--fixture-root', str(fixture)]
             if args.docker_failure: command += ['--docker-failure', args.docker_failure]
-        result = subprocess.run(command, capture_output=True, text=True, timeout=440 if args.slot_api_key else 220)
+        result = subprocess.run(command, capture_output=True, text=True, timeout=440 if args.slot_api_key or args.oauth else 220)
         status = result.returncode
         (out/'driver.json').write_text(json.dumps({'command': command, 'exit_code': status, 'stdout': result.stdout, 'stderr': result.stderr}, indent=2)+'\n')
     except subprocess.TimeoutExpired:

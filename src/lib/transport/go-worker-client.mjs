@@ -1101,6 +1101,7 @@ async function ensureWorkerCredentialAdmitted(exec, { force = false } = {}) {
       ok: !!result?.ok,
       status: result?.status || 0,
       refreshed: !!body.refreshed,
+      refresh_owner: result?.refresh_owner,
       refresh_class: result?.ok ? (body.refreshed ? 'rotated' : 'already_fresh') : undefined,
       credential: result?.ok ? credentialSummary({ ...(refreshedCredential || {}), ...body }, Date.now()) : undefined,
       error: result?.ok ? undefined : body.error,
@@ -1167,9 +1168,13 @@ async function callWorkerPostAdmitted(exec, requestPath, body, { timeoutMs = 200
       body,
       timeoutMs,
       signal,
-      maxRequestBytes: 8192,
+      maxRequestBytes:
+        requestPath === '/internal/v1/helper' && exec?.vm?.dataplane === 'hermit' ? 4 * 1024 * 1024 : 8192,
     })
-    const parsed = parseJson(await readAll(response, 16384), response.statusCode)
+    const parsed = parseJson(
+      await readAll(response, requestPath === '/internal/v1/helper' ? 8 * 1024 * 1024 : 16384),
+      response.statusCode,
+    )
     return {
       ok: response.statusCode >= 200 && response.statusCode < 300 && parsed?.ok !== false,
       status: response.statusCode || 0,
@@ -1252,12 +1257,17 @@ async function callWorkerGetAdmitted(exec, requestPath, { timeoutMs = 30000, sig
       }
     }
   }
-  if (!native && requestPath === '/internal/v1/models') {
+  if (requestPath === '/internal/v1/models') {
     return runSlotOauth(exec, 'models', { timeoutMs })
   }
-  if (!native && requestPath === '/internal/oauth/usage') {
+  if (requestPath === '/internal/oauth/usage') {
     return runSlotOauth(exec, 'usage', { timeoutMs })
   }
+  return callWorkerControlGet(exec, requestPath, { timeoutMs, signal })
+}
+
+export async function callWorkerControlGet(exec, requestPath, { timeoutMs = 30000, signal } = {}) {
+  const native = exec?.vm?.dataplane === 'hermit'
   try {
     const response = await workerRequest(exec, { requestPath, timeoutMs, signal })
     const data = await readAll(response, native ? 4 * 1024 * 1024 : MAX_BODY)

@@ -8,11 +8,17 @@ import crypto from 'node:crypto'
 import { spawn, execFileSync } from 'node:child_process'
 import { once } from 'node:events'
 import { DatabaseSync } from 'node:sqlite'
-import { writeWorkerCredentialFile } from '../../src/lib/oauth/oauth-credentials.mjs'
+import { writeWorkerCredentialFile, readWorkerCredentialFile } from '../../src/lib/oauth/oauth-credentials.mjs'
 import { startGateway, seedVm, api, pickFreePort, REPO_ROOT } from '../harness.mjs'
 
 const [out, archive, receiptFile, cliSource, apiKernel] = process.argv.slice(2)
-const slotApiKey = process.env.HERMIT_E2E_SLOT_API_KEY === '1'
+const oauthMode = process.env.HERMIT_E2E_OAUTH === '1'
+const OAUTH_AT = 'sk-ant-oat01-runtime-old'
+const OAUTH_RT = 'sk-ant-ort01-runtime-old'
+let oauthRefreshBoundary = -1
+let oauthAutoBoundary = -1
+const refreshRequests = []
+const slotApiKey = process.env.HERMIT_E2E_SLOT_API_KEY === '1' && !oauthMode
 const SLOT_KEY = 'sk-ant-api03-p1-slot-owned-synthetic-key'
 let expectedSlotKey = SLOT_KEY
 const factory = process.env.HERMIT_E2E_FACTORY === '1'
@@ -51,6 +57,10 @@ try {
   const vm = seedVm({ project, id: 'vm-hermit' })
   if (factory) vm.status = 'stopped'
   if (slotApiKey) vm.claude.mode = 'apikey'
+  if (oauthMode) {
+    vm.claude.mode = 'oauth'
+    vm.claude.has_refresh = true
+  }
   vm.claude.account_uuid = 'account-hermit'
   vm.claude.email = 'hermit@fixture.invalid'
   vm.claude_code_version = '2.1.318'
@@ -65,6 +75,16 @@ try {
   const credentialHome = path.join(project, 'vms/vm-hermit/cli-home')
   const credentialFile = path.join(credentialHome, '.claude/credentials.json')
   if (slotApiKey) writeWorkerCredentialFile(credentialHome, { type: 'apikey', api_key: SLOT_KEY })
+  if (oauthMode)
+    writeWorkerCredentialFile(credentialHome, {
+      type: 'oauth',
+      access_token: OAUTH_AT,
+      refresh_token: OAUTH_RT,
+      expires_at: Date.now() + 3600000,
+      email: vm.claude.email,
+      account_uuid: vm.claude.account_uuid,
+      scope: 'user:profile user:inference user:sessions:claude_code',
+    })
   const routing = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'src/config/routing.json')))
   routing.compatibility = { ...routing.compatibility, official_cc_passthrough: true, cache_ttl: '1h' }
   routing.kernel_watchdog = { enabled: false }
@@ -170,6 +190,20 @@ try {
       )
       return
     }
+    if (req.method === 'GET') {
+      res.setHeader('content-type', 'application/json')
+      res.end(
+        JSON.stringify(
+          req.url.includes('/usage')
+            ? { five_hour: { utilization: 0.1 }, seven_day: { utilization: 0.2 } }
+            : {
+                account: { uuid: 'account-hermit', email_address: 'hermit@fixture.invalid' },
+                organization: { uuid: '11111111-2222-4333-8444-555555555555', organization_type: 'claude_max' },
+              },
+        ),
+      )
+      return
+    }
     const chunks = []
     for await (const chunk of req) chunks.push(chunk)
     let bytes = Buffer.concat(chunks)
@@ -178,6 +212,20 @@ try {
       bytes = gunzipSync(bytes)
     }
     const body = JSON.parse(bytes)
+    if (req.url.endsWith('/v1/oauth/token')) {
+      refreshRequests.push({ ...body, source: req.socket.remoteAddress })
+      save('oauth-refresh-requests.json', refreshRequests)
+      res.setHeader('content-type', 'application/json')
+      res.end(
+        JSON.stringify({
+          access_token: 'sk-ant-oat01-runtime-new-' + refreshRequests.length,
+          refresh_token: 'sk-ant-ort01-runtime-new-' + refreshRequests.length,
+          expires_in: 3600,
+          scope: 'user:profile user:inference user:sessions:claude_code',
+        }),
+      )
+      return
+    }
     if (!req.url.split('?')[0].endsWith('/v1/messages')) {
       res.end('{"input_tokens":100}')
       return
@@ -262,7 +310,7 @@ if a[0]=='python3':os.execv('/usr/bin/python3',a)
 if not a[0].startswith('/opt/kin-kernel-packages/'):raise SystemExit(1)
 binary=a[0].replace('/opt/kin-kernel-packages',pool)
 config=Path(run)/'native-slot.json'
-raw=config.read_text().replace('/opt/kin-kernel-packages',pool).replace('/run/kin',run)
+raw=config.read_text().replace('/opt/kin-kernel-packages',pool).replace('/run/kin',run).replace('/home/kincli/.claude/credentials.json',str(Path(run).parent/'cli-home/.claude/credentials.json'))
 translated=Path(run)/'native-translated.json';translated.write_text(raw);translated.chmod(0o600)
 os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
 `
@@ -681,9 +729,17 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       'existing_slot_selected',
       record.dataplane === 'hermit' && record.kernel_package.manifest_sha256 === expected.manifest_sha256,
     )
-    if (factory && slotApiKey) {
+    if (factory && (slotApiKey || oauthMode)) {
       const helper = await api(gw, 'POST', '/api/panel/model-policy/sync-worker', { headers: { cookie }, body: {} })
       save('native-helper-rejected.json', helper)
+      if (manifest.capabilities.helper_integration) {
+        const nativeStatus = await api(gw, 'GET', '/admin/vm/oauth')
+        check(
+          'all_seven_helpers_are_live',
+          nativeStatus.json.worker?.helper_protocol === 'hermit-helper-1' &&
+            nativeStatus.json.worker?.helper_operations?.length === 7,
+        )
+      }
       const supportsModels = Boolean(manifest.source?.files?.['internal/nativebridge/models.go'])
       check(
         supportsModels ? 'active_native_models_sync_succeeds' : 'active_native_helper_rejects_legacy_fallback',
@@ -696,7 +752,10 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
           'model_helper_uses_slot_key_and_exit',
           modelRequests.length > 0 &&
             modelRequests.every(
-              (row) => row.api_key === expectedSlotKey && row.authorization === null && row.source === '127.0.0.2',
+              (row) =>
+                (oauthMode
+                  ? row.authorization === 'Bearer ' + OAUTH_AT && !row.api_key
+                  : row.api_key === expectedSlotKey && row.authorization === null) && row.source === '127.0.0.2',
             ),
         )
         check(
@@ -863,6 +922,41 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
         requests.every((row) => row.source === '127.0.0.2'),
       )
     check('source_file_unchanged', fs.readFileSync(source, 'utf8') === 'ONLY_OUTER_EXECUTES_READ\n')
+    if (oauthMode) {
+      oauthRefreshBoundary = requests.length
+      const refreshed = await api(gw, 'POST', '/api/panel/vms/vm-hermit/oauth/refresh', {
+        headers: { cookie },
+        body: {},
+      })
+      save('oauth-explicit-refresh.json', refreshed)
+      check(
+        'oauth_explicit_refresh_and_owner_restart',
+        refreshed.status === 200 &&
+          refreshed.json.data.refresh_owner === 'hermit-native-slot' &&
+          refreshed.json.data.refreshed === true,
+      )
+      const updated = JSON.parse(
+        fs.readFileSync(path.join(run, realDocker ? 'native-slot.json' : 'native-translated.json')),
+      )
+      const freshRoot = realDocker ? updated.session.root.replace('/run/kin', run) : updated.session.root
+      check('oauth_refresh_replaces_owner', freshRoot !== ownerRoot)
+      check('refresh_token_never_enters_native_config', !JSON.stringify(updated).includes('sk-ant-ort01'))
+      ownerRoot = freshRoot
+      await sendTurn(20)
+      check('oauth_request_uses_new_token', requests.at(-1).auth.authorization === 'Bearer sk-ant-oat01-runtime-new-1')
+      const liveCredential = readWorkerCredentialFile(credentialHome)
+      writeWorkerCredentialFile(credentialHome, { ...liveCredential, expires_at: 1 })
+      oauthAutoBoundary = requests.length
+      await sendTurn(21)
+      check(
+        'oauth_expiry_recovers_before_native_request',
+        requests.at(-1).auth.authorization === 'Bearer sk-ant-oat01-runtime-new-2' && refreshRequests.length === 2,
+      )
+      const finalConfig = JSON.parse(
+        fs.readFileSync(path.join(run, realDocker ? 'native-slot.json' : 'native-translated.json')),
+      )
+      ownerRoot = realDocker ? finalConfig.session.root.replace('/run/kin', run) : finalConfig.session.root
+    }
     if (realDocker) {
       const previousRoot = ownerRoot
       gw.child.kill('SIGTERM')
@@ -1038,6 +1132,32 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     fs.writeFileSync(path.join(out, 'server-stderr.txt'), gw.stderr())
     fs.writeFileSync(path.join(out, 'server-stdout.txt'), gw.stdout())
     check('gateway_graceful_exit', gw.child.exitCode === 0)
+  }
+  if (oauthMode && completed) {
+    check(
+      'oauth_all_requests_use_expected_token',
+      requests.every(
+        (row, index) =>
+          row.auth.authorization ===
+            'Bearer ' +
+              (index < oauthRefreshBoundary
+                ? OAUTH_AT
+                : index < oauthAutoBoundary
+                  ? 'sk-ant-oat01-runtime-new-1'
+                  : 'sk-ant-oat01-runtime-new-2') && !row.auth.api_key,
+      ),
+    )
+    check(
+      'refresh_tokens_rotated_by_single_owner',
+      refreshRequests.length === 2 &&
+        refreshRequests[0].refresh_token === OAUTH_RT &&
+        refreshRequests[1].refresh_token === 'sk-ant-ort01-runtime-new-1',
+    )
+    if (factory)
+      check(
+        'oauth_refresh_uses_assigned_exit',
+        refreshRequests.every((row) => row.source === '127.0.0.2'),
+      )
   }
   if (slotApiKey && completed) {
     check(

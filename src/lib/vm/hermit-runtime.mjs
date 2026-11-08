@@ -52,7 +52,7 @@ export function assertHermitActivation(vm, manifest) {
     throw Object.assign(new Error('Hermit 实验环境不匹配'), { code: 'hermit_environment_unsupported' })
   }
 }
-export function hermitApiKey(project, vm) {
+export function hermitAuthentication(project, vm, { allowOAuth = false } = {}) {
   const invalid = () =>
     Object.assign(new Error('Hermit 槽位 API Key 凭据无效；请修正凭据后重启槽位'), {
       code: 'hermit_authentication_invalid',
@@ -83,12 +83,24 @@ export function hermitApiKey(project, vm) {
       baseUrl !== 'https://api.anthropic.com'
     )
       throw invalid()
-    return cred.api_key
+    return { token: cred.api_key, environment: ['ANTHROPIC_API_KEY=' + cred.api_key] }
+  }
+  if (allowOAuth && doc?.claudeAiOauth) {
+    const cred = readWorkerCredentialFile(home)
+    const access = cred?.access_token || ''
+    const refresh = cred?.refresh_token || ''
+    if (
+      (!access && !refresh) ||
+      (access && !access.startsWith('sk-ant-oat01-')) ||
+      /[\s\x00-\x1f\x7f]/.test(access + refresh)
+    )
+      throw invalid()
+    return { token: access, environment: access ? ['CLAUDE_CODE_OAUTH_TOKEN=' + access] : [], oauth: true }
   }
   // 兼容原隔离实验。此分支不读取或转发 OAuth 令牌。
   const key = process.env.KIN_HERMIT_API_KEY || ''
   if (process.env.KIN_KERNEL_TEST_ENDPOINTS !== '1' || !key || /[\s\x00-\x1f\x7f]/.test(key)) throw invalid()
-  return key
+  return { token: key, environment: ['ANTHROPIC_API_KEY=' + key] }
 }
 function privateFile(file, body, vm) {
   fs.writeFileSync(file, body, { mode: 0o600 })
@@ -99,10 +111,12 @@ function privateFile(file, body, vm) {
   } catch {}
 }
 export function writeHermitKernelConfig(project, vm, { force = false } = {}) {
-  const apiKey = hermitApiKey(project, vm)
   const binding = hermitBinding(vm)
   const paths = hermitPackagePaths(project, binding)
   const manifest = JSON.parse(fs.readFileSync(path.join(paths.payload, 'manifest.json'), 'utf8'))
+  const authentication = hermitAuthentication(project, vm, {
+    allowOAuth: manifest.capabilities.helper_integration === true,
+  })
   const runDir = vm.runtime?.worker_run_dir || path.join(project, 'vms', vm.id, 'run')
   fs.mkdirSync(runDir, { recursive: true, mode: 0o700 })
   fs.chmodSync(runDir, 0o700)
@@ -135,9 +149,18 @@ export function writeHermitKernelConfig(project, vm, { force = false } = {}) {
               .map(([n, m]) => [path.basename(n), m.sha256]),
           ),
           upstream_url: process.env.KIN_HERMIT_UPSTREAM_URL || 'http://127.0.0.1:1',
-          environment: ['ANTHROPIC_API_KEY=' + apiKey],
+          environment: authentication.environment,
         },
       },
+      ...(manifest.capabilities.helper_integration === true
+        ? {
+            helper: {
+              credential_path: '/home/kincli/.claude/credentials.json',
+              oauth_token_url:
+                (process.env.KIN_HERMIT_UPSTREAM_URL || 'http://127.0.0.1:1').replace(/\/$/, '') + '/v1/oauth/token',
+            },
+          }
+        : {}),
       socket: '/run/kin/kernel.sock',
       internal_token: token,
     }

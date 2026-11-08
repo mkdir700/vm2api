@@ -2,7 +2,7 @@
 
 ## 当前范围
 
-vm2api 为 Hermit 读取槽位自己的 Console API Key。凭据源是 `vms/<id>/cli-home/.claude/credentials.json`。控制平面复用统一凭据读取器。Hermit 的 Go 代码和 hook 没有改变。
+vm2api 为 Hermit 读取槽位自己的 Console API Key。凭据源是 `vms/<id>/cli-home/.claude/credentials.json`。控制平面复用统一凭据读取器。该路径保留 API Key 认证。完整 helper 包现也支持 OAuth；见下文。hook 和固定官方 CLI 没有改变。
 
 该切片只验收合成 Key 和本地模拟上游。生产激活限制保持不变。消息上游仍应为 `http://127.0.0.1`，且应显式设置 `KIN_KERNEL_TEST_ENDPOINTS=1`。官方 CLI 支持 `ANTHROPIC_API_KEY`。参见 [官方认证说明](https://code.claude.com/docs/en/authentication)。
 
@@ -45,10 +45,18 @@ vm2api 为 Hermit 读取槽位自己的 Console API Key。凭据源是 `vms/<id>
 - `native-requests.json`。认证头只包含合成 Key。
 - 源码摘要、隔离记录、工具结果和清理记录。
 
+## OAuth 认证
+
+完整 helper 包读取同一 canonical 凭据文件。vm2api 将 access token 写入私有配置的 `CLAUDE_CODE_OAUTH_TOKEN`。vm2api 不把 refresh token 写入该配置。Hermit helper 通过挂载的 canonical 文件保存轮换结果。
+
+Hermit helper 是唯一刷新写入者。刷新改变 access token 后，vm2api 确认旧 owner 退出，再启动新 owner。固定版本 Claude Code 2.1.318 已在合成 OAuth 端到端场景验证。旧的 models-only 包不启用该认证路径。参见 [helper 契约](hermit-helper.md)。
+
+`helper_integration` 现为 `true`。该标志表示原生 helper 协议已接入，不表示生产上游已验收。
+
 ## 未验收范围
 
-OAuth 刷新、生产 helper 认证、真实上游和真实账号均为 NOT RUN。`helper_integration` 保持 `false`。当前 `hermit oauth` 仍使用旧 worker 配置，不能直接消费 `native-slot.json`。后续应先确定唯一的刷新写入者，再接入 OAuth。
+真实 OAuth、真实上游和真实账号均为 NOT RUN。生产激活限制保持不变。
 
 本轮证据与检查结果见 [认证验收记录](hermit-authentication-results-20261108.md)。
 
-原生 helper 的拒绝行为与后续接入边界见 [helper 契约](hermit-helper.md)。
+原生 helper 的能力选择、刷新和失败处理见 [helper 契约](hermit-helper.md)。

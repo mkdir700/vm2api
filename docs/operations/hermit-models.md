@@ -1,5 +1,7 @@
 # Hermit 只读 models helper
 
+本文保留 models-only 切片的行为与验收。完整 helper 包现支持 OAuth 和全部七项操作。当前契约见 [helper 说明](hermit-helper.md)。下述模型响应校验和固定边界仍适用。
+
 ## 接入方式
 
 vm2api 先读取活动内核的健康响应。只有 `runtime_flavor` 为 `hermit`、`healthy` 为 `true`，且 `helper_operations` 数组包含 `models` 时，vm2api 才向该内核的 `/internal/v1/models` 发起请求。请求使用槽位内部令牌。

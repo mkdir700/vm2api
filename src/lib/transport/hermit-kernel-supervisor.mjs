@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import path from 'node:path'
 import crypto from 'node:crypto'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -8,7 +9,7 @@ import { isDockerInspectNotFound } from '../vm/docker-container.mjs'
 import { rustKernelHealth } from './rust-kernel-client.mjs'
 import {
   assertHermitActivation,
-  hermitApiKey,
+  hermitAuthentication,
   resolveHermitPackage,
   writeHermitKernelConfig,
   HERMIT_GUEST_PACKAGES,
@@ -44,6 +45,16 @@ export async function stopHermitKernel(exec, { timeoutMs = 20000 } = {}) {
   owners.delete(key(exec))
   return { ok: true, reason: 'lease_closed' }
 }
+export async function reloadHermitCredential(exec) {
+  const ownerExec = {
+    ...exec,
+    projectRoot: exec.projectRoot || (exec.homeDir ? path.dirname(path.dirname(path.dirname(exec.homeDir))) : null),
+  }
+  if (!ownerExec.projectRoot) return { ok: false, reason: 'hermit_project_missing' }
+  const stopped = await stopHermitKernel(ownerExec)
+  if (!stopped.ok) return stopped
+  return ensureHermitKernel(ownerExec)
+}
 export async function stopHermitSlot(vm) {
   const entries = [...owners.values()].filter((entry) => entry.exec.vm.id === vm.id)
   const results = await Promise.all(entries.map((entry) => stopHermitKernel(entry.exec)))
@@ -66,7 +77,14 @@ async function start(exec, { timeoutMs = 15000 } = {}) {
     const binding = vm.kernel_package
     const installed = await resolveHermitPackage(exec.projectRoot, binding)
     assertHermitActivation(vm, installed.manifest)
-    const authentication = crypto.createHash('sha256').update(hermitApiKey(exec.projectRoot, vm)).digest('hex')
+    const authentication = crypto
+      .createHash('sha256')
+      .update(
+        hermitAuthentication(exec.projectRoot, vm, {
+          allowOAuth: installed.manifest.capabilities.helper_integration === true,
+        }).token,
+      )
+      .digest('hex')
     const existing = owners.get(key(exec))
     if (existing) {
       if (existing.authentication !== authentication) return { ok: false, reason: 'hermit_authentication_changed' }

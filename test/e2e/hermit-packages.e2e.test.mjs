@@ -194,6 +194,13 @@ test('admin uploads immutable thin packages and shares a verified CLI cache with
     const after = JSON.parse(fs.readFileSync(path.join(gw.project, 'vms/vm-sim-01.json')))
     check('failed_activation_preserves_active_kernel', after.dataplane === undefined)
 
+    const invalidHelper = await send(
+      fixture('0.2.0-helper-invalid', { manifest: { capabilities: { production: false, helper_integration: true } } }),
+    )
+    check(
+      'full_helper_cannot_declare_legacy_cli_entrypoint',
+      invalidHelper.response.status === 400 && invalidHelper.body.error?.code === 'invalid_native_helper_entrypoint',
+    )
     completed = true
   } finally {
     if (gw) {

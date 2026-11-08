@@ -1,65 +1,64 @@
-# Hermit 原生 helper 拒绝契约
+# Hermit 原生 helper 契约
 
 ## 当前行为
 
-Hermit 原生槽位现支持只读 `models` helper。vm2api 根据活动槽位的 `dataplane` 选择 helper 行为。活动值为 `hermit` 时，统一入口先核对实际内核能力。只有健康 Hermit 内核报告 `helper_operations` 含 `models` 时，入口才通过内部 socket 转发模型查询。其余 helper 操作仍返回不支持。
+Hermit 原生槽位现已接入全部七个 helper。新包通过内部 HTTP 接口执行操作。vm2api 不调用旧 `kin-worker oauth`，也不加载旧 `worker.json`。
 
-该入口覆盖 `refresh`、`usage`、`profile`、`models`、`count-tokens`、`reset-status` 和 `reset-redeem`。Hermit 不应回退到 `/usr/local/bin/kin-worker oauth`，也不应读取旧 `/run/kin/worker.json` 来执行这些操作。
+| 操作 | OAuth | Console API Key |
+| --- | --- | --- |
+| refresh | 支持 | 400 credential_mode_unsupported |
+| usage | 支持 | 400 credential_mode_unsupported |
+| profile | 支持 | 400 credential_mode_unsupported |
+| models | 支持 | 支持 |
+| count-tokens | 支持 | 支持 |
+| reset-status | 支持 | 400 credential_mode_unsupported |
+| reset-redeem | 支持 | 400 credential_mode_unsupported |
 
-不支持的操作返回以下结果：
+这些能力已接入模拟上游验收。真实账号和真实上游仍为 NOT RUN。包的 `production` 保持 `false`。消息和 helper 上游仍限于 HTTP 回环地址。公共计数接口仍返回 404。
 
-```json
-{
-  "ok": false,
-  "status": 501,
-  "body": { "error": { "code": "native_operation_unsupported" } },
-  "via": "hermit",
-  "transportError": false
-}
-```
+## 能力选择
 
-这是能力拒绝。它不是网络传输失败。调用方不应据此声明 OAuth 令牌失效。
+1. 读取活动槽位的健康响应。
+2. 核对 `runtime_flavor: hermit` 和 `healthy: true`。
+3. 核对 `helper_operations` 包含目标操作。
+4. 新协议要求 `helper_protocol: hermit-helper-1`。
+5. 通过内部 socket 调用 `POST /internal/v1/helper`。
 
-原内核继续调用原 helper。仅存在 `pending_kernel_package` 不会启用 Hermit 的拒绝分支。
+新包的 helper 入口为 `internal-http`。入口路径为 `/internal/v1/helper`。协议名为 `hermit-helper-1`。安装器拒绝声称支持全部 helper、却仍声明旧 CLI helper 入口的包。
 
-## HTTP 接口
+旧 models 包继续使用只读 models 接口。旧包没有声明的操作返回 `501 native_operation_unsupported`。缺少能力不表示凭据失效。原内核继续执行原 helper。仅有 `pending_kernel_package` 不会改变活动内核行为。
 
-| 接口 | 当前 Hermit 行为 |
-| --- | --- |
-| POST /api/panel/model-policy/sync-worker | 有 models 能力时返回 200；缺少该能力时返回 501 |
-| POST /admin/vm/oauth/refresh | 实际需要调用 helper 的刷新返回 501 |
-| POST /api/panel/vms/:id/oauth/refresh | OAuth helper 刷新返回 501 |
-| GET /admin/vm/oauth | 不声明 OAuth 刷新者，`refresh_owner` 为 null |
-| GET /api/panel/oauth | 不声明 OAuth 刷新者，`refresh_owner` 为 null |
+## 刷新和重建
 
-不支持的刷新使用 `refresh_class: unsupported`。控制平面不把这种结果写为账号刷新错误。
+Hermit 复用统一凭据存储和 OAuth 刷新器。Hermit helper 是该原生槽位的唯一 refresh token 写入者。内层 Claude Code 只接收 access token。内层 CLI 不接收 refresh token。
 
-该切片不开放新的公共接口。公共计数接口仍返回 404。面板仍拒绝刷新 Console API Key，并返回 `credential_mode_unsupported`。已有缓存读取和多账号模型目录的选择规则保持原行为。
+刷新改变 access token 后，helper 返回 `credential_changed: true`。旧 owner 随即拒绝新消息。vm2api 关闭旧 stdin 租约，并确认 owner 已停止。随后，vm2api 读取新凭据并启动新 owner。下次消息携带完整外部历史。
 
-包清单中的 `helper_integration` 保持 `false`。`hermit oauth` 的存在不表示原生槽位已经接入该命令。
+消息发现令牌过期时，Hermit 在发送上游请求前返回 `needs_refresh`。vm2api 调用同一 helper，再重建 owner 并重试。只有 refresh token 的凭据可先刷新，再启动 CLI。
 
-## 验证
+OAuth 状态中的 `refresh_owner` 为 `hermit-native-slot`。API Key 不声明刷新者。刷新后的凭据已经保存，但 owner 重建失败时，调用方收到 `hermit_refresh_restart_failed`。
 
-本地入口使用完整 HTTP 控制平面、实际 API kernel 和记录调用的进程替身。测试替身代替 Docker 命令边界。它不运行生产 Docker，也不请求真实上游。
+同一个原生槽位不并发执行消息和 helper。发生重叠时，helper 返回 `409 native_helper_busy`。该状态可重试。该锁只覆盖原生请求，不表示控制平面掌握外部工具的执行状态。
+
+## 失败处理
+
+helper 拒绝认证头和 Cookie 覆盖。helper 拒绝重定向、非 JSON 响应和超大响应。错误结果不复制上游错误正文。响应只保留重试和额度头。结果包含访问令牌、刷新令牌或内部令牌时，helper 返回脱敏错误。
+
+`reset-redeem` 校验组织、grant 和 request 标识。传输失败可能导致执行结果未知。此时结果含 `outcome_unknown: true`。helper 不自动重试兑换。先查询 `reset-status`，再决定恢复操作。
+
+## 验证入口
+
+原生七项操作和异常路径由 Hermit 的 `experiment/native_helpers_e2e.py` 验证。实验使用实际 Go 进程、内部 Unix socket、合成凭据和模拟上游。实验保留检查结果、请求、二进制摘要和进程清理收据。
+
+旧包兼容和能力拒绝验证使用以下命令：
 
 ```sh
 node --test test/e2e/hermit-helper.e2e.test.mjs
 ```
 
-未指定 `KIN_API_KERNEL_BIN` 时，测试从当前 `api-kernel` 源码构建本机二进制。指定该变量时，测试使用固定的真实二进制。
+实际控制容器验证使用 `test/e2e/hermit-factory.py`。API Key 场景增加 `--slot-api-key`。OAuth 场景增加 `--oauth`。每次使用新的输出目录。OAuth 场景验证显式刷新、过期刷新、owner 重建和消息续接。
 
-Linux 隔离入口如下：
-
-```sh
-python3 test/e2e/hermit-helper.py \
-  --out /tmp/fresh-helper-run \
-  --node /path/to/node \
-  --api-kernel /path/to/kin-api-kernel
-```
-
-该入口需要网络命名空间权限。它验证 IPv4、IPv6 外网拒绝、源码固定和进程清理。保留 `receipt.json`、`checks.json`、`responses.json`、`helper-calls.json`、源码快照和隔离记录。
-
-真实控制容器回归还检查活动 Hermit 槽位的模型同步拒绝。该回归继续验证消息、Read、外部 MCP、换 Key、控制平面重启和出口故障恢复。
+完整验收工件见 [全部 helper 验收记录](hermit-helpers-results-20261108.md)。模型切片的旧结果见 [models 记录](hermit-models.md)。以下内容保留原拒绝切片的历史结果。
 
 ## 2026-11-08 拒绝契约验收（模型接入之前）
 
@@ -80,11 +79,3 @@ sha256:5580ae9845944f986a8148964e30ca250619d72ba1075ee04952001fdaa54f8f
 最终 primaryserver 目录为 `/tmp/hermit-native-linux.GgJ0o4/helper-isolated-verified` 和 `/tmp/hermit-native-linux.GgJ0o4/helper-control-verified`。
 
 第一轮 `helper-control-final` 的 81 项业务检查通过，但源码固定检查失败。当时更新了宽范围快照内的独立 helper 测试文件。该轮不作为最终验收。最终轮次在全部源码固定后重新运行，并通过检查。
-
-## 后续范围
-
-本切片没有接入 OAuth 刷新。后续应先确定唯一刷新写入者，再接入原生 helper 配置和凭据存储。不要把原生 CLI 和旧 worker 同时配置为 refresh token 写入者。
-
-真实 OAuth、真实消息上游和生产部署仍为 NOT RUN。只读 models 切片修改了 Hermit 的 Go 路由。hook 没有改变。
-
-模型接入、限制和新验收结果见 [原生 models 说明](hermit-models.md)。

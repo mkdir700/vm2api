@@ -5,7 +5,7 @@
 import path from 'node:path'
 import {
   callGoWorker,
-  callWorkerGet,
+  callWorkerControlGet,
   callWorkerPost,
   streamGoWorker,
   workerHealth,
@@ -56,7 +56,11 @@ export async function streamRustKernel(opts = {}) {
 }
 
 export async function getRustKernelHelper(exec, requestPath, options = {}) {
-  return remapVia(await callWorkerGet(withRustKernelExec(exec), requestPath, options))
+  return remapVia(await callWorkerControlGet(withRustKernelExec(exec), requestPath, options))
+}
+
+export async function postRustKernelHelper(exec, input, options = {}) {
+  return remapVia(await callWorkerPost(withRustKernelExec(exec), '/internal/v1/helper', input, options))
 }
 
 export async function postRustKernelTelemetryEvent(exec, event, options = {}) {
@@ -96,7 +100,7 @@ export function rustKernelBusy(health) {
   if (health?.healthy === false) return false
   if (health?.recovering === true) return true
   if (rustKernelCliReady(health)) return false
-  if (health?.runtime_flavor === 'hermit') return Number(health.active_requests) > 0
+  if (health?.runtime_flavor === 'hermit') return Number(health.active_requests) > 0 || health.helper_active === true
   const pid = finiteNumber(health?.cli_pid)
   return pid != null && pid > 0
 }

@@ -3,7 +3,12 @@ import { spawn } from 'node:child_process'
 import { randomUUID as cryptoRandomUUID } from 'node:crypto'
 import path from 'node:path'
 import { createInterface } from 'node:readline'
-import { postRustKernelTelemetryEvent, rustKernelHealth, getRustKernelHelper } from './rust-kernel-client.mjs'
+import {
+  postRustKernelTelemetryEvent,
+  rustKernelHealth,
+  getRustKernelHelper,
+  postRustKernelHelper,
+} from './rust-kernel-client.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
 import { slotExecArgv } from '../vm/slot-exec.mjs'
 
@@ -236,18 +241,34 @@ async function runSlotOauthAdmitted(
 
 export async function runSlotOauth(exec, op, options = {}) {
   if (exec?.vm?.dataplane === 'hermit') {
-    if (op === 'models') {
-      const health = await rustKernelHealth(exec, { timeoutMs: Math.min(Number(options.timeoutMs) || 3000, 3000) })
-      if (
-        health?.runtime_flavor === 'hermit' &&
-        health.healthy === true &&
-        Array.isArray(health.helper_operations) &&
-        health.helper_operations.includes('models')
-      ) {
+    const health = await rustKernelHealth(exec, { timeoutMs: Math.min(Number(options.timeoutMs) || 3000, 3000) })
+    if (
+      health?.runtime_flavor === 'hermit' &&
+      health.healthy === true &&
+      Array.isArray(health.helper_operations) &&
+      health.helper_operations.includes(op)
+    ) {
+      if (health.helper_protocol === 'hermit-helper-1') {
+        return withManagedEgressOperation(exec.vm.proxy, async () => {
+          const response = await postRustKernelHelper(
+            exec,
+            { operation: op, body: options.body || null, headers: options.headers || {}, force: !!options.force },
+            options,
+          )
+          if (!response.body || typeof response.body.status !== 'number') return response
+          const result = { ...response.body, via: 'hermit', transportError: false }
+          if (result.credential_changed) {
+            const { reloadHermitCredential } = await import('./hermit-kernel-supervisor.mjs')
+            const restarted = await reloadHermitCredential(exec)
+            if (!restarted.ok) return failure('hermit_refresh_restart_failed', '新凭据已保存，但内核重建失败')
+          }
+          return result
+        })
+      }
+      if (op === 'models')
         return withManagedEgressOperation(exec.vm.proxy, () =>
           getRustKernelHelper(exec, '/internal/v1/models', options),
         )
-      }
     }
     return Promise.resolve({
       ok: false,

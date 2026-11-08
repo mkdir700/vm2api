@@ -22,6 +22,7 @@ def sha(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--oauth', action='store_true', help='验证 OAuth helper 与刷新后消息续接')
     parser.add_argument('--slot-api-key', action='store_true', help='验证槽位独立 API Key')
     for name in ('out', 'node', 'archive', 'receipt', 'cli-source', 'api-kernel', 'egress', 'sing-box', 'computer'):
         parser.add_argument('--'+name, required=True, type=Path)
@@ -137,7 +138,8 @@ print(json.dumps({'remote_egress':checks}))
         baseline = set(processes())
         env = {'PATH':str(args.node.parent)+':/usr/sbin:/usr/bin:/sbin:/bin','HOME':str(out),
             'DOCKER_HOST':inner_env['DOCKER_HOST'],'NODE_NO_WARNINGS':'1',
-            'HERMIT_E2E_SLOT_API_KEY':'1' if args.slot_api_key else '',
+            'HERMIT_E2E_OAUTH':'1' if args.oauth else '',
+            'HERMIT_E2E_SLOT_API_KEY':'1' if args.slot_api_key or args.oauth else '',
             'HERMIT_E2E_FACTORY':'1','HERMIT_E2E_FIXTURE_ROOT':str(fixture/'fixture'),
             'HERMIT_E2E_SING_BOX':str(args.sing_box.resolve()),'KIN_EGRESS_BIN':str(args.egress.resolve()),
             'HERMIT_E2E_MANAGED':'1' if args.managed_image else '',
@@ -145,7 +147,7 @@ print(json.dumps({'remote_egress':checks}))
             'KIN_OS_REGISTRY':'127.0.0.1:1/hermit-fixture','KIN_COMPUTER_BIN':str(args.computer.resolve())}
         command = prefix+[str(args.node.resolve()),str(repo/'test/e2e/hermit-runtime.mjs'),str(out),
             str(args.archive.resolve()),str(args.receipt.resolve()),str(args.cli_source.resolve()),str(args.api_kernel.resolve())]
-        completed = subprocess.run(command,env=env,capture_output=True,text=True,timeout=440 if args.slot_api_key else 260)
+        completed = subprocess.run(command,env=env,capture_output=True,text=True,timeout=440 if args.slot_api_key or args.oauth else 260)
         (out/'driver.json').write_text(json.dumps({'exit_code':completed.returncode,'stdout':completed.stdout,'stderr':completed.stderr},indent=2)+'\n')
         summary = json.load(open(out/'summary.json')) if (out/'summary.json').exists() else {'result':'FAIL'}
         result = {'result':'PASS' if completed.returncode == 0 and summary['result']=='PASS' else 'FAIL','native':summary}
