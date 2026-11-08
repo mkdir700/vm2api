@@ -235,5 +235,21 @@ async function runSlotOauthAdmitted(
 }
 
 export function runSlotOauth(exec, ...args) {
+  if (exec?.vm?.dataplane === 'hermit') {
+    return Promise.resolve({
+      ok: false,
+      status: 501,
+      body: {
+        error: {
+          type: 'invalid_request_error',
+          code: 'native_operation_unsupported',
+          message: '当前 Hermit 原生内核不支持 helper 操作',
+        },
+      },
+      headers: {},
+      via: 'hermit',
+      transportError: false,
+    })
+  }
   return withManagedEgressOperation(exec?.vm?.proxy, () => runSlotOauthAdmitted(exec, ...args))
 }

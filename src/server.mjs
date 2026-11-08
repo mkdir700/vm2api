@@ -714,13 +714,14 @@ function credentialRefreshClass(result) {
   return classifyCredentialRefresh(result)
 }
 
-function publicCredentialRefreshResult(vmId, result, { force = false } = {}) {
-  const refreshClass = credentialRefreshClass(result)
+function publicCredentialRefreshResult(vmId, result, { force = false, vm } = {}) {
+  const unsupported = result?.error?.code === 'native_operation_unsupported'
+  const refreshClass = unsupported ? 'unsupported' : credentialRefreshClass(result)
   const credential = result?.credential || {}
   const out = {
     ok: !!result?.ok,
     vm_id: vmId,
-    refresh_owner: 'go-slot-worker',
+    refresh_owner: vm?.dataplane === 'hermit' ? null : 'go-slot-worker',
     proxy_required: true,
     force: !!force,
     refreshed: !!result?.refreshed,
@@ -738,8 +739,9 @@ function publicCredentialRefreshResult(vmId, result, { force = false } = {}) {
   if (!result?.ok) {
     out.error = {
       code: result?.error?.code || 'credential_refresh_failed',
-      message:
-        refreshClass === 'fatal'
+      message: unsupported
+        ? '当前 Hermit 原生内核不支持 OAuth 刷新'
+        : refreshClass === 'fatal'
           ? 'OAuth credential was rejected'
           : refreshClass === 'retryable'
             ? 'OAuth credential refresh is temporarily unavailable'
@@ -750,10 +752,10 @@ function publicCredentialRefreshResult(vmId, result, { force = false } = {}) {
 }
 
 async function refreshWorkerCredentialForVm({ vmId, vmPath, homeDir, vm, force = false }) {
-  // Host RefreshIfNeeded is the credential writer. Slot workers only read AT.
+  // 仅已验收的活动内核可以执行刷新。
   const result = await ensureWorkerCredential({ vmId, vm, homeDir }, { force: !!force })
 
-  const published = publicCredentialRefreshResult(vmId, result, { force })
+  const published = publicCredentialRefreshResult(vmId, result, { force, vm })
   if (result.ok) {
     try {
       mirrorWorkerCredentialsToVm(vmPath, homeDir, { acceptLiveGrant: true })
@@ -767,7 +769,7 @@ async function refreshWorkerCredentialForVm({ vmId, vmPath, homeDir, vm, force =
       poolScheduler?.clearAuthCooldownFor?.(vmId, accountId)
       poolScheduler?.clearGrantRevokeCooldownFor?.(vmId, accountId)
     } catch {}
-  } else if (published.refresh_class !== 'retryable') {
+  } else if (!['retryable', 'unsupported'].includes(published.refresh_class)) {
     try {
       markVmRefreshError(vmPath, result)
     } catch {}

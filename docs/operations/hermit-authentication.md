@@ -50,3 +50,5 @@ vm2api 为 Hermit 读取槽位自己的 Console API Key。凭据源是 `vms/<id>
 OAuth 刷新、生产 helper 认证、真实上游和真实账号均为 NOT RUN。`helper_integration` 保持 `false`。当前 `hermit oauth` 仍使用旧 worker 配置，不能直接消费 `native-slot.json`。后续应先确定唯一的刷新写入者，再接入 OAuth。
 
 本轮证据与检查结果见 [认证验收记录](hermit-authentication-results-20261108.md)。
+
+原生 helper 的拒绝行为与后续接入边界见 [helper 契约](hermit-helper.md)。

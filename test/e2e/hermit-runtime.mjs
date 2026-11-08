@@ -663,6 +663,14 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       'existing_slot_selected',
       record.dataplane === 'hermit' && record.kernel_package.manifest_sha256 === expected.manifest_sha256,
     )
+    if (factory && slotApiKey) {
+      const helper = await api(gw, 'POST', '/api/panel/model-policy/sync-worker', { headers: { cookie }, body: {} })
+      save('native-helper-rejected.json', helper)
+      check(
+        'active_native_helper_rejects_legacy_fallback',
+        helper.status === 501 && helper.json.error?.code === 'native_operation_unsupported',
+      )
+    }
     const preferences = {
       hasCompletedOnboarding: true,
       lastOnboardingVersion: '2.1.318',

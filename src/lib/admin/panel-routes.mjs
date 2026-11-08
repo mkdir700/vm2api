@@ -1215,7 +1215,7 @@ export function createPanelHandler(ctx) {
     return {
       ok: !!health.ok,
       vm_id: vmId,
-      refresh_owner: 'go-slot-worker',
+      refresh_owner: exec.vm?.dataplane === 'hermit' ? null : 'go-slot-worker',
       proxy_required: true,
       worker: health,
       credential: health.credential || null,
@@ -5215,7 +5215,12 @@ export function createPanelHandler(ctx) {
           vm,
           force: true,
         })
-        if (!data.ok) return json(res, 502, { ok: false, error: data.error, data })
+        if (!data.ok)
+          return json(res, data.error?.code === 'native_operation_unsupported' ? 501 : 502, {
+            ok: false,
+            error: data.error,
+            data,
+          })
         return json(res, 200, panel.ok(data))
       }
       if (req.method === 'GET' && p === '/api/panel/oauth') {
@@ -5381,11 +5386,15 @@ export function createPanelHandler(ctx) {
       if (req.method === 'POST' && p === '/api/panel/model-policy/sync-worker') {
         const status = await syncClaudeCatalog({ projectRoot: cfg.paths.project })
         if (status.status !== 'ok') {
-          return json(res, status.status === 'skipped' ? 400 : 502, {
-            ok: false,
-            error: { code: status.error, message: status.error },
-            data: { synced: 0, catalog_sync: readCatalogSync() },
-          })
+          return json(
+            res,
+            status.status === 'skipped' ? 400 : status.error === 'native_operation_unsupported' ? 501 : 502,
+            {
+              ok: false,
+              error: { code: status.error, message: status.error },
+              data: { synced: 0, catalog_sync: readCatalogSync() },
+            },
+          )
         }
         return json(
           res,
@@ -6303,7 +6312,7 @@ export function createPanelHandler(ctx) {
         vm: getVm(cfg.paths.project, id),
         force: true,
       })
-      return json(res, data.ok ? 200 : 502, data)
+      return json(res, data.ok ? 200 : data.error?.code === 'native_operation_unsupported' ? 501 : 502, data)
     }
 
     // Claude CLI inference/update was removed; workers are built and deployed separately.
