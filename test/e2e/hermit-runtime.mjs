@@ -8,9 +8,13 @@ import crypto from 'node:crypto'
 import { spawn, execFileSync } from 'node:child_process'
 import { once } from 'node:events'
 import { DatabaseSync } from 'node:sqlite'
+import { writeWorkerCredentialFile } from '../../src/lib/oauth/oauth-credentials.mjs'
 import { startGateway, seedVm, api, pickFreePort, REPO_ROOT } from '../harness.mjs'
 
 const [out, archive, receiptFile, cliSource, apiKernel] = process.argv.slice(2)
+const slotApiKey = process.env.HERMIT_E2E_SLOT_API_KEY === '1'
+const SLOT_KEY = 'sk-ant-api03-p1-slot-owned-synthetic-key'
+let expectedSlotKey = SLOT_KEY
 const factory = process.env.HERMIT_E2E_FACTORY === '1'
 const managed = process.env.HERMIT_E2E_MANAGED === '1'
 const controlMode = process.env.HERMIT_E2E_CONTROL === '1'
@@ -45,6 +49,7 @@ try {
   fs.mkdirSync(project, { recursive: true })
   const vm = seedVm({ project, id: 'vm-hermit' })
   if (factory) vm.status = 'stopped'
+  if (slotApiKey) vm.claude.mode = 'apikey'
   vm.claude.account_uuid = 'account-hermit'
   vm.claude.email = 'hermit@fixture.invalid'
   vm.claude_code_version = '2.1.318'
@@ -56,6 +61,9 @@ try {
     vm.runtime.worker_token_file = '/opt/vm2api/vms/vm-hermit/run/internal.token'
   }
   fs.writeFileSync(path.join(project, 'vms/vm-hermit.json'), JSON.stringify(vm))
+  const credentialHome = path.join(project, 'vms/vm-hermit/cli-home')
+  const credentialFile = path.join(credentialHome, '.claude/credentials.json')
+  if (slotApiKey) writeWorkerCredentialFile(credentialHome, { type: 'apikey', api_key: SLOT_KEY })
   const routing = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'src/config/routing.json')))
   routing.compatibility = { ...routing.compatibility, official_cc_passthrough: true, cache_ttl: '1h' }
   routing.kernel_watchdog = { enabled: false }
@@ -156,7 +164,12 @@ try {
       res.end('{"input_tokens":100}')
       return
     }
-    requests.push({ body, source: req.socket.remoteAddress, wire_base64: bytes.toString('base64') })
+    requests.push({
+      auth: { api_key: req.headers['x-api-key'], authorization: req.headers.authorization || null },
+      body,
+      source: req.socket.remoteAddress,
+      wire_base64: bytes.toString('base64'),
+    })
     save('native-requests.json', requests)
     res.writeHead(200, { 'content-type': 'text/event-stream' })
     res.end(sse(requests.length))
@@ -380,6 +393,92 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
   const manifest = JSON.parse(
     fs.readFileSync(path.join(pool, 'versions/hermit/linux-amd64', expected.version, 'payload/manifest.json')),
   )
+  if (slotApiKey) {
+    const valid = fs.readFileSync(credentialFile)
+    const validMode = fs.statSync(credentialFile).mode & 0o777
+    const choose = async () =>
+      api(gw, 'POST', '/api/panel/dataplane', {
+        headers: { cookie },
+        body: {
+          dataplane: 'hermit',
+          ids: ['vm-hermit'],
+          target: 'linux-amd64',
+          version: expected.version,
+          restart: true,
+        },
+      })
+    const cases = [
+      ['missing', () => fs.unlinkSync(credentialFile)],
+      ['empty', () => fs.writeFileSync(credentialFile, '{"type":"apikey","anthropicApiKey":{"apiKey":""}}')],
+      [
+        'bearer',
+        () =>
+          fs.writeFileSync(
+            credentialFile,
+            JSON.stringify({
+              type: 'apikey',
+              authScheme: 'authorization_bearer',
+              anthropicApiKey: { apiKey: SLOT_KEY },
+            }),
+          ),
+      ],
+      ['public', () => fs.chmodSync(credentialFile, 0o644)],
+      [
+        'symlink',
+        () => {
+          fs.unlinkSync(credentialFile)
+          fs.symlinkSync(path.join(root, 'synthetic-target'), credentialFile)
+        },
+      ],
+      [
+        'oauth',
+        () =>
+          fs.writeFileSync(
+            credentialFile,
+            '{"type":"oauth","claudeAiOauth":{"accessToken":"synthetic","refreshToken":"never-forward"}}',
+          ),
+      ],
+      [
+        'mixed',
+        () =>
+          fs.writeFileSync(
+            credentialFile,
+            JSON.stringify({
+              type: 'apikey',
+              anthropicApiKey: { apiKey: SLOT_KEY },
+              claudeAiOauth: { accessToken: 'never-forward' },
+            }),
+          ),
+      ],
+      [
+        'custom_endpoint',
+        () =>
+          fs.writeFileSync(
+            credentialFile,
+            JSON.stringify({
+              type: 'apikey',
+              anthropicApiKey: { apiKey: SLOT_KEY, baseUrl: 'https://custom.invalid' },
+            }),
+          ),
+      ],
+    ]
+    for (const [name, change] of cases) {
+      change()
+      const rejection = await choose()
+      save(`auth-rejected-${name}.json`, rejection)
+      check(
+        `slot_auth_${name}_rejected_without_fallback`,
+        rejection.status !== 200 && rejection.json.error?.code === 'hermit_authentication_invalid',
+      )
+      check(`slot_auth_${name}_creates_no_owner`, !fs.existsSync(path.join(run, 'native-slot.json')))
+      fs.rmSync(credentialFile, { force: true })
+      fs.writeFileSync(credentialFile, valid, { mode: validMode })
+      if (process.getuid?.() === 0) {
+        const stat = fs.statSync(credentialHome)
+        fs.chownSync(credentialFile, stat.uid, stat.gid)
+      }
+    }
+  }
   res = await fetch(gw.baseUrl + '/api/panel/dataplane', {
     method: 'POST',
     headers: { cookie, 'content-type': 'application/json' },
@@ -463,9 +562,68 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       duplicate.every((response) => response.status === 200),
     )
 
+    if (slotApiKey) {
+      const valid = fs.readFileSync(credentialFile)
+      writeWorkerCredentialFile(credentialHome, { type: 'apikey', api_key: SLOT_KEY + '-rotated' })
+      const changed = await api(gw, 'POST', '/api/panel/dataplane', {
+        headers: { cookie },
+        body: {
+          dataplane: 'hermit',
+          ids: ['vm-hermit'],
+          target: 'linux-amd64',
+          version: expected.version,
+          restart: true,
+        },
+      })
+      save('auth-changed.json', changed)
+      check(
+        'credential_rotation_requires_restart',
+        changed.status !== 200 && changed.json.error?.code === 'hermit_authentication_changed',
+      )
+      fs.writeFileSync(credentialFile, valid)
+      if (factory) {
+        const stopped = await api(gw, 'POST', '/api/panel/vms/vm-hermit/stop', { headers: { cookie } })
+        check('credential_rotation_stops_slot', stopped.status === 200)
+        expectedSlotKey = SLOT_KEY + '-rotated'
+        writeWorkerCredentialFile(credentialHome, { type: 'apikey', api_key: expectedSlotKey })
+        const restarted = await api(gw, 'POST', '/api/panel/vms/vm-hermit/start', { headers: { cookie } })
+        save('auth-restarted.json', restarted)
+        check('credential_rotation_starts_with_new_key', restarted.status === 200 && restarted.json.ok === true)
+        // 模拟上游转发进程属于槽位；Docker stop 会终止该测试进程。
+        execFileSync('/usr/bin/docker', [
+          'exec',
+          '-d',
+          '-u',
+          '10001:987',
+          vm.runtime.container,
+          'python3',
+          '/run/kin/mock-origin-relay.py',
+          String(mock.address().port),
+        ])
+        const relayReady = execFileSync(
+          '/usr/bin/docker',
+          [
+            'exec',
+            vm.runtime.container,
+            'python3',
+            '-c',
+            "import socket,time;\nfor _ in range(30):\n try:\n  s=socket.create_connection(('127.0.0.1',19081),.2);s.close();print('ready');break\n except OSError:time.sleep(.1)\nelse:raise SystemExit(1)",
+          ],
+          { encoding: 'utf8' },
+        )
+        check('mock_origin_relay_restarted', relayReady.trim() === 'ready')
+      }
+      check('activation_response_contains_no_slot_key', !JSON.stringify(result).includes(SLOT_KEY))
+    }
     const config = JSON.parse(
       fs.readFileSync(path.join(run, realDocker ? 'native-slot.json' : 'native-translated.json')),
     )
+    if (slotApiKey) {
+      check('canonical_credential_seal_preserved', (fs.statSync(credentialFile).mode & 0o777) === 0o444)
+      check('config_uses_slot_key', config.session.managed.environment.includes('ANTHROPIC_API_KEY=' + expectedSlotKey))
+      check('config_is_private', (fs.statSync(path.join(run, 'native-slot.json')).mode & 0o777) === 0o600)
+      check('config_contains_no_refresh_token', !JSON.stringify(config).includes('never-forward'))
+    }
     ownerRoot = realDocker ? config.session.root.replace('/run/kin', run) : config.session.root
     check(
       'config_uses_shared_cli',
@@ -838,6 +996,14 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     fs.writeFileSync(path.join(out, 'server-stderr.txt'), gw.stderr())
     fs.writeFileSync(path.join(out, 'server-stdout.txt'), gw.stdout())
     check('gateway_graceful_exit', gw.child.exitCode === 0)
+  }
+  if (slotApiKey && completed) {
+    check(
+      'native_requests_use_slot_key',
+      requests.length > 0 &&
+        requests.every((row) => row.auth.api_key === expectedSlotKey && row.auth.authorization === null),
+    )
+    check('slot_key_not_in_server_logs', !gw.stderr().includes(SLOT_KEY) && !gw.stdout().includes(SLOT_KEY))
   }
   if (!containerExited && ownerRoot && fs.existsSync(path.join(ownerRoot, 'owner.json'))) {
     const owner = JSON.parse(fs.readFileSync(path.join(ownerRoot, 'owner.json')))

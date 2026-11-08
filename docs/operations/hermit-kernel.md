@@ -93,3 +93,5 @@ Linux 入口需要网络命名空间权限。每次使用新的输出目录。�
 受管出口联合验收见 [Hysteria 2 说明](hermit-managed-egress.md)。该实验验证了应用失败拒绑、错误认证回滚、就绪恢复和消息续接。
 
 真实控制平面容器验收见 [Compose 与路径说明](hermit-control.md)。该实验不设置宿主路径覆盖，并验证了实际入口、helper 摘要和重启后的工具续接。
+
+槽位 API Key 接入与实验边界见 [认证说明](hermit-authentication.md)。该切片保留生产激活限制。

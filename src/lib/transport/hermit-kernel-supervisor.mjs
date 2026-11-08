@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import { spawn, execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { slotExecArgv, slotExecContainer } from '../vm/slot-exec.mjs'
@@ -7,6 +8,7 @@ import { isDockerInspectNotFound } from '../vm/docker-container.mjs'
 import { rustKernelHealth } from './rust-kernel-client.mjs'
 import {
   assertHermitActivation,
+  hermitApiKey,
   resolveHermitPackage,
   writeHermitKernelConfig,
   HERMIT_GUEST_PACKAGES,
@@ -64,8 +66,10 @@ async function start(exec, { timeoutMs = 15000 } = {}) {
     const binding = vm.kernel_package
     const installed = await resolveHermitPackage(exec.projectRoot, binding)
     assertHermitActivation(vm, installed.manifest)
+    const authentication = crypto.createHash('sha256').update(hermitApiKey(exec.projectRoot, vm)).digest('hex')
     const existing = owners.get(key(exec))
     if (existing) {
+      if (existing.authentication !== authentication) return { ok: false, reason: 'hermit_authentication_changed' }
       if (existing.manifest !== installed.manifest_sha256) return { ok: false, reason: 'hermit_version_busy' }
       const health = await rustKernelHealth(exec, { timeoutMs: 1000 })
       return { ok: health?.runtime_flavor === 'hermit' && health?.healthy !== false, reason: 'already_up', health }
@@ -120,7 +124,7 @@ async function start(exec, { timeoutMs = 15000 } = {}) {
     const done = new Promise((resolve) => {
       finish = resolve
     })
-    const entry = { child, done, exec, manifest: installed.manifest_sha256 }
+    const entry = { child, done, exec, authentication, manifest: installed.manifest_sha256 }
     owners.set(key(exec), entry)
     spawned = true
     child.once('error', () => finish())
