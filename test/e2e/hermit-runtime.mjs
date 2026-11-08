@@ -12,6 +12,8 @@ import { startGateway, seedVm, api, pickFreePort, REPO_ROOT } from '../harness.m
 
 const [out, archive, receiptFile, cliSource, apiKernel] = process.argv.slice(2)
 const factory = process.env.HERMIT_E2E_FACTORY === '1'
+const managed = process.env.HERMIT_E2E_MANAGED === '1'
+const controlMode = process.env.HERMIT_E2E_CONTROL === '1'
 const realDocker = factory || Boolean(process.env.HERMIT_E2E_DOCKER_CONTAINER)
 const dockerFailure = process.env.HERMIT_E2E_DOCKER_FAILURE || ''
 let containerExited = false
@@ -33,6 +35,9 @@ let helperPID
 let completed = false
 let ownerRoot
 let factoryProxyId
+let managedFixture
+let controlFixture
+let socksUsername = 'fixture'
 const factoryProbeServers = []
 const factoryProbeSockets = new Set()
 const processes = []
@@ -45,6 +50,11 @@ try {
   vm.claude_code_version = '2.1.318'
   vm.proxy = { id: 'px-local', scheme: 'direct' }
   vm.runtime.container = process.env.HERMIT_E2E_DOCKER_CONTAINER || 'kin-hermit'
+  if (controlMode) {
+    vm.runtime.worker_run_dir = '/opt/vm2api/vms/vm-hermit/run'
+    vm.runtime.worker_socket = '/opt/vm2api/vms/vm-hermit/run/worker.sock'
+    vm.runtime.worker_token_file = '/opt/vm2api/vms/vm-hermit/run/internal.token'
+  }
   fs.writeFileSync(path.join(project, 'vms/vm-hermit.json'), JSON.stringify(vm))
   const routing = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'src/config/routing.json')))
   routing.compatibility = { ...routing.compatibility, official_cc_passthrough: true, cache_ttl: '1h' }
@@ -168,30 +178,36 @@ try {
       await once(server, 'listening')
       factoryProbeServers.push(server)
     }
-    socksPort = await pickFreePort()
-    const file = path.join(root, 'socks.json')
-    fs.writeFileSync(
-      file,
-      JSON.stringify({
-        log: { level: 'debug' },
-        inbounds: [
-          {
-            type: 'socks',
-            listen: '127.0.0.1',
-            listen_port: socksPort,
-            users: [{ username: 'fixture', password: 'isolated-password' }],
-          },
-        ],
-        outbounds: [{ type: 'direct', inet4_bind_address: '127.0.0.2' }],
-      }),
-      { mode: 0o600 },
-    )
-    const log = fs.openSync(path.join(out, 'socks.log'), 'w')
-    const socks = spawn(process.env.HERMIT_E2E_SING_BOX, ['run', '-c', file], { stdio: ['ignore', log, log] })
-    fs.closeSync(log)
-    processes.push(socks)
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    check('authenticated_socks_fixture_started', socks.exitCode === null)
+    if (managed) {
+      const { prepareManagedFixture } = await import('../fixtures/hermit-managed.mjs')
+      managedFixture = await prepareManagedFixture({ root, project, out, processes, controlMode })
+      check('hysteria_server_started', true)
+    } else {
+      socksPort = await pickFreePort()
+      const file = path.join(root, 'socks.json')
+      fs.writeFileSync(
+        file,
+        JSON.stringify({
+          log: { level: 'debug' },
+          inbounds: [
+            {
+              type: 'socks',
+              listen: '127.0.0.1',
+              listen_port: socksPort,
+              users: [{ username: 'fixture', password: 'isolated-password' }],
+            },
+          ],
+          outbounds: [{ type: 'direct', inet4_bind_address: '127.0.0.2' }],
+        }),
+        { mode: 0o600 },
+      )
+      const log = fs.openSync(path.join(out, 'socks.log'), 'w')
+      const socks = spawn(process.env.HERMIT_E2E_SING_BOX, ['run', '-c', file], { stdio: ['ignore', log, log] })
+      fs.closeSync(log)
+      processes.push(socks)
+      await new Promise((resolve) => setTimeout(resolve, 300))
+      check('authenticated_socks_fixture_started', socks.exitCode === null)
+    }
   }
   const pool = path.join(project, 'share/kernel-packages')
   const run = path.join(project, 'vms/vm-hermit/run')
@@ -227,26 +243,41 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
   fs.writeFileSync(launcher, `#!/bin/sh\nprintf '%s' "$$" > ${quote(pidFile)}\nexec ${quote(apiKernel)} "$@"\n`, {
     mode: 0o700,
   })
-  const launchGateway = () =>
-    startGateway({
+  if (controlMode) {
+    const { prepareControlFixture } = await import('../fixtures/hermit-control.mjs')
+    controlFixture = await prepareControlFixture({
       project,
+      repo: REPO_ROOT,
+      root,
+      out,
       apiKey: KEY,
-      readyMs: 12000,
-      timeoutMs: 45000,
-      env: {
-        KIN_CRS_MOCK: '0',
-        KIN_KERNEL_BIN: process.execPath,
-        KIN_API_KERNEL_BIN: launcher,
-        KIN_KERNEL_TEST_ENDPOINTS: '1',
-        KIN_HERMIT_API_KEY: KEY,
-        KIN_HERMIT_UPSTREAM_URL: factory
-          ? 'http://127.0.0.1:19081/inner'
-          : `http://127.0.0.1:${mock.address().port}/inner`,
-        KIN_DOCKER_BIN: realDocker ? '/usr/bin/docker' : fake,
-        ...(factory ? { KIN_PROXY_GEO_URL: `http://198.18.0.1:${mock.address().port}/geo` } : {}),
-        NODE_NO_WARNINGS: '1',
-      },
+      apiKernel,
+      originPort: mock.address().port,
     })
+  }
+  const launchGateway = () =>
+    controlMode
+      ? controlFixture.launch()
+      : startGateway({
+          project,
+          apiKey: KEY,
+          readyMs: 12000,
+          timeoutMs: 45000,
+          env: {
+            ...(managed ? { VM2API_CONTAINER_NAME: managedFixture.control } : {}),
+            KIN_CRS_MOCK: '0',
+            KIN_KERNEL_BIN: process.execPath,
+            KIN_API_KERNEL_BIN: launcher,
+            KIN_KERNEL_TEST_ENDPOINTS: '1',
+            KIN_HERMIT_API_KEY: KEY,
+            KIN_HERMIT_UPSTREAM_URL: factory
+              ? 'http://127.0.0.1:19081/inner'
+              : `http://127.0.0.1:${mock.address().port}/inner`,
+            KIN_DOCKER_BIN: realDocker ? '/usr/bin/docker' : fake,
+            ...(factory ? { KIN_PROXY_GEO_URL: `http://198.18.0.1:${mock.address().port}/geo` } : {}),
+            NODE_NO_WARNINGS: '1',
+          },
+        })
   gw = await launchGateway()
   const login = await api(gw, 'POST', '/api/panel/login', { body: { username: 'admin', password: 'testpass' } })
   check('admin_login', login.status === 200)
@@ -254,11 +285,49 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
   if (factory) {
     const imported = await api(gw, 'POST', '/api/panel/proxies/import', {
       headers: { cookie: login.headers.get('set-cookie') },
-      body: { text: `socks5://fixture:isolated-password@127.0.0.1:${socksPort}` },
+      body: managed ? managedFixture.importBody : { text: `socks5://fixture:isolated-password@127.0.0.1:${socksPort}` },
     })
     save('proxy-import.json', imported)
     factoryProxyId = imported.json?.data?.items?.[0]?.id
     check('authenticated_proxy_imported', imported.status === 200 && Boolean(factoryProxyId))
+    if (managed && !controlMode) {
+      check('unsafe_managed_mount_not_applied', imported.json.data.application_status === 'pending')
+      const rejected = await api(gw, 'POST', `/api/panel/proxies/${factoryProxyId}/bind`, {
+        headers: { cookie },
+        body: { vm_id: 'vm-hermit' },
+      })
+      save('managed-pending-bind.json', rejected)
+      check('unready_managed_exit_rejects_bind', rejected.status !== 200)
+      check(
+        'unready_exit_preserves_slot',
+        JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-hermit.json'))).proxy.id !== factoryProxyId,
+      )
+      managedFixture.repairMount()
+      const applied = await api(gw, 'POST', '/api/panel/proxies/apply', {
+        headers: { cookie },
+        body: { host_id: 'control-plane' },
+      })
+      save('managed-apply.json', applied)
+      check('managed_configuration_applied', applied.status === 200 && applied.json.ok)
+      const inbound = managedFixture.credentials()
+      socksPort = inbound.listen_port
+      socksUsername = inbound.users[0].username
+      const listing = await api(gw, 'GET', '/api/panel/proxies')
+      save('managed-ready.json', listing)
+      const row = listing.json.data.proxies.find((row) => row.id === factoryProxyId)
+      check('managed_exit_ready', row.exit_status === 'ready' && row.blocked_reason === null)
+      check(
+        'managed_credentials_hidden',
+        row.username === undefined && row.password === undefined && row.managed_config === undefined,
+      )
+    }
+
+    if (controlMode) {
+      check('compose_managed_import_applied', imported.json.data.application_status === 'applied')
+      const inbound = managedFixture.credentials()
+      socksPort = inbound.listen_port
+      socksUsername = inbound.users[0].username
+    }
     const bound = await api(gw, 'POST', `/api/panel/proxies/${factoryProxyId}/bind`, {
       headers: { cookie: login.headers.get('set-cookie') },
       body: { vm_id: 'vm-hermit' },
@@ -270,11 +339,24 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     })
     save('proxy-probe.json', probe)
     check('authenticated_proxy_probe', probe.status === 200 && probe.json?.data?.probe?.ok === true)
+    if (managed) {
+      const helperConfig = JSON.parse(
+        fs.readFileSync(path.join(project, 'data/run/egress', factoryProxyId, 'egress.json')),
+      )
+      check(
+        'managed_helper_control_preserved',
+        helperConfig.control_socket ===
+          path.join(controlMode ? '/opt/vm2api' : project, 'data/run/egress', factoryProxyId, 'drain.sock'),
+      )
+    }
     const { lookupProxyGeo } = await import('../../src/lib/vm/proxy-geo.mjs')
-    const wrong = await lookupProxyGeo(`socks5://fixture:wrong-password@127.0.0.1:${socksPort}`, {
-      endpoint: `http://198.18.0.1:${mock.address().port}/geo`,
-      timeoutMs: 1000,
-    })
+    const wrong = await lookupProxyGeo(
+      `socks5://${encodeURIComponent(socksUsername)}:wrong-password@127.0.0.1:${socksPort}`,
+      {
+        endpoint: `http://198.18.0.1:${mock.address().port}/geo`,
+        timeoutMs: 1000,
+      },
+    )
     save('wrong-password.json', wrong)
     check('wrong_socks_password_rejected', wrong.ok === false)
   }
@@ -330,6 +412,18 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
         inspection.Config.Labels['kin.vm.role'] === 'hermit' && inspection.HostConfig.Init === true,
       )
       check('standard_factory_bound_exit', inspection.HostConfig.NetworkMode === `kin-eg-${factoryProxyId}`)
+      if (controlMode) {
+        check(
+          'package_mount_translated_to_host',
+          inspection.Mounts.find((m) => m.Destination === '/opt/kin-kernel-packages')?.Source === pool,
+        )
+        check(
+          'run_mount_translated_to_host',
+          inspection.Mounts.find((m) => m.Destination === '/run/kin')?.Source === run,
+        )
+        const persisted = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-hermit.json')))
+        check('runtime_uses_container_paths', persisted.runtime.worker_run_dir === '/opt/vm2api/vms/vm-hermit/run')
+      }
       const standardStart = await api(gw, 'POST', '/api/panel/vms/vm-hermit/start', { headers: { cookie } })
       save('standard-start.json', standardStart)
       check('standard_slot_start_endpoint', standardStart.status === 200)
@@ -588,6 +682,21 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       const loginAgain = await api(gw, 'POST', '/api/panel/login', {
         body: { username: 'admin', password: 'testpass' },
       })
+      if (managed) {
+        let ready = false
+        const until = Date.now() + 12000
+        while (Date.now() < until) {
+          const listing = await api(gw, 'GET', '/api/panel/proxies')
+          const row = listing.json?.data?.proxies?.find((row) => row.id === factoryProxyId)
+          if (row?.exit_status === 'ready' && row.blocked_reason === null) {
+            ready = true
+            save('managed-after-restart.json', listing)
+            break
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+        check('managed_readiness_restored_after_restart', ready)
+      }
       const activation = await api(gw, 'POST', '/api/panel/dataplane', {
         headers: { cookie: loginAgain.headers.get('set-cookie') },
         body: {
@@ -611,11 +720,14 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     }
     if (factory) {
       const { stopEgressProcess, egressPidsForProxyConfig } = await import('../../src/lib/vm/egress.mjs')
-      save('helper-stop-for-failure.json', stopEgressProcess(project, factoryProxyId))
+      const stopHelper = () =>
+        controlMode ? controlFixture.stopHelper(factoryProxyId) : stopEgressProcess(project, factoryProxyId)
+      const helperPids = () =>
+        controlMode ? controlFixture.helperPids(factoryProxyId) : egressPidsForProxyConfig(project, factoryProxyId)
+      save('helper-stop-for-failure.json', stopHelper())
       const deadline = Date.now() + 3000
-      while (egressPidsForProxyConfig(project, factoryProxyId).length && Date.now() < deadline)
-        await new Promise((resolve) => setTimeout(resolve, 25))
-      check('transparent_helper_stopped_for_failure', egressPidsForProxyConfig(project, factoryProxyId).length === 0)
+      while (helperPids().length && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 25))
+      check('transparent_helper_stopped_for_failure', helperPids().length === 0)
       const attempt = execFileSync(
         '/usr/bin/docker',
         [
@@ -636,6 +748,49 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       })
       save('helper-recovery.json', recovery)
       check('standard_probe_repairs_helper', recovery.status === 200 && recovery.json?.data?.probe?.ok === true)
+    }
+    if (managed) {
+      const login = await api(gw, 'POST', '/api/panel/login', { body: { username: 'admin', password: 'testpass' } })
+      const headers = { cookie: login.headers.get('set-cookie') }
+      const bad = await api(gw, 'POST', '/api/panel/proxies/import', {
+        headers,
+        body: {
+          ...managedFixture.importBody,
+          config: { ...managedFixture.importBody.config, password: 'wrong-hysteria-password' },
+        },
+      })
+      save('managed-wrong-h2-password.json', bad)
+      const badId = bad.json?.data?.items?.[0]?.id
+      check(
+        'invalid_hysteria_password_not_ready',
+        bad.status === 200 &&
+          badId &&
+          bad.json.data.application_status === 'pending' &&
+          bad.json.data.items[0].exit_status !== 'ready',
+      )
+      const rejected = await api(gw, 'POST', `/api/panel/proxies/${badId}/bind`, {
+        headers,
+        body: { vm_id: 'vm-hermit' },
+      })
+      save('managed-wrong-h2-bind.json', rejected)
+      check('invalid_hysteria_password_cannot_bind', rejected.status !== 200)
+      check(
+        'invalid_hysteria_preserves_bound_exit',
+        JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-hermit.json'))).proxy.id === factoryProxyId,
+      )
+      const removed = await api(gw, 'DELETE', `/api/panel/proxies/${badId}`, { headers })
+      check('invalid_hysteria_exit_removed', removed.status === 200)
+      const reapplied = await api(gw, 'POST', '/api/panel/proxies/apply', {
+        headers,
+        body: { host_id: 'control-plane' },
+      })
+      save('managed-reapply-after-auth-failure.json', reapplied)
+      check('managed_recovery_after_auth_failure', reapplied.status === 200 && reapplied.json.ok)
+      const listing = await api(gw, 'GET', '/api/panel/proxies')
+      save('managed-recovered.json', listing)
+      const row = listing.json.data.proxies.find((row) => row.id === factoryProxyId)
+      check('managed_bound_exit_ready_after_recovery', row.exit_status === 'ready' && row.blocked_reason === null)
+      await sendTurn(4)
     }
     const log = JSON.parse(fs.readFileSync(path.join(ownerRoot, 'owner.json')))
     save('owner-before-stop.json', log)
@@ -737,6 +892,8 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       await new Promise((resolve) => setTimeout(resolve, 25))
     check('transparent_helper_cleanup_confirmed', egressPidsForProxyConfig(project, factoryProxyId).length === 0)
   }
+  if (managedFixture) managedFixture.stop()
+  if (controlFixture) controlFixture.stop()
   const capture = (source, dest) => {
     fs.mkdirSync(dest, { recursive: true })
     for (const entry of fs.readdirSync(source, { withFileTypes: true })) {
@@ -753,6 +910,8 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     checks: checks.length,
     temporary_root_removed: !fs.existsSync(root),
     standard_factory: factory,
+    managed_hysteria2: managed,
+    control_container: controlMode,
     mock_docker_boundary: !realDocker,
     real_provider: 'NOT RUN',
     physical_docker: realDocker ? 'RUN' : 'NOT RUN',

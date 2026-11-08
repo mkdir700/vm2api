@@ -26,10 +26,12 @@ def main():
         parser.add_argument('--'+name, required=True, type=Path)
     parser.add_argument('--image', required=True)
     parser.add_argument('--dind-image', required=True)
+    parser.add_argument('--control-image', help='真实控制平面镜像完整 ID；要求受管场景')
+    parser.add_argument('--managed-image', help='受管 sing-box 镜像完整 ID；启用 Hysteria 2 场景')
     args = parser.parse_args()
     out = args.out.resolve(); out.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[2]
-    sources = sorted({*repo.glob('src/**/*.mjs'), *repo.glob('scripts/*.py'), *repo.glob('test/e2e/hermit-*'), *repo.glob('test/fixtures/hermit-*'), repo/'docker/kin-os/ubuntu-24.04/Dockerfile',repo/'deploy/payload.json'})
+    sources = sorted({*repo.glob('src/**/*.mjs'), *repo.glob('scripts/*.py'), *repo.glob('test/e2e/hermit-*'), *repo.glob('test/fixtures/hermit-*'), repo/'docker/kin-os/ubuntu-24.04/Dockerfile',repo/'deploy/payload.json',repo/'docker-compose.yml',repo/'deploy/init-managed-egress.sh'})
     computer_pin = next(item for item in json.load(open(repo/'deploy/payload.json'))['files'] if item['path']=='bin/kin-computer')
     assert sha(args.computer) == computer_pin['sha256'] and args.computer.stat().st_size == computer_pin['size']
     pins = {str(p.relative_to(repo)): sha(p) for p in sources if p.is_file()}
@@ -63,7 +65,7 @@ def main():
             '--network','none','--privileged','--cgroupns','private','--tmpfs','/tmp:rw,mode=1777','--mount','type=bind,src='+str(fixture)+',dst='+str(fixture),
             '--entrypoint','/usr/local/bin/dockerd-entrypoint.sh',args.dind_image,'dockerd','--host','unix://'+str(sock),
             '--data-root',str(fixture/'daemon-data'),'--exec-root',str(fixture/'daemon-exec'),
-            '--pidfile',str(fixture/'daemon.pid'),'--storage-driver','vfs'])
+            '--pidfile',str(fixture/'daemon.pid'),*([] if args.managed_image else ['--storage-driver','vfs'])])
         info = json.loads(docker(['inspect',name]).stdout)[0]
         pid = info['State']['Pid']; namespace = os.readlink('/proc/'+str(pid)+'/ns/net')
         assert namespace != os.readlink('/proc/1/ns/net') and info['HostConfig']['NetworkMode'] == 'none'
@@ -82,7 +84,8 @@ def main():
         with tarfile.open(archive) as saved:
             manifest = json.load(saved.extractfile('manifest.json'))
             configs = [saved.extractfile(entry['Config']).read() for entry in manifest]
-        imported_images = [json.loads(docker(['image','inspect','sha256:'+hashlib.sha256(config).hexdigest()],env=inner_env).stdout)[0] for config in configs]
+        indexed = subprocess.run(['docker','image','inspect',args.image],env=inner_env,capture_output=True,text=True)
+        imported_images = json.loads(indexed.stdout) if indexed.returncode == 0 else [json.loads(docker(['image','inspect','sha256:'+hashlib.sha256(config).hexdigest()],env=inner_env).stdout)[0] for config in configs]
         (out/'image-export.json').write_text(json.dumps({'manifest':manifest,'original':original,'imported_images':imported_images,'configs':[json.loads(body) for body in configs]},indent=2)+'\n')
         matches = []
         for config in configs:
@@ -90,12 +93,31 @@ def main():
             if doc.get('rootfs',{}).get('diff_ids') != original['RootFS']['Layers']: continue
             if not all(doc.get('config',{}).get(k) == v for k,v in original['Config'].items()): continue
             digest = 'sha256:'+hashlib.sha256(config).hexdigest()
-            matches.extend(image for image in imported_images if image['Id'] == digest)
+            matches.extend(image for image in imported_images if image['Id'] in (digest, original['Id']) and image['RootFS'] == original['RootFS'])
         assert len(matches) == 1, '导出镜像没有唯一的原配置和根文件系统匹配'
         imported = matches[0]
         assert all(imported[field] == original[field] for field in ['RootFS','Architecture','Os'])
         (out/'image-identity.json').write_text(json.dumps({'original_id':original['Id'],'imported_id':imported['Id'],'rootfs':imported['RootFS'],'config_digest_verified':True},indent=2)+'\n')
         docker(['tag',imported['Id'],'127.0.0.1:1/hermit-fixture/kin-os-ubuntu:24.04'],env=inner_env)
+        if args.managed_image:
+            reference = 'ghcr.io/sagernet/sing-box:v1.12.0@sha256:3c1ee82d450df9b336b6f63b1d272cf86e3835392d99596ef8c35f206a457999'
+            managed = json.loads(docker(['image','inspect',reference]).stdout)[0]
+            assert managed['Id'] == args.managed_image
+            subprocess.run(['docker','save','-o',str(archive),reference],check=True)
+            docker(['load','-i',str(archive)],env=inner_env)
+            docker(['tag',args.managed_image,'ghcr.io/sagernet/sing-box:v1.12.0'],env=inner_env)
+            restored = json.loads(docker(['image','inspect',reference],env=inner_env).stdout)[0]
+            assert restored['Id'] == managed['Id'] and restored['RootFS'] == managed['RootFS'] and restored['Config'] == managed['Config']
+            (out/'managed-image-identity.json').write_text(json.dumps({'original':managed,'imported':restored},indent=2)+'\n')
+        if args.control_image:
+            assert args.managed_image, '控制平面场景要求受管镜像'
+            original = json.loads(docker(['image','inspect',args.control_image]).stdout)[0]
+            subprocess.run(['docker','save','-o',str(archive),args.control_image],check=True)
+            docker(['load','-i',str(archive)],env=inner_env)
+            restored = json.loads(docker(['image','inspect',args.control_image],env=inner_env).stdout)[0]
+            assert all(restored[field] == original[field] for field in ['Id','RootFS','Config'])
+            docker(['tag',args.control_image,'clearcc/hermit-control-e2e:fixture'],env=inner_env)
+            (out/'control-image-identity.json').write_text(json.dumps({'original':original,'imported':restored},indent=2)+'\n')
         archive.unlink()
         prefix = ['/usr/bin/nsenter','--target',str(pid),'--net']
         for address in ['198.18.0.1/32','1.1.1.1/32','8.8.8.8/32']:
@@ -116,6 +138,8 @@ print(json.dumps({'remote_egress':checks}))
             'DOCKER_HOST':inner_env['DOCKER_HOST'],'NODE_NO_WARNINGS':'1',
             'HERMIT_E2E_FACTORY':'1','HERMIT_E2E_FIXTURE_ROOT':str(fixture/'fixture'),
             'HERMIT_E2E_SING_BOX':str(args.sing_box.resolve()),'KIN_EGRESS_BIN':str(args.egress.resolve()),
+            'HERMIT_E2E_MANAGED':'1' if args.managed_image else '',
+            'HERMIT_E2E_CONTROL':'1' if args.control_image else '',
             'KIN_OS_REGISTRY':'127.0.0.1:1/hermit-fixture','KIN_COMPUTER_BIN':str(args.computer.resolve())}
         command = prefix+[str(args.node.resolve()),str(repo/'test/e2e/hermit-runtime.mjs'),str(out),
             str(args.archive.resolve()),str(args.receipt.resolve()),str(args.cli_source.resolve()),str(args.api_kernel.resolve())]
@@ -151,7 +175,7 @@ print(json.dumps({'remote_egress':checks}))
         shutil.rmtree(fixture)
         result.update(source_unchanged=unchanged,namespace_gone=not processes(),unexpected_processes=remaining,
             daemon_removed=subprocess.run(['docker','inspect',name],capture_output=True).returncode!=0,
-            fixture_removed=not fixture.exists(),sources=pins,image=args.image,dind_image=args.dind_image,
+            fixture_removed=not fixture.exists(),sources=pins,image=args.image,dind_image=args.dind_image,managed_image=args.managed_image,control_image=args.control_image,
             binaries={n:sha(getattr(args,n)) for n in ['node','archive','cli_source','api_kernel','egress','sing_box','computer']})
         if remaining or not unchanged or not result['namespace_gone']: result['result']='FAIL'
         (out/'factory-receipt.json').write_text(json.dumps(result,indent=2)+'\n')

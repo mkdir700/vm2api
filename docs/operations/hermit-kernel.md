@@ -4,7 +4,7 @@
 
 Hermit 是现有 Claude 槽位的内核选项。它与 `wrap`、`cc`、`crag` 并列。它复用槽位记录、调度、认证入口和内部 HTTP 传输。它不创建另一种槽位。
 
-本版本完成模拟上游验收，并已在 primaryserver 运行真实 Docker 容器实验。生产激活默认拒绝。标准槽位创建和带认证 SOCKS5 已完成隔离验收。受管 Hysteria 2、KVM、远端节点、真实上游和 OAuth helper 尚未联合验收。不要将隔离实验通过视为生产可用。
+本版本完成模拟上游验收，并已在 primaryserver 运行真实 Docker 容器实验。生产激活默认拒绝。标准槽位创建、带认证 SOCKS5 和受管 Hysteria 2 已完成隔离验收。真实控制平面容器、Compose 入口和路径换算已完成模拟上游验收。KVM、远端节点、真实上游和 OAuth helper 尚未验收。不要将隔离实验通过视为生产可用。
 
 ## 安装与依赖
 
@@ -57,7 +57,7 @@ Hermit 每个内核只接收一个外部会话。调度容量固定为 1。原�
 
 ## 启动与停止
 
-实验启动适配使用附着的 `docker exec -i`。旧槽位镜像没有 tmux。重建镜像并核对 tmux 摘要后再运行实验。Ubuntu 24.04 镜像定义已补齐固定 tmux 依赖。槽位容器应运行 `sleep infinity`。版本目录应以只读方式挂载到 `/opt/kin-kernel-packages`。启动前应核对发行版、glibc、架构和 tmux 摘要。
+实验启动适配使用附着的 `docker exec -i`。旧槽位镜像没有 tmux。重建镜像并核对 tmux 摘要后再运行实验。Ubuntu 24.04 镜像定义已补齐固定 tmux 依赖。槽位容器应运行 `sleep infinity`，并启用 Docker `--init`。版本目录应以只读方式挂载到 `/opt/kin-kernel-packages`。启动前应核对发行版、glibc、架构和 tmux 摘要。
 
 控制平面写入私有配置，并运行 `hermit --mode vm2api-slot`。配置指定共享 CLI、版本内的 hook、内部令牌和 Unix socket。每次实际启动使用新的会话目录。
 
@@ -84,8 +84,12 @@ python3 test/e2e/hermit-runtime.py \
 
 Linux 入口需要网络命名空间权限。每次使用新的输出目录。保留 `summary.json`、`receipt.json`、`isolation.json`、源码快照、请求记录和工具结果。前端类型检查不替代页面交互验收。
 
-`hermit-runtime.py --docker-image` 由测试驱动创建容器。新增 `hermit-factory.py` 则在独立 Docker daemon 中通过实际 HTTP 激活接口调用标准槽位创建路径。标准创建和带认证 SOCKS5 的联合实验已通过。受管 Hysteria 2 和已有槽位切换仍需单独验收。参见 [标准创建与出口](hermit-factory.md)。
+`hermit-runtime.py --docker-image` 由测试驱动创建容器。新增 `hermit-factory.py` 则在独立 Docker daemon 中通过实际 HTTP 激活接口调用标准槽位创建路径。标准创建和带认证 SOCKS5 的联合实验已通过。受管 Hysteria 2 的隔离联合实验也已通过。已有槽位切换仍需单独验收。参见 [标准创建与出口](hermit-factory.md)。
 
 后续生产接入还需验证：OAuth 与 helper、真实上游、模型与计量接口、跨槽位恢复、版本切换和故障回滚。当前版本不承诺服务端无法识别桥接行为。
 
 真实 Docker 模式还支持 `--docker-failure missing-tmux`、`--docker-failure no-init` 和 `--docker-failure container-exit`。前两项应拒绝激活，且保留原槽位策略。缺少 tmux 的实验应使用未包含 tmux 的固定镜像。正常模式验证控制平面重启，并使用完整外部历史恢复后续输入。容器退出实验不承诺执行中的工具可以恢复。
+
+受管出口联合验收见 [Hysteria 2 说明](hermit-managed-egress.md)。该实验验证了应用失败拒绑、错误认证回滚、就绪恢复和消息续接。
+
+真实控制平面容器验收见 [Compose 与路径说明](hermit-control.md)。该实验不设置宿主路径覆盖，并验证了实际入口、helper 摘要和重启后的工具续接。
