@@ -17,7 +17,7 @@ import { ensureHermitKernel, stopHermitKernel } from '../transport/hermit-kernel
 import { rustKernelHealth, rustKernelPaths } from '../transport/rust-kernel-client.mjs'
 import { checkCragLicense } from './crag-license.mjs'
 import { describeKernelCatalog } from '../admin/kernel-catalog.mjs'
-import { deriveScheduleFields } from '../pool/schedule-state.mjs'
+import { deriveScheduleFields, migrateScheduleRecord, applyScheduleOff } from '../pool/schedule-state.mjs'
 
 const execute = promisify(execFile)
 const selectionFields = ['dataplane', 'crag_kernel_version', 'kernel_package', 'pending_kernel_package']
@@ -169,6 +169,7 @@ export async function runKernelTransition({
   watchdog,
   scheduler,
   proxyPool,
+  stopAfterApply = false,
 }) {
   let vm = getVm(project, id)
   if (!vm || vm.id !== id) return { ok: false, code: 'vm_not_found', error: '槽位不存在' }
@@ -194,6 +195,7 @@ export async function runKernelTransition({
         throw fail('kernel_transition_target_unsupported', '原生内核之间请使用现有切换入口')
       const desired = await prepare(project, vm, target, routing)
       if (
+        !stopAfterApply &&
         vm.dataplane === 'hermit' &&
         target.dataplane === 'hermit' &&
         vm.kernel_package?.manifest_sha256 === desired.kernel_package.manifest_sha256 &&
@@ -278,19 +280,32 @@ export async function runKernelTransition({
         throw fail('kernel_health_failed', '目标内核未通过健康检查')
       if ((target.dataplane === 'hermit') !== (observed.runtime_flavor === 'hermit'))
         throw fail('kernel_identity_mismatch', '目标内核身份不匹配')
-      const keepRunning = t.previous_container_id ? t.previous_running : t.previous_status === 'running'
+      const keepRunning =
+        !stopAfterApply && (t.previous_container_id ? t.previous_running : t.previous_status === 'running')
       if (!keepRunning) {
         const stop = await stopHermitKernel(slotExec(project, desired))
         if (!stop.ok) throw fail(stop.reason, '目标内核停止尚未确认')
         await docker(vm, ['stop', '--time', '30', name])
+        if (stopAfterApply) {
+          await docker(vm, ['update', '--restart=no', name])
+          const halted = await inspect(vm, name)
+          if (!halted || halted.State?.Running || halted.HostConfig?.RestartPolicy?.Name !== 'no')
+            throw fail('kernel_stop_unconfirmed', '目标容器停止或自动重启策略尚未确认')
+        }
         runtimePatch(desired, inspectContainer(name), { routing })
       }
       Object.assign(t, { state: 'applied', completed_at: new Date().toISOString() })
       release(project, id, t, (record) => {
         record.kernel_transition = t
         replaceSelection(record, t.target)
-        record.status = t.previous_status
+        record.status = stopAfterApply ? 'stopped' : t.previous_status
         record.runtime = { ...desired.runtime, stopped: !keepRunning }
+        if (stopAfterApply) {
+          migrateScheduleRecord(record)
+          const operatorDisabled = record.schedule_off === true && record.schedule_off_reason === 'disabled'
+          applyScheduleOff(record, true, { reason: record.schedule_off_reason || 'stopped' })
+          if (operatorDisabled) record.schedule_off_reason = 'disabled'
+        }
       })
       watchdog?.reset?.(id)
       return { ok: true, activated: true, transition: publicKernelTransition(getVm(project, id)) }

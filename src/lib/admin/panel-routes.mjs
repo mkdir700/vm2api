@@ -2688,17 +2688,14 @@ export function createPanelHandler(ctx) {
             ok: false,
             error: { code: 'kernel_transition_pending', message: '请先回滚或确认上次切换' },
           })
-        if (body.targets.some((target) => getVm(cfg.paths.project, target.id)?.dataplane === 'hermit'))
-          return json(res, 409, {
-            ok: false,
-            error: { code: 'hermit_transition_required', message: 'Hermit 槽位请使用切换并应用入口' },
-          })
         const report = await installKernelTargets({
           projectRoot: cfg.paths.project,
           targets: body.targets,
           routing: ctx.routingConfig,
           watchdog: ctx.kernelWatchdog,
           ops: ctx.kernelInstallOps,
+          scheduler: ctx.poolScheduler,
+          proxyPool,
         })
         return json(res, 200, panel.ok(report))
       }

@@ -19,7 +19,6 @@ import { cn } from '@/lib/utils'
 import { isCodexVm } from '@/lib/vm-kind'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Checkbox } from '@/components/ui/checkbox'
 import { Progress } from '@/components/ui/progress'
 import {
   Select,
@@ -34,11 +33,15 @@ import { PageHeader } from '@/components/page-header'
 import { QueryGate } from '@/components/query-gate'
 import { meQueryOptions } from '@/features/auth/queries'
 import { dashboardQueryOptions } from '@/features/overview/queries'
+import { KernelTransitionControls } from '@/features/vm/kernel-transition-controls'
 import { isRemoteVm } from '@/features/vm/placement'
 import { HermitPackages } from './hermit-packages'
 import { KernelLicenseDialog } from './license-dialog'
 import {
   installKernelTargets,
+  hermitPackagesQueryOptions,
+  hermitPackageReady,
+  type ReleaseKernelId,
   kernelCatalogQueryOptions,
   pullKernelRelease,
   type KernelId,
@@ -46,7 +49,11 @@ import {
   type KernelTarget,
 } from './queries'
 
-const KERNEL_NAMES = { 'cli-node': 'cli-node', crag: 'CRAG' } as const
+const KERNEL_NAMES = {
+  'cli-node': 'cli-node',
+  crag: 'CRAG',
+  hermit: 'Hermit',
+} as const
 const LICENSE_LABELS: Record<CragLicenseStatus['status'], string> = {
   valid: '授权有效',
   unlicensed: '未授权',
@@ -71,9 +78,12 @@ type InstallProgress = {
 }
 
 export function WrapSamplePage() {
-  const [hermitSlots, setHermitSlots] = useState<string[]>([])
+  const [hermitVersions, setHermitVersions] = useState<Record<string, string>>(
+    {}
+  )
   const qc = useQueryClient()
   const catalog = useQuery(kernelCatalogQueryOptions())
+  const packages = useQuery(hermitPackagesQueryOptions())
   const dashboard = useQuery(dashboardQueryOptions())
   const me = useQuery(meQueryOptions())
   const canEdit = me.data?.role === 'admin'
@@ -94,7 +104,11 @@ export function WrapSamplePage() {
           vm,
           kernel:
             drafts[vm.id] ??
-            (vm.resolved_dataplane === 'crag' ? 'crag' : 'cli-node'),
+            (vm.resolved_dataplane === 'hermit'
+              ? 'hermit'
+              : vm.resolved_dataplane === 'crag'
+                ? 'crag'
+                : 'cli-node'),
         })),
     [dashboard.data?.vms, drafts]
   )
@@ -103,7 +117,7 @@ export function WrapSamplePage() {
     [rows]
   )
   const pull = useMutation({
-    mutationFn: (kernel: KernelId) => pullKernelRelease({ kernel }),
+    mutationFn: (kernel: ReleaseKernelId) => pullKernelRelease({ kernel }),
     onMutate: () => setPullError(null),
     onSuccess: async (_data, kernel) => {
       await qc.invalidateQueries({
@@ -120,7 +134,19 @@ export function WrapSamplePage() {
     },
   })
   const busy = installing || pull.isPending
-  const allTargets = rows.map(({ vm, kernel }) => ({ id: vm.id, kernel }))
+  function targetFor(vm: Vm, kernel: KernelId): KernelTarget {
+    if (kernel !== 'hermit') return { id: vm.id, kernel }
+    const value =
+      hermitVersions[vm.id] ??
+      (vm.kernel_package
+        ? `${vm.kernel_package.target}/${vm.kernel_package.version}`
+        : '')
+    const item = packages.data?.items.find(
+      (p) => `${p.target}/${p.version}` === value
+    )
+    return { id: vm.id, kernel, version: item?.version, target: item?.target }
+  }
+  const allTargets = rows.map(({ vm, kernel }) => targetFor(vm, kernel))
   const failedCount = job
     ? Object.values(job.results).filter((item) => !item.ok).length
     : 0
@@ -134,8 +160,33 @@ export function WrapSamplePage() {
 
   function requestInstall(targets: KernelTarget[]) {
     if (!canEdit || busy || !targets.length) return
+    const invalidHermit = targets.find(
+      (target) =>
+        target.kernel === 'hermit' &&
+        !packages.data?.items.some(
+          (p) =>
+            p.target === target.target &&
+            p.version === target.version &&
+            hermitPackageReady(p)
+        )
+    )
+    if (invalidHermit) {
+      toast.error(
+        `${vmById.get(invalidHermit.id)?.name || invalidHermit.id}：请选择可用于生产的 Hermit 版本`
+      )
+      return
+    }
+    if (
+      targets.some(
+        (target) => vmById.get(target.id)?.kernel_transition?.can_rollback
+      )
+    ) {
+      toast.error('请先回滚或确认上次切换')
+      return
+    }
     const missingPackage = targets.find(
       (target) =>
+        target.kernel !== 'hermit' &&
         !catalog.data?.kernels.some((p) => p.id === target.kernel && p.ready)
     )
     if (missingPackage) {
@@ -145,7 +196,7 @@ export function WrapSamplePage() {
     const unsupported = targets.find((target) => {
       const vm = vmById.get(target.id)
       return (
-        target.kernel === 'crag' &&
+        (target.kernel === 'crag' || target.kernel === 'hermit') &&
         vm &&
         (isRemoteVm(vm) || vm.runtime_type === 'kvm')
       )
@@ -250,7 +301,7 @@ export function WrapSamplePage() {
   return (
     <PageHeader
       title='内核'
-      description='cli-node 默认免费，CRAG 使用注册码授权。'
+      description='cli-node 默认免费，CRAG 使用注册码授权，Hermit 支持上传内核包。'
       extra={
         <Button
           variant='ghost'
@@ -259,6 +310,7 @@ export function WrapSamplePage() {
           onClick={() => {
             void catalog.refetch()
             void dashboard.refetch()
+            void qc.invalidateQueries({ queryKey: ['kernel-packages'] })
           }}
         >
           <RefreshCw aria-hidden='true' />
@@ -276,33 +328,6 @@ export function WrapSamplePage() {
           </div>
         }
       >
-        {canEdit && (
-          <section className='mb-6 space-y-3' aria-label='Hermit 槽位'>
-            <p className='text-sm text-muted-foreground'>
-              选择要暂存 Hermit 版本的槽位。暂存不会切换当前内核。
-            </p>
-            <div className='flex flex-wrap gap-4'>
-              {rows.map(({ vm }) => (
-                <label key={vm.id} className='flex items-center gap-2 text-sm'>
-                  <Checkbox
-                    disabled={busy}
-                    checked={hermitSlots.includes(vm.id)}
-                    onCheckedChange={(checked) =>
-                      setHermitSlots((previous) =>
-                        checked === true
-                          ? [...new Set([...previous, vm.id])]
-                          : previous.filter((id) => id !== vm.id)
-                      )
-                    }
-                  />
-                  {vm.name || vm.id}
-                  {vm.resolved_dataplane === 'hermit' ? ' · 当前 Hermit' : ''}
-                </label>
-              ))}
-            </div>
-            <HermitPackages ids={hermitSlots.filter((id) => vmById.has(id))} />
-          </section>
-        )}
         <div className='space-y-7 motion-reduce:[&_svg]:animate-none'>
           <section
             aria-label='可用内核'
@@ -384,6 +409,7 @@ export function WrapSamplePage() {
                 </Button>
               </div>
             ))}
+            <HermitPackages disabled={!canEdit || busy} />
           </section>
 
           <section aria-labelledby='kernel-vms-heading' className='space-y-3'>
@@ -489,13 +515,19 @@ export function WrapSamplePage() {
                     const nativeUnsupported =
                       isRemoteVm(vm) || vm.runtime_type === 'kvm'
                     const currentKernel =
-                      vm.resolved_dataplane === 'crag' &&
-                      vm.resolved_crag_kernel_version === 'v2'
-                        ? 'crag'
-                        : vm.resolved_dataplane === 'wrap'
-                          ? 'cli-node'
-                          : null
-                    const changed = kernel !== currentKernel
+                      vm.resolved_dataplane === 'hermit'
+                        ? 'hermit'
+                        : vm.resolved_dataplane === 'crag' &&
+                            vm.resolved_crag_kernel_version === 'v2'
+                          ? 'crag'
+                          : vm.resolved_dataplane === 'wrap'
+                            ? 'cli-node'
+                            : null
+                    const changed =
+                      kernel !== currentKernel ||
+                      (kernel === 'hermit' &&
+                        targetFor(vm, kernel).version !==
+                          vm.kernel_package?.version)
                     return (
                       <div
                         role='row'
@@ -564,7 +596,11 @@ export function WrapSamplePage() {
                             value={kernel}
                             disabled={!canEdit || busy}
                             onValueChange={(value) => {
-                              if (value === 'cli-node' || value === 'crag')
+                              if (
+                                value === 'cli-node' ||
+                                value === 'crag' ||
+                                value === 'hermit'
+                              )
                                 setDrafts((previous) => ({
                                   ...previous,
                                   [vm.id]: value,
@@ -587,8 +623,76 @@ export function WrapSamplePage() {
                               >
                                 CRAG · 付费
                               </SelectItem>
+                              <SelectItem
+                                value='hermit'
+                                disabled={nativeUnsupported}
+                              >
+                                Hermit
+                              </SelectItem>
                             </SelectContent>
                           </Select>
+                          {kernel === 'hermit' && (
+                            <>
+                              <Select
+                                value={
+                                  hermitVersions[vm.id] ??
+                                  (vm.kernel_package
+                                    ? `${vm.kernel_package.target}/${vm.kernel_package.version}`
+                                    : '')
+                                }
+                                disabled={!canEdit || busy || nativeUnsupported}
+                                onValueChange={(value) =>
+                                  setHermitVersions((previous) => ({
+                                    ...previous,
+                                    [vm.id]: value,
+                                  }))
+                                }
+                              >
+                                <SelectTrigger
+                                  className='w-full'
+                                  aria-label={`${vm.name || vm.id} Hermit 版本`}
+                                >
+                                  <SelectValue placeholder='请选择已安装版本' />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {packages.data?.items.map((p) => (
+                                    <SelectItem
+                                      key={`${p.target}/${p.version}`}
+                                      value={`${p.target}/${p.version}`}
+                                      disabled={!hermitPackageReady(p)}
+                                    >
+                                      {p.version} · {p.target}
+                                      {hermitPackageReady(p)
+                                        ? ''
+                                        : ' · 不可用于生产'}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              {packages.error && (
+                                <p
+                                  role='alert'
+                                  className='text-sm text-destructive'
+                                >
+                                  {packages.error.message}
+                                </p>
+                              )}
+                              {!packages.isPending &&
+                                !packages.data?.items.some(
+                                  hermitPackageReady
+                                ) && (
+                                  <p className='text-sm text-muted-foreground'>
+                                    请先上传可用于生产的 Hermit 内核包。
+                                  </p>
+                                )}
+                            </>
+                          )}
+                          {vm.kernel_transition?.can_rollback && (
+                            <KernelTransitionControls
+                              ids={[vm.id]}
+                              disabled={!canEdit || busy}
+                            />
+                          )}
                           {changed ? (
                             <span className='text-sm text-muted-foreground'>
                               待安装
@@ -651,12 +755,13 @@ export function WrapSamplePage() {
                             disabled={
                               !canEdit ||
                               busy ||
-                              (kernel === 'crag' && nativeUnsupported)
+                              ((kernel === 'crag' || kernel === 'hermit') &&
+                                nativeUnsupported)
                             }
                             loading={active}
                             aria-label={`${changed ? '安装' : '重装'} ${vm.name || vm.id} 并停用`}
                             onClick={() =>
-                              requestInstall([{ id: vm.id, kernel }])
+                              requestInstall([targetFor(vm, kernel)])
                             }
                           >
                             <Power aria-hidden='true' />
@@ -687,7 +792,7 @@ export function WrapSamplePage() {
             ? `重装 ${vmById.get(confirm[0].id)?.name || confirm[0].id} 并停用？`
             : `重装全部 ${confirm?.length || 0} 台 VM 并停用？`
         }
-        desc='按所选内核安装，完成后服务保持关闭。凭据、授权和工作数据保留。'
+        desc='按所选内核安装，完成后服务保持关闭。凭据、授权和工作数据保留。涉及 Hermit 时会重建槽位容器并检查内核。安装成功后清理旧容器。'
         confirmText='重装并停用'
         cancelBtnText='取消'
         disabled={missingLicenses.length > 0}
@@ -708,6 +813,7 @@ export function WrapSamplePage() {
               </span>
               <span className='shrink-0 font-medium'>
                 {KERNEL_NAMES[target.kernel]}
+                {target.kernel === 'hermit' ? ` · ${target.version}` : ''}
                 {target.kernel === 'crag' &&
                 !catalog.data?.licenses[target.id]?.valid
                   ? ' · 待授权'

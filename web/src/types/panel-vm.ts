@@ -381,6 +381,13 @@ export type Vm = {
   resolved_persona_preset?: string | null
   dataplane?: 'wrap' | 'cc' | 'crag' | 'hermit' | null
   resolved_dataplane?: 'wrap' | 'cc' | 'crag' | 'hermit' | null
+  kernel_package?: {
+    runtime: 'hermit'
+    version: string
+    target: string
+    manifest_sha256?: string
+  } | null
+  kernel_transition?: { state: string; can_rollback: boolean } | null
   crag_kernel_version?: 'legacy' | 'v2' | null
   resolved_crag_kernel_version?: 'legacy' | 'v2' | null
 

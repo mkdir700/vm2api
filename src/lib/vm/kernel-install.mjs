@@ -11,8 +11,10 @@ import { isKvmRuntime } from './runtime-kind.mjs'
 import { stopSlot } from './slot-runtime.mjs'
 import { officialCcUidGid, suspendVmRuntimeRestart } from './vm-runtime.mjs'
 import { materializeResolvedKernel } from './wrap-cli-runtime.mjs'
+import { resolveKernelDataplane } from './slot-engine.mjs'
+import { runKernelTransition } from './kernel-transition.mjs'
 
-const PRODUCTS = new Set(['cli-node', 'crag'])
+const PRODUCTS = new Set(['cli-node', 'crag', 'hermit'])
 // Only exceptional installer holds may be cleared by a later explicit start.
 // Key by record path so independent projects cannot release each other's slot.
 const safetyHolds = new Map()
@@ -88,6 +90,19 @@ export function validateKernelTargets(projectRoot, targets) {
       return { ok: false, status: 400, code: 'kernel_target_duplicate', error: '同一虚拟机不能重复选择' }
     }
     ids.add(target.id)
+    if (
+      target.kernel === 'hermit' &&
+      (target.target !== 'linux-amd64' ||
+        typeof target.version !== 'string' ||
+        !/^[A-Za-z0-9][A-Za-z0-9.+-]{0,79}$/.test(target.version))
+    ) {
+      return {
+        ok: false,
+        status: 400,
+        code: 'kernel_package_required',
+        error: '请选择 Hermit 的 Linux amd64 已安装版本',
+      }
+    }
     const vm = getVm(projectRoot, target.id)
     if (!vm || vm.id !== target.id) {
       return { ok: false, status: 404, code: 'vm_not_found', error: '所选虚拟机不存在' }
@@ -96,8 +111,16 @@ export function validateKernelTargets(projectRoot, targets) {
   return { ok: true }
 }
 
-/** Reinstall a chosen product without starting, resetting or recreating a slot. */
-export async function installKernelTargets({ projectRoot, targets, routing = {}, watchdog, ops = {} }) {
+/** Install an explicit product and leave it stopped; Hermit boundaries use journaled container replacement. */
+export async function installKernelTargets({
+  projectRoot,
+  targets,
+  routing = {},
+  watchdog,
+  scheduler,
+  proxyPool,
+  ops = {},
+}) {
   const selection = validateKernelTargets(projectRoot, targets)
   if (!selection.ok) {
     return {
@@ -112,6 +135,30 @@ export async function installKernelTargets({ projectRoot, targets, routing = {},
     const file = path.join(projectRoot, 'vms', `${target.id}.json`)
     items.push(
       await withVmLock(file, async () => {
+        const current = getVm(projectRoot, target.id)
+        if (target.kernel === 'hermit' || resolveKernelDataplane(current, routing) === 'hermit') {
+          const options = { project: projectRoot, id: target.id, routing, watchdog, scheduler, proxyPool }
+          const applied = await runKernelTransition({
+            ...options,
+            stopAfterApply: true,
+            target:
+              target.kernel === 'hermit'
+                ? { dataplane: 'hermit', target: target.target, version: target.version }
+                : { dataplane: target.kernel === 'crag' ? 'crag' : 'wrap' },
+          })
+          if (!applied.ok)
+            return failure(target, applied.code, applied.error, getVm(projectRoot, target.id)?.status === 'stopped')
+          const version =
+            target.kernel === 'hermit'
+              ? target.version
+              : (describeKernelCatalog(projectRoot).find((p) => p.id === target.kernel)?.version ?? null)
+          const finalized = await runKernelTransition({ ...options, action: 'finalize' })
+          if (!finalized.ok) return failure(target, finalized.code, finalized.error, true)
+          patchVmRecord(projectRoot, target.id, (record) => {
+            record.kernel_installation = { kernel: target.kernel, version, installed_at: new Date().toISOString() }
+          })
+          return { id: target.id, kernel: target.kernel, ok: true, stopped: true, version }
+        }
         let held = false
         let stopped = false
         let stoppedPersisted = false

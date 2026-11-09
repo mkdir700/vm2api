@@ -4,17 +4,6 @@ import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 
-export type HermitPackage = {
-  version: string
-  target: string
-  acceptance: string
-  capabilities: {
-    production: boolean
-    helper_integration?: boolean
-    https_upstream?: boolean
-    switch_readiness?: boolean
-  }
-}
 type Transition = { state: string; can_rollback: boolean; code?: string | null }
 type Action = 'apply' | 'rollback' | 'finalize'
 
@@ -113,7 +102,7 @@ export function KernelTransitionControls({
           <>
             <Button
               variant='outline'
-              disabled={busy}
+              disabled={disabled || busy}
               onClick={() => setConfirm('rollback')}
             >
               回滚上次切换
@@ -121,6 +110,7 @@ export function KernelTransitionControls({
             <Button
               variant='outline'
               disabled={
+                disabled ||
                 busy ||
                 pending.some((row) => row.transition?.state !== 'applied')
               }
@@ -175,78 +165,6 @@ export function KernelTransitionControls({
           if (confirm) mutation.mutate(confirm)
         }}
       />
-    </div>
-  )
-}
-
-export function HermitSlotSwitch({
-  id,
-  disabled,
-}: {
-  id: string
-  disabled: boolean
-}) {
-  const [value, setValue] = useState('')
-  const packages = useQuery({
-    queryKey: ['kernel-packages'],
-    queryFn: () =>
-      api<{ items: HermitPackage[] }>('/api/panel/kernel-packages'),
-  })
-  const selected = packages.data?.items.find(
-    (p) => `${p.target}/${p.version}` === value
-  )
-  const qualified =
-    selected?.acceptance === 'production' &&
-    selected.capabilities.production &&
-    selected.capabilities.helper_integration &&
-    selected.capabilities.https_upstream &&
-    selected.capabilities.switch_readiness
-  return (
-    <div className='mt-4 space-y-2 border-t pt-3'>
-      <label className='text-sm'>
-        Hermit 版本{' '}
-        <select
-          aria-label='Hermit 版本'
-          className='rounded border bg-background p-1'
-          disabled={disabled}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-        >
-          <option value=''>请选择已安装版本</option>
-          {packages.data?.items.map((p) => (
-            <option
-              key={`${p.target}/${p.version}`}
-              value={`${p.target}/${p.version}`}
-            >
-              {p.version} · {p.target}
-              {p.capabilities.production ? '' : ' · 模拟验收包'}
-            </option>
-          ))}
-        </select>
-      </label>
-      {packages.error && (
-        <p role='alert' className='text-sm text-destructive'>
-          {packages.error.message}
-        </p>
-      )}
-      <KernelTransitionControls
-        ids={[id]}
-        target={
-          selected
-            ? {
-                dataplane: 'hermit',
-                target: selected.target,
-                version: selected.version,
-              }
-            : undefined
-        }
-        disabled={disabled || !qualified}
-      />
-      {selected && !qualified && (
-        <p className='text-xs text-muted-foreground'>
-          该版本未获生产资格，不能应用到生产槽位。
-        </p>
-      )}
     </div>
   )
 }

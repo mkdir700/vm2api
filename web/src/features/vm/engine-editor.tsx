@@ -29,7 +29,6 @@ import {
   vmQueryOptions,
 } from '@/features/vm/queries'
 import { useVmPerms } from '@/features/vm/vm-perms'
-import { HermitSlotSwitch } from './kernel-transition-controls'
 
 export function VmEngineEditor({
   id,
@@ -313,7 +312,12 @@ function SlotKernelSwitch({
           )}
         </div>
       ) : null}
-      <HermitSlotSwitch id={id} disabled={blocked || busy} />
+      <p className='mt-4 border-t pt-3 text-sm text-muted-foreground'>
+        <Link to='/wrap' className='underline underline-offset-4'>
+          前往内核页面
+        </Link>
+        ，统一安装 cli-node、CRAG 或 Hermit。
+      </p>
       <ConfirmDialog
         open={pending != null}
         onOpenChange={(open) => {

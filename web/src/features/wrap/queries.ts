@@ -2,10 +2,11 @@ import { queryOptions } from '@tanstack/react-query'
 import type { CragLicenseStatus } from '@/types/panel-vm'
 import { api } from '@/lib/api'
 
-export type KernelId = 'cli-node' | 'crag'
+export type ReleaseKernelId = 'cli-node' | 'crag'
+export type KernelId = ReleaseKernelId | 'hermit'
 
 export type KernelProduct = {
-  id: KernelId
+  id: ReleaseKernelId
   name: string
   paid: boolean
   ready: boolean
@@ -27,7 +28,46 @@ export type KernelCatalog = {
   installations?: Record<string, KernelInstallation>
 }
 
-export type KernelTarget = { id: string; kernel: KernelId }
+export type KernelTarget = {
+  id: string
+  kernel: KernelId
+  version?: string
+  target?: string
+}
+
+export type HermitPackage = {
+  runtime: 'hermit'
+  version: string
+  target: string
+  manifest_sha256: string
+  acceptance: string
+  cli: { version: string }
+  capabilities: {
+    production: boolean
+    helper_integration?: boolean
+    https_upstream?: boolean
+    switch_readiness?: boolean
+  }
+}
+
+export function hermitPackageReady(item: HermitPackage) {
+  return (
+    item.target === 'linux-amd64' &&
+    item.acceptance === 'production' &&
+    item.capabilities.production &&
+    item.capabilities.helper_integration &&
+    item.capabilities.https_upstream &&
+    item.capabilities.switch_readiness
+  )
+}
+
+export function hermitPackagesQueryOptions() {
+  return queryOptions({
+    queryKey: ['kernel-packages'] as const,
+    queryFn: () =>
+      api<{ items: HermitPackage[] }>('/api/panel/kernel-packages'),
+  })
+}
 
 export type KernelInstallItem = KernelTarget & {
   ok: boolean
@@ -52,7 +92,10 @@ export function kernelCatalogQueryOptions() {
   })
 }
 
-export function pullKernelRelease(body: { kernel: KernelId; tag?: string }) {
+export function pullKernelRelease(body: {
+  kernel: ReleaseKernelId
+  tag?: string
+}) {
   return api<{
     kernel: KernelProduct
     release?: { tag: string; version: string; asset: string }
