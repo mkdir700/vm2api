@@ -12,6 +12,7 @@ import { runtimeKind } from './runtime-kind.mjs'
 import { inspectContainer, runtimePatch } from './vm-runtime.mjs'
 import { isCodexVm } from './vm-kind.mjs'
 import { resolveKernelDataplane } from './slot-engine.mjs'
+import { getKernelPackage, collectKernelPackages } from './kernel-packages.mjs'
 import { resolveHermitPackage, assertHermitActivation, hermitAuthentication } from './hermit-runtime.mjs'
 import { ensureHermitKernel, stopHermitKernel } from '../transport/hermit-kernel-supervisor.mjs'
 import { rustKernelHealth, rustKernelPaths } from '../transport/rust-kernel-client.mjs'
@@ -134,7 +135,15 @@ async function transitionHealth(project, vm) {
 async function prepare(project, vm, target, routing) {
   const desired = { ...vm, ...target }
   if (target.dataplane === 'hermit') {
-    const binding = { runtime: 'hermit', target: target.target, version: target.version }
+    const current = getKernelPackage(project).item
+    if (!current) throw fail('package_not_installed', '请先上传 Hermit 内核包')
+    if (
+      (target.version && target.version !== current.version) ||
+      (target.target && target.target !== current.target) ||
+      (target.manifest_sha256 && target.manifest_sha256 !== current.manifest_sha256)
+    )
+      throw fail('kernel_package_changed', 'Hermit 内核包已更新，请刷新后重新确认')
+    const binding = { runtime: 'hermit', target: current.target, version: current.version }
     const installed = await resolveHermitPackage(project, binding)
     assertHermitActivation(desired, installed.manifest)
     hermitAuthentication(project, vm, { allowOAuth: installed.manifest.capabilities.helper_integration === true })
@@ -336,6 +345,7 @@ export async function runKernelTransition({
         await docker(vm, ['rm', t.backup])
       }
       save(project, id, t, 'finalized')
+      await collectKernelPackages(project)
       return { ok: true, transition: publicKernelTransition(getVm(project, id)) }
     }
     hold(project, id, t)

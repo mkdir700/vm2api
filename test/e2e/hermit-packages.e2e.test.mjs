@@ -110,7 +110,10 @@ test('admin uploads immutable thin packages and shares a verified CLI cache with
     const listing = await fetch(gw.baseUrl + '/api/panel/kernel-packages', { headers: { cookie } })
     const catalog = await listing.json()
     fs.writeFileSync(path.join(artifact, 'catalog.json'), JSON.stringify(catalog, null, 2))
-    check('both_versions_visible', listing.status === 200 && catalog.data.items.length === 2)
+    check(
+      'only_current_package_visible',
+      listing.status === 200 && catalog.data.item.version === '0.2.0' && !('items' in catalog.data),
+    )
     check('list_does_not_expose_host_paths', !JSON.stringify(catalog).includes(gw.project))
     check('slot_policy_unchanged', before.equals(fs.readFileSync(path.join(gw.project, 'vms/vm-sim-01.json'))))
     check('credential_preserved', fs.readFileSync(credential, 'utf8') === '{"access_token":"synthetic-preserve"}')
@@ -126,7 +129,7 @@ test('admin uploads immutable thin packages and shares a verified CLI cache with
       check(version + '_rejected', invalid.response.status === 400)
     }
     const conflict = await send(
-      fixture('0.1.0', { manifest: { capabilities: { production: true, helper_integration: false } } }),
+      fixture('0.2.0', { manifest: { capabilities: { production: true, helper_integration: false } } }),
     )
     check('same_version_conflict_rejected', conflict.response.status === 409)
     const firstDoc = JSON.parse(first.manifest)
@@ -175,7 +178,7 @@ test('admin uploads immutable thin packages and shares a verified CLI cache with
     const staged = await choose({
       dataplane: 'hermit',
       ids: ['vm-sim-01'],
-      version: '0.1.0',
+      version: '0.2.0',
       target: 'linux-amd64',
       restart: false,
     })
@@ -183,12 +186,12 @@ test('admin uploads immutable thin packages and shares a verified CLI cache with
     const record = JSON.parse(fs.readFileSync(path.join(gw.project, 'vms/vm-sim-01.json')))
     check(
       'staged_does_not_replace_active_kernel',
-      record.dataplane === undefined && record.pending_kernel_package?.version === '0.1.0',
+      record.dataplane === undefined && record.pending_kernel_package?.version === '0.2.0',
     )
     const blocked = await choose({
       dataplane: 'hermit',
       ids: ['vm-sim-01'],
-      version: '0.1.0',
+      version: '0.2.0',
       target: 'linux-amd64',
       restart: true,
     })

@@ -31,8 +31,7 @@ export type KernelCatalog = {
 export type KernelTarget = {
   id: string
   kernel: KernelId
-  version?: string
-  target?: string
+  manifest_sha256?: string
 }
 
 export type HermitPackage = {
@@ -61,11 +60,11 @@ export function hermitPackageReady(item: HermitPackage) {
   )
 }
 
-export function hermitPackagesQueryOptions() {
+export function hermitPackageQueryOptions() {
   return queryOptions({
     queryKey: ['kernel-packages'] as const,
     queryFn: () =>
-      api<{ items: HermitPackage[] }>('/api/panel/kernel-packages'),
+      api<{ item: HermitPackage | null }>('/api/panel/kernel-packages'),
   })
 }
 

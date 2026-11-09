@@ -18,10 +18,11 @@ Hermit 是现有 Claude 槽位的内核选项。它与 `wrap`、`cc`、`crag` �
 
 安装器限制归档大小为 64 MiB。它拒绝链接、特殊文件、路径逃逸、重复条目、重复 JSON 键、错误权限和错误摘要。相同版本与相同清单可以重复安装。相同版本与不同清单返回冲突。
 
-安装器从清单指定的官方 HTTPS 地址下载固定 Claude Code。它核对大小与 SHA-256。多个版本共用同一摘要的 CLI。缓存损坏时安装器拒绝使用该缓存。它不覆盖损坏缓存。
+安装器从清单指定的官方 HTTPS 地址下载固定 Claude Code。它核对大小与 SHA-256。当前包与已部署 VM 共用按摘要校验的 CLI。缓存损坏时安装器拒绝使用该缓存。它不覆盖损坏缓存。
 
 ```text
 share/kernel-packages/
+  current.json
   cli/<cli-sha256>/claude
   versions/hermit/<target>/<version>/
     receipt.json
@@ -31,27 +32,44 @@ share/kernel-packages/
       hooks/
 ```
 
-`GET /api/panel/kernel-packages` 返回版本、目标、摘要、CLI 版本和能力。接口不返回宿主绝对路径。安装器使用 Python 3 标准库。控制平面使用 Node 22.23.4 验证。
+`GET /api/panel/kernel-packages` 返回 `{ "item": null }` 或唯一当前包的版本、目标、摘要、CLI 版本和能力。接口不再返回版本列表。接口不返回宿主绝对路径。安装器使用 Python 3 标准库。控制平面使用 Node 22.23.4 验证。
 
 ## 槽位选择
 
-安装不会改变槽位策略或凭据。在内核管理页选择 Claude 槽位，再点击“暂存到所选槽位”。页面调用现有接口：
+上传只替换唯一安装包，不改变现有 VM 的内核、凭据或运行状态。
+旧 VM 在统一安装流程完成后才使用新包。
+页面不提供历史列表或 Hermit 版本 select。
+版本号只用于来源核对。
+
+1. 打开“内核”页面。
+2. 上传内核包和对应的 `release.json`。
+3. 在“VM 安装”区域选择目标 VM。
+4. 在“安装内核”select 中选择 Hermit。
+5. 单击“安装”，核对当前包，再确认“重装并停用”。
+6. 等待成功，然后按正常 VM 流程启动并启用调度。
+
+统一接口为 `POST /api/panel/kernels/install`。
 
 ```json
 {
-  "dataplane": "hermit",
-  "ids": ["slot-id"],
-  "target": "linux-amd64",
-  "version": "package-version",
-  "restart": false
+  "targets": [
+    { "id": "slot-id", "kernel": "hermit", "manifest_sha256": "current-manifest-sha256" }
+  ]
 }
 ```
 
-将请求发给 `POST /api/panel/dataplane`。接口校验安装内容，并将清单摘要绑定到 `pending_kernel_package`。暂存不改变运行内核。普通重启不会自动应用暂存版本。当前页面不提供生产激活按钮。接口拒绝全局选择和 Codex 槽位。
+服务器使用当前包。确认摘要已变化时，服务器拒绝请求。
+接口不接受版本选择字段。
+警告：安装成功后系统清理旧容器，并保持 VM 停用。
+需要恢复原内核时，重新安装该内核。
 
-`restart: true` 只供隔离实验。实验需要 `KIN_KERNEL_TEST_ENDPOINTS=1`、合成凭据和显式上游地址。上游可使用 HTTP 回环地址，或包声明支持的固定 HTTPS 地址。实验还要求 `official_cc_passthrough=true` 和 `eager_tool_streaming=false`。这些设置不证明生产认证或上游兼容。
-
-同一槽位的策略变更串行执行。同一版本重复启动复用已有进程。运行中的槽位不能直接切换到另一版本。多个槽位先全部启动成功，再写入策略。文件系统在策略写入期间发生故障时，不能保证跨文件回滚。
+`current.json` 是唯一安装包指针。
+`versions/` 只保存当前包及已有 VM、暂存记录、未结束回滚实际引用的部署文件。
+这些引用不构成历史包选择目录。
+上传或重装完成时，系统清理无引用目录。
+读取槽位记录失败时，系统保留文件并报告待清理状态。
+旧存储没有当前指针时，系统不猜测版本。
+升级时重新上传已验收的正式包，或使用正式升级器中的包安装步骤建立指针。
 
 Hermit 每个内核只接收一个外部会话。调度容量固定为 1。原有 wrap 容量设置保持不变。
 

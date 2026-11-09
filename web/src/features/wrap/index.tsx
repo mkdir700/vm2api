@@ -35,11 +35,11 @@ import { meQueryOptions } from '@/features/auth/queries'
 import { dashboardQueryOptions } from '@/features/overview/queries'
 import { KernelTransitionControls } from '@/features/vm/kernel-transition-controls'
 import { isRemoteVm } from '@/features/vm/placement'
-import { HermitPackages } from './hermit-packages'
+import { HermitPackageUpload } from './hermit-package'
 import { KernelLicenseDialog } from './license-dialog'
 import {
   installKernelTargets,
-  hermitPackagesQueryOptions,
+  hermitPackageQueryOptions,
   hermitPackageReady,
   type ReleaseKernelId,
   kernelCatalogQueryOptions,
@@ -78,12 +78,9 @@ type InstallProgress = {
 }
 
 export function WrapSamplePage() {
-  const [hermitVersions, setHermitVersions] = useState<Record<string, string>>(
-    {}
-  )
   const qc = useQueryClient()
   const catalog = useQuery(kernelCatalogQueryOptions())
-  const packages = useQuery(hermitPackagesQueryOptions())
+  const packages = useQuery(hermitPackageQueryOptions())
   const dashboard = useQuery(dashboardQueryOptions())
   const me = useQuery(meQueryOptions())
   const canEdit = me.data?.role === 'admin'
@@ -136,15 +133,11 @@ export function WrapSamplePage() {
   const busy = installing || pull.isPending
   function targetFor(vm: Vm, kernel: KernelId): KernelTarget {
     if (kernel !== 'hermit') return { id: vm.id, kernel }
-    const value =
-      hermitVersions[vm.id] ??
-      (vm.kernel_package
-        ? `${vm.kernel_package.target}/${vm.kernel_package.version}`
-        : '')
-    const item = packages.data?.items.find(
-      (p) => `${p.target}/${p.version}` === value
-    )
-    return { id: vm.id, kernel, version: item?.version, target: item?.target }
+    return {
+      id: vm.id,
+      kernel,
+      manifest_sha256: packages.data?.item?.manifest_sha256,
+    }
   }
   const allTargets = rows.map(({ vm, kernel }) => targetFor(vm, kernel))
   const failedCount = job
@@ -163,16 +156,13 @@ export function WrapSamplePage() {
     const invalidHermit = targets.find(
       (target) =>
         target.kernel === 'hermit' &&
-        !packages.data?.items.some(
-          (p) =>
-            p.target === target.target &&
-            p.version === target.version &&
-            hermitPackageReady(p)
-        )
+        (!packages.data?.item ||
+          !hermitPackageReady(packages.data.item) ||
+          packages.data.item.manifest_sha256 !== target.manifest_sha256)
     )
     if (invalidHermit) {
       toast.error(
-        `${vmById.get(invalidHermit.id)?.name || invalidHermit.id}：请选择可用于生产的 Hermit 版本`
+        `${vmById.get(invalidHermit.id)?.name || invalidHermit.id}：请先上传可用于生产的 Hermit 内核包`
       )
       return
     }
@@ -409,7 +399,7 @@ export function WrapSamplePage() {
                 </Button>
               </div>
             ))}
-            <HermitPackages disabled={!canEdit || busy} />
+            <HermitPackageUpload disabled={!canEdit || busy} />
           </section>
 
           <section aria-labelledby='kernel-vms-heading' className='space-y-3'>
@@ -526,8 +516,8 @@ export function WrapSamplePage() {
                     const changed =
                       kernel !== currentKernel ||
                       (kernel === 'hermit' &&
-                        targetFor(vm, kernel).version !==
-                          vm.kernel_package?.version)
+                        targetFor(vm, kernel).manifest_sha256 !==
+                          vm.kernel_package?.manifest_sha256)
                     return (
                       <div
                         role='row'
@@ -633,42 +623,12 @@ export function WrapSamplePage() {
                           </Select>
                           {kernel === 'hermit' && (
                             <>
-                              <Select
-                                value={
-                                  hermitVersions[vm.id] ??
-                                  (vm.kernel_package
-                                    ? `${vm.kernel_package.target}/${vm.kernel_package.version}`
-                                    : '')
-                                }
-                                disabled={!canEdit || busy || nativeUnsupported}
-                                onValueChange={(value) =>
-                                  setHermitVersions((previous) => ({
-                                    ...previous,
-                                    [vm.id]: value,
-                                  }))
-                                }
-                              >
-                                <SelectTrigger
-                                  className='w-full'
-                                  aria-label={`${vm.name || vm.id} Hermit 版本`}
-                                >
-                                  <SelectValue placeholder='请选择已安装版本' />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {packages.data?.items.map((p) => (
-                                    <SelectItem
-                                      key={`${p.target}/${p.version}`}
-                                      value={`${p.target}/${p.version}`}
-                                      disabled={!hermitPackageReady(p)}
-                                    >
-                                      {p.version} · {p.target}
-                                      {hermitPackageReady(p)
-                                        ? ''
-                                        : ' · 不可用于生产'}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
+                              {packages.data?.item && (
+                                <p className='text-sm text-muted-foreground'>
+                                  当前安装包：{packages.data.item.version} ·{' '}
+                                  {packages.data.item.target}
+                                </p>
+                              )}
                               {packages.error && (
                                 <p
                                   role='alert'
@@ -678,9 +638,8 @@ export function WrapSamplePage() {
                                 </p>
                               )}
                               {!packages.isPending &&
-                                !packages.data?.items.some(
-                                  hermitPackageReady
-                                ) && (
+                                (!packages.data?.item ||
+                                  !hermitPackageReady(packages.data.item)) && (
                                   <p className='text-sm text-muted-foreground'>
                                     请先上传可用于生产的 Hermit 内核包。
                                   </p>
@@ -813,7 +772,9 @@ export function WrapSamplePage() {
               </span>
               <span className='shrink-0 font-medium'>
                 {KERNEL_NAMES[target.kernel]}
-                {target.kernel === 'hermit' ? ` · ${target.version}` : ''}
+                {target.kernel === 'hermit' && packages.data?.item
+                  ? ` · ${packages.data.item.version}`
+                  : ''}
                 {target.kernel === 'crag' &&
                 !catalog.data?.licenses[target.id]?.valid
                   ? ' · 待授权'

@@ -19,15 +19,16 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import { hermitPackagesQueryOptions } from './queries'
+import { hermitPackageQueryOptions } from './queries'
 
 type Receipt = {
   archive: { sha256: string; bytes: number }
   manifest_sha256: string
 }
-export function HermitPackages({ disabled }: { disabled: boolean }) {
+export function HermitPackageUpload({ disabled }: { disabled: boolean }) {
   const qc = useQueryClient()
-  const packages = useQuery(hermitPackagesQueryOptions())
+  const packages = useQuery(hermitPackageQueryOptions())
+  const item = packages.data?.item
   const [archive, setArchive] = useState<File | null>(null)
   const [receipt, setReceipt] = useState<File | null>(null)
   const install = useMutation({
@@ -48,7 +49,7 @@ export function HermitPackages({ disabled }: { disabled: boolean }) {
       })
     },
     onSuccess: async () => {
-      toast.success('版本已安装，槽位保持不变')
+      toast.success('当前内核包已更新，槽位保持不变')
       await qc.invalidateQueries({ queryKey: ['kernel-packages'] })
     },
     onError: (error: Error) => toast.error(error.message),
@@ -66,23 +67,23 @@ export function HermitPackages({ disabled }: { disabled: boolean }) {
         </div>
         <div className='mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-base sm:text-sm'>
           <span
-            className={`inline-flex items-center gap-1.5 ${packages.data?.items.length ? 'text-primary' : 'text-muted-foreground'}`}
+            className={`inline-flex items-center gap-1.5 ${packages.data?.item ? 'text-primary' : 'text-muted-foreground'}`}
           >
-            {packages.data?.items.length ? (
+            {packages.data?.item ? (
               <CheckCircle2 aria-hidden='true' className='size-4' />
             ) : (
               <TriangleAlert aria-hidden='true' className='size-4' />
             )}
             {packages.isPending
               ? '加载中'
-              : packages.data?.items.length
+              : packages.data?.item
                 ? '已上传'
                 : '未就绪'}
           </span>
           <span className='text-muted-foreground'>
-            {packages.data?.items.length
-              ? `${packages.data.items.length} 个已安装版本`
-              : '请上传版本归档和 release.json'}
+            {packages.data?.item
+              ? `${packages.data.item.version} · ${packages.data.item.target}`
+              : '请上传内核包和 release.json'}
           </span>
         </div>
         {packages.error && (
@@ -103,8 +104,8 @@ export function HermitPackages({ disabled }: { disabled: boolean }) {
             <DialogHeader>
               <DialogTitle>Hermit 内核包</DialogTitle>
               <DialogDescription>
-                上传版本归档和
-                release.json。上传后不会切换槽位内核。可在此管理已安装版本。
+                上传内核包和 release.json。新包替换当前安装包。现有 VM
+                在重装后更新。
               </DialogDescription>
             </DialogHeader>
             <fieldset disabled={disabled} className='min-w-0 space-y-3'>
@@ -137,7 +138,7 @@ export function HermitPackages({ disabled }: { disabled: boolean }) {
                   disabled={!archive || !receipt || install.isPending}
                   onClick={() => install.mutate()}
                 >
-                  安装版本
+                  更新内核包
                 </Button>
               </div>
               {packages.error && (
@@ -145,7 +146,7 @@ export function HermitPackages({ disabled }: { disabled: boolean }) {
                   {packages.error.message}
                 </p>
               )}
-              {packages.data?.items.map((item) => (
+              {item && (
                 <div
                   key={`${item.target}/${item.version}`}
                   className='flex flex-wrap items-center justify-between gap-3 rounded border p-3'
@@ -162,7 +163,7 @@ export function HermitPackages({ disabled }: { disabled: boolean }) {
                     </p>
                   </div>
                 </div>
-              ))}
+              )}
             </fieldset>
           </DialogContent>
         </Dialog>

@@ -90,19 +90,10 @@ export function validateKernelTargets(projectRoot, targets) {
       return { ok: false, status: 400, code: 'kernel_target_duplicate', error: '同一虚拟机不能重复选择' }
     }
     ids.add(target.id)
-    if (
-      target.kernel === 'hermit' &&
-      (target.target !== 'linux-amd64' ||
-        typeof target.version !== 'string' ||
-        !/^[A-Za-z0-9][A-Za-z0-9.+-]{0,79}$/.test(target.version))
-    ) {
-      return {
-        ok: false,
-        status: 400,
-        code: 'kernel_package_required',
-        error: '请选择 Hermit 的 Linux amd64 已安装版本',
-      }
-    }
+    if (target.kernel === 'hermit' && ('version' in target || 'target' in target))
+      return { ok: false, status: 400, code: 'kernel_target_invalid', error: 'Hermit 使用当前安装包，请刷新页面后重试' }
+    if (target.manifest_sha256 != null && !/^[a-f0-9]{64}$/.test(target.manifest_sha256))
+      return { ok: false, status: 400, code: 'kernel_target_invalid', error: '内核包摘要无效' }
     const vm = getVm(projectRoot, target.id)
     if (!vm || vm.id !== target.id) {
       return { ok: false, status: 404, code: 'vm_not_found', error: '所选虚拟机不存在' }
@@ -143,14 +134,14 @@ export async function installKernelTargets({
             stopAfterApply: true,
             target:
               target.kernel === 'hermit'
-                ? { dataplane: 'hermit', target: target.target, version: target.version }
+                ? { dataplane: 'hermit', manifest_sha256: target.manifest_sha256 }
                 : { dataplane: target.kernel === 'crag' ? 'crag' : 'wrap' },
           })
           if (!applied.ok)
             return failure(target, applied.code, applied.error, getVm(projectRoot, target.id)?.status === 'stopped')
           const version =
             target.kernel === 'hermit'
-              ? target.version
+              ? getVm(projectRoot, target.id)?.kernel_package?.version
               : (describeKernelCatalog(projectRoot).find((p) => p.id === target.kernel)?.version ?? null)
           const finalized = await runKernelTransition({ ...options, action: 'finalize' })
           if (!finalized.ok) return failure(target, finalized.code, finalized.error, true)

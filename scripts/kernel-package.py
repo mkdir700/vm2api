@@ -189,6 +189,74 @@ def inspect(root, runtime, target, version):
     return m, receipt
 
 
+
+def current_package(root):
+    pointer = root/'current.json'
+    if not pointer.exists() and not pointer.is_symlink():
+        return None
+    require(pointer.is_file() and not pointer.is_symlink() and pointer.stat().st_size <= 65536, 'invalid_current_package')
+    item = json.loads(pointer.read_text())
+    require(isinstance(item, dict), 'invalid_current_package')
+    require(item.get('runtime') == 'hermit' and item.get('target') in ('linux-amd64', 'darwin-arm64') and valid_name(item.get('version')) and valid_sha(item.get('manifest_sha256')), 'invalid_current_package')
+    return item
+
+
+def prune(root):
+    current = current_package(root)
+    if not current:
+        return {'removed': 0}
+    retained = {(current['target'], current['version'])}
+    project = root.parent.parent
+    # Keep deployed files, not historical install choices. Unreadable records fail closed.
+    try:
+        for file in (project/'vms').glob('*.json'):
+            record = json.loads(file.read_text())
+            if not isinstance(record, dict) or not record.get('id'):
+                continue
+            bindings = [record.get('kernel_package'), record.get('pending_kernel_package')]
+            transition = record.get('kernel_transition') or {}
+            require(isinstance(transition, dict), 'invalid_deployed_binding')
+            if transition.get('state') not in (None, 'finalized', 'rolled_back'):
+                for name in ('previous', 'target'):
+                    selection = transition.get(name) or {}
+                    require(isinstance(selection, dict), 'invalid_deployed_binding')
+                    bindings.append(selection.get('kernel_package'))
+            for binding in bindings:
+                require(binding is None or isinstance(binding, dict), 'invalid_deployed_binding')
+                if binding and binding.get('runtime') == 'hermit':
+                    require(valid_name(binding.get('version')) and binding.get('target') in ('linux-amd64', 'darwin-arm64'), 'invalid_deployed_binding')
+                    retained.add((binding['target'], binding['version']))
+    except (ValueError, TypeError, KeyError, OSError):
+        return {'removed': 0, 'cleanup_pending': True}
+    removed = 0
+    base = root/'versions/hermit'
+    if (root/'versions').is_symlink() or base.is_symlink():
+        return {'removed': 0, 'cleanup_pending': True}
+    if base.exists():
+        for target in base.iterdir():
+            if target.name not in ('linux-amd64', 'darwin-arm64') or target.is_symlink() or not target.is_dir():
+                continue
+            for directory in target.iterdir():
+                if valid_name(directory.name) and (target.name, directory.name) not in retained and directory.is_dir() and not directory.is_symlink():
+                    try:
+                        shutil.rmtree(directory); removed += 1
+                    except OSError:
+                        return {'removed': removed, 'cleanup_pending': True}
+    return {'removed': removed}
+
+
+def publish_current(root, receipt):
+    fd, temporary = tempfile.mkstemp(prefix='.current-', dir=root)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(receipt, stream, sort_keys=True); stream.flush(); os.fsync(stream.fileno())
+        os.chmod(temporary, 0o644)
+        os.replace(temporary, root/'current.json')
+    finally:
+        if os.path.exists(temporary): os.unlink(temporary)
+    return prune(root)
+
+
 def install(args):
     root = args.root; root.mkdir(parents=True, exist_ok=True)
     with (root/'.install.lock').open('a') as lock:
@@ -202,7 +270,8 @@ def install(args):
             if dest.exists() or dest.is_symlink():
                 _, receipt = inspect(root, m['runtime'], m['target'], m['version'])
                 require(receipt['manifest_sha256'] == args.manifest_sha256, 'package_version_conflict')
-                return {**receipt, 'idempotent': True, 'cached_cli': True}
+                cleanup = publish_current(root, receipt)
+                return {**receipt, 'idempotent': True, 'cached_cli': True, **cleanup}
             cached = ensure_cli(root, m, args.allow_loopback)
             receipt = {'runtime': m['runtime'], 'version': m['version'], 'target': m['target'], 'manifest_sha256': args.manifest_sha256,
                 'archive_sha256': args.sha256, 'cli_sha256': m['cli']['sha256'], 'activated': False}
@@ -211,7 +280,8 @@ def install(args):
                 directory.chmod(0o755)
             os.rename(ready, dest)
             inspect(root, m['runtime'], m['target'], m['version'])
-            return {**receipt, 'idempotent': False, 'cached_cli': cached}
+            cleanup = publish_current(root, receipt)
+            return {**receipt, 'idempotent': False, 'cached_cli': cached, **cleanup}
 
 
 def main():
@@ -224,6 +294,8 @@ def main():
         create.add_argument('--'+name, required=True)
     create.add_argument('--bytes', type=int, required=True)
     create.add_argument('--allow-loopback', action='store_true')
+    collect = commands.add_parser('prune')
+    collect.add_argument('--root', type=Path, required=True)
     check = commands.add_parser('inspect')
     check.add_argument('--root', type=Path, required=True)
     for name in ('runtime', 'target', 'version'):
@@ -232,6 +304,11 @@ def main():
     try:
         if args.command == 'install':
             result = install(args)
+        elif args.command == 'prune':
+            args.root.mkdir(parents=True, exist_ok=True)
+            with (args.root/'.install.lock').open('a') as lock:
+                fcntl.flock(lock, fcntl.LOCK_EX)
+                result = prune(args.root)
         else:
             m, receipt = inspect(args.root, args.runtime, args.target, args.version)
             result = {**receipt, 'manifest': m}

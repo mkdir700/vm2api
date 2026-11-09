@@ -1,6 +1,6 @@
 import { runKernelTransition, publicKernelTransition } from '../vm/kernel-transition.mjs'
 import { resolveHermitPackage } from '../vm/hermit-runtime.mjs'
-import { installKernelPackage, listKernelPackages, MAX_KERNEL_PACKAGE_BYTES } from '../vm/kernel-packages.mjs'
+import { installKernelPackage, getKernelPackage, MAX_KERNEL_PACKAGE_BYTES } from '../vm/kernel-packages.mjs'
 /**
  * /admin and /api/panel routes. Login / logout / me and { ok, data }
  * envelopes are unchanged; slot start/reload go through startSlotReady.
@@ -2577,14 +2577,22 @@ export function createPanelHandler(ctx) {
       if (p === '/api/panel/kernel-packages' && ['GET', 'POST'].includes(req.method)) {
         if (panelIdentity(req).role !== 'admin')
           return json(res, 403, { ok: false, error: { code: 'admin_required', message: '只有管理员可以安装内核包' } })
-        if (req.method === 'GET') return json(res, 200, panel.ok(listKernelPackages(cfg.paths.project)))
+        if (req.method === 'GET') {
+          try {
+            return json(res, 200, panel.ok(getKernelPackage(cfg.paths.project)))
+          } catch (error) {
+            return json(res, 409, { ok: false, error: { code: error.code, message: error.message } })
+          }
+        }
         try {
           const raw = await readRawBody(req, MAX_KERNEL_PACKAGE_BYTES)
-          const installed = await installKernelPackage(cfg.paths.project, raw, {
-            sha256: String(req.headers['x-kernel-sha256'] || ''),
-            manifest_sha256: String(req.headers['x-kernel-manifest-sha256'] || ''),
-            bytes: Number(req.headers['x-kernel-bytes']),
-          })
+          const installed = await serializeKernelChange(() =>
+            installKernelPackage(cfg.paths.project, raw, {
+              sha256: String(req.headers['x-kernel-sha256'] || ''),
+              manifest_sha256: String(req.headers['x-kernel-manifest-sha256'] || ''),
+              bytes: Number(req.headers['x-kernel-bytes']),
+            }),
+          )
           return json(res, 200, panel.ok(installed))
         } catch (error) {
           return json(res, error.status || (error.code === 'package_version_conflict' ? 409 : 400), {
@@ -2644,17 +2652,19 @@ export function createPanelHandler(ctx) {
         if (req.method === 'GET') return json(res, 200, panel.ok({ transition: publicKernelTransition(vm) }))
         if (req.method === 'POST') {
           const body = await readBody(req, 8 * 1024)
-          const result = await withVmLock(path.join(cfg.paths.project, 'vms', `${id}.json`), () =>
-            runKernelTransition({
-              project: cfg.paths.project,
-              id,
-              action: body?.action,
-              target: body?.target,
-              routing: ctx.routingConfig,
-              watchdog: ctx.kernelWatchdog,
-              scheduler: ctx.poolScheduler,
-              proxyPool,
-            }),
+          const result = await serializeKernelChange(() =>
+            withVmLock(path.join(cfg.paths.project, 'vms', `${id}.json`), () =>
+              runKernelTransition({
+                project: cfg.paths.project,
+                id,
+                action: body?.action,
+                target: body?.target,
+                routing: ctx.routingConfig,
+                watchdog: ctx.kernelWatchdog,
+                scheduler: ctx.poolScheduler,
+                proxyPool,
+              }),
+            ),
           )
           return json(
             res,
@@ -2688,15 +2698,17 @@ export function createPanelHandler(ctx) {
             ok: false,
             error: { code: 'kernel_transition_pending', message: '请先回滚或确认上次切换' },
           })
-        const report = await installKernelTargets({
-          projectRoot: cfg.paths.project,
-          targets: body.targets,
-          routing: ctx.routingConfig,
-          watchdog: ctx.kernelWatchdog,
-          ops: ctx.kernelInstallOps,
-          scheduler: ctx.poolScheduler,
-          proxyPool,
-        })
+        const report = await serializeKernelChange(() =>
+          installKernelTargets({
+            projectRoot: cfg.paths.project,
+            targets: body.targets,
+            routing: ctx.routingConfig,
+            watchdog: ctx.kernelWatchdog,
+            ops: ctx.kernelInstallOps,
+            scheduler: ctx.poolScheduler,
+            proxyPool,
+          }),
+        )
         return json(res, 200, panel.ok(report))
       }
       if (req.method === 'GET' && p === '/api/panel/wrap-cli') {
@@ -2744,8 +2756,19 @@ export function createPanelHandler(ctx) {
                   ok: false,
                   error: { code: 'hermit_explicit_slots_required', message: '请选择具体槽位' },
                 })
-              const binding = { runtime: 'hermit', target: body.target, version: body.version }
+              let binding
               try {
+                const current = getKernelPackage(cfg.paths.project).item
+                if (!current)
+                  throw Object.assign(new Error('请先上传 Hermit 内核包'), { code: 'package_not_installed' })
+                if (
+                  (body.target && body.target !== current.target) ||
+                  (body.version && body.version !== current.version)
+                )
+                  throw Object.assign(new Error('Hermit 内核包已更新，请刷新后重试'), {
+                    code: 'kernel_package_changed',
+                  })
+                binding = { runtime: 'hermit', target: current.target, version: current.version }
                 const installed = await resolveHermitPackage(cfg.paths.project, binding)
                 binding.manifest_sha256 = installed.manifest_sha256
                 const vms = targets.ids.map((id) => getVm(cfg.paths.project, id))

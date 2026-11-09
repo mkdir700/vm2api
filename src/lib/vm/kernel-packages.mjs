@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
@@ -59,32 +60,58 @@ export async function installKernelPackage(project, bytes, expected) {
   }
 }
 
-export function listKernelPackages(project) {
-  const base = path.join(kernelPackageRoot(project), 'versions')
-  const items = []
-  if (!fs.existsSync(base)) return { items }
-  for (const runtime of fs.readdirSync(base))
-    for (const target of fs.readdirSync(path.join(base, runtime))) {
-      for (const version of fs.readdirSync(path.join(base, runtime, target))) {
-        try {
-          const dir = path.join(base, runtime, target, version)
-          if (!fs.lstatSync(dir).isDirectory()) continue
-          const receipt = JSON.parse(fs.readFileSync(path.join(dir, 'receipt.json'), 'utf8'))
-          const manifest = JSON.parse(fs.readFileSync(path.join(dir, 'payload/manifest.json'), 'utf8'))
-          items.push({
-            ...receipt,
-            capabilities: manifest.capabilities,
-            acceptance: manifest.acceptance,
-            validated_environment: manifest.validated_environment,
-            cli: { version: manifest.cli.version, sha256: manifest.cli.sha256 },
-          })
-        } catch {
-          /* 未完成的版本不进入目录。 */
-        }
-      }
+export function getKernelPackage(project) {
+  const root = kernelPackageRoot(project)
+  const pointer = path.join(root, 'current.json')
+  try {
+    if (!fs.existsSync(pointer) && !fs.lstatSync(pointer, { throwIfNoEntry: false })) return { item: null }
+    const stat = fs.lstatSync(pointer)
+    if (!stat.isFile() || stat.size > 65536) throw new Error('pointer')
+    const current = JSON.parse(fs.readFileSync(pointer, 'utf8'))
+    if (
+      current.runtime !== 'hermit' ||
+      !['linux-amd64', 'darwin-arm64'].includes(current.target) ||
+      !/^[A-Za-z0-9][A-Za-z0-9.+-]{0,79}$/.test(current.version || '') ||
+      !/^[a-f0-9]{64}$/.test(current.manifest_sha256 || '')
+    )
+      throw new Error('identity')
+    const dir = path.join(root, 'versions/hermit', current.target, current.version)
+    for (const file of [
+      path.join(root, 'versions'),
+      path.join(root, 'versions/hermit'),
+      path.dirname(dir),
+      dir,
+      path.join(dir, 'payload'),
+    ]) {
+      if (!fs.lstatSync(file).isDirectory()) throw new Error('directory')
     }
-  return { items: items.sort((a, b) => a.runtime.localeCompare(b.runtime) || a.version.localeCompare(b.version)) }
+    const manifestPath = path.join(dir, 'payload/manifest.json')
+    if (!fs.lstatSync(manifestPath).isFile()) throw new Error('manifest')
+    const raw = fs.readFileSync(manifestPath)
+    if (raw.length > 65536 || crypto.createHash('sha256').update(raw).digest('hex') !== current.manifest_sha256)
+      throw new Error('digest')
+    const manifest = JSON.parse(raw)
+    if (
+      manifest.runtime !== current.runtime ||
+      manifest.target !== current.target ||
+      manifest.version !== current.version
+    )
+      throw new Error('manifest identity')
+    return {
+      item: {
+        ...current,
+        capabilities: manifest.capabilities,
+        acceptance: manifest.acceptance,
+        validated_environment: manifest.validated_environment,
+        cli: { version: manifest.cli.version, sha256: manifest.cli.sha256 },
+      },
+    }
+  } catch {
+    throw Object.assign(new Error('当前 Hermit 内核包无效，请重新上传'), { code: 'invalid_current_package' })
+  }
 }
+
+export const collectKernelPackages = (project) => run(['prune', '--root', kernelPackageRoot(project)])
 
 export const inspectKernelPackage = (project, binding) =>
   run([

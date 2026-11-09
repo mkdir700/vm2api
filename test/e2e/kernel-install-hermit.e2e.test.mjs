@@ -90,12 +90,12 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
     })
     const login = await api(gw, 'POST', '/api/panel/login', { body: { username: 'admin', password: 'testpass' } })
     const headers = { cookie: login.headers.get('set-cookie') }
-    const target = { id: vm.id, kernel: 'hermit', target: 'linux-amd64', version: '0.1.0-ui-e2e' }
+    const target = { id: vm.id, kernel: 'hermit' }
     const install = (targets) => api(gw, 'POST', '/api/panel/kernels/install', { headers, body: { targets } })
     const missing = await install([{ id: vm.id, kernel: 'hermit' }])
     check(
       'hermit_requires_explicit_package',
-      missing.status === 400 && missing.json.error.code === 'kernel_package_required',
+      missing.status === 200 && missing.json.data.items[0].code === 'package_not_installed',
     )
     const receipt = JSON.parse(fs.readFileSync(path.join(fixture, 'release.json')))
     const upload = await fetch(gw.baseUrl + '/api/panel/kernel-packages', {
@@ -111,7 +111,7 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
     })
     check('package_uploaded', upload.status === 200)
     const before = fs.readFileSync(path.join(project, 'vms/vm-sim-01.json'))
-    const bad = await install([{ ...target, version: 'missing' }])
+    const bad = await install([{ ...target, manifest_sha256: '0'.repeat(64) }])
     check(
       'missing_package_rejected_before_stop',
       bad.status === 200 &&
@@ -127,7 +127,7 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
       )
       const record = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json')))
       check(`install_${i}_stopped`, record.status === 'stopped' && record.runtime.stopped && record.schedule_off)
-      check(`install_${i}_binding`, record.dataplane === 'hermit' && record.kernel_package.version === target.version)
+      check(`install_${i}_binding`, record.dataplane === 'hermit' && record.kernel_package.version === '0.1.0-ui-e2e')
       check(`install_${i}_credentials`, JSON.stringify(record.claude) === JSON.stringify(vm.claude))
       check(
         `install_${i}_finalized`,
@@ -140,11 +140,47 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
       )
       check(`install_${i}_backup_removed`, Object.keys(containers).length === 1)
     }
+    const next = path.join(project, 'next-package')
+    fs.mkdirSync(next)
+    execFileSync('python3', [
+      path.join(REPO_ROOT, 'test/fixtures/hermit-page-package.py'),
+      next,
+      `http://127.0.0.1:${upstream.address().port}/cli`,
+      createHash('sha256').update(cli).digest('hex'),
+      'production',
+    ])
+    const nextReceipt = JSON.parse(fs.readFileSync(path.join(next, 'release.json')))
+    const oldDir = path.join(project, 'share/kernel-packages/versions/hermit/linux-amd64/0.1.0-ui-e2e')
+    const recordBeforeUpload = fs.readFileSync(path.join(project, 'vms/vm-sim-01.json'))
+    const replacement = await fetch(gw.baseUrl + '/api/panel/kernel-packages', {
+      method: 'POST',
+      headers: {
+        ...headers,
+        'content-type': 'application/gzip',
+        'x-kernel-sha256': nextReceipt.archive.sha256,
+        'x-kernel-bytes': String(nextReceipt.archive.bytes),
+        'x-kernel-manifest-sha256': nextReceipt.manifest_sha256,
+      },
+      body: fs.readFileSync(path.join(next, 'package.tar.gz')),
+    })
+    check('new_package_preserves_deployed_files', replacement.status === 200 && fs.existsSync(oldDir))
+    check(
+      'upload_does_not_reinstall_vm',
+      recordBeforeUpload.equals(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json'))),
+    )
+    const stale = await install([{ ...target, manifest_sha256: receipt.manifest_sha256 }])
+    check('stale_confirmation_rejected', !stale.json.data.items[0].ok && fs.existsSync(oldDir))
+    const updated = await install([target])
+    check(
+      'reinstall_uses_current_package',
+      updated.json.data.items[0].ok && updated.json.data.items[0].version === '0.2.0-ui-e2e',
+    )
+    check('reinstall_removes_unused_deployed_files', !fs.existsSync(oldDir))
     const beforeFailure = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json')))
     const invalidBatch = await install([target, { id: 'vm-other', kernel: 'hermit' }])
     check(
       'invalid_batch_rejected_before_any_install',
-      invalidBatch.status === 400 &&
+      invalidBatch.status === 404 &&
         beforeFailure.kernel_transition.id ===
           JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json'))).kernel_transition.id,
     )

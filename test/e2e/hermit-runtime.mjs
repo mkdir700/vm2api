@@ -811,6 +811,19 @@ raw=open(dest,'rb').read();print(json.dumps({'archive':{'sha256':hashlib.sha256(
       check('guest_failure_restores_original_container', afterFailure.Id === original.id && afterFailure.State.Running)
       check('guest_failure_preserves_credentials', beforeCredential.equals(fs.readFileSync(credentialFile)))
 
+      const restoredPackage = await fetch(gw.baseUrl + '/api/panel/kernel-packages', {
+        method: 'POST',
+        headers: {
+          cookie,
+          'content-type': 'application/gzip',
+          'x-kernel-sha256': expected.archive.sha256,
+          'x-kernel-bytes': String(expected.archive.bytes),
+          'x-kernel-manifest-sha256': expected.manifest_sha256,
+        },
+        body: fs.readFileSync(archive),
+      })
+      check('restore_single_installable_package', restoredPackage.status === 200)
+
       const stopped = await api(gw, 'POST', '/api/panel/vms/vm-hermit/stop', { headers: { cookie } })
       check('operator_can_stop_before_switch', stopped.status === 200)
       const stoppedApply = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
