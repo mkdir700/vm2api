@@ -1,5 +1,7 @@
 # Hermit 单安装包契约
 
+上线更新：本功能已正式部署到 primaryserver。完整 CLI 回归按用户明确指令跳过，未宣称通过。请参阅[正式上线记录](hermit-single-package-production-20261109.md)。
+
 ## 目标
 
 Hermit 只保留一个可安装包。上传替换当前包，不更新现有 VM。
