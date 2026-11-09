@@ -36,7 +36,7 @@ def find(name):
 if args[:2] == ['network', 'inspect']:
     print('172.29.0.0/24|172.29.0.1')
 elif args[0] in ['pull', 'image', 'version']:
-    print('fixture-image')
+    print('sha256:' + '1' * 64 if args[0] == 'image' else 'fixture-image')
 elif args[0] == 'inspect':
     key, item = find(args[-1])
     if '--format' not in args:
@@ -53,6 +53,10 @@ elif args[0] == 'inspect':
             print(json.dumps([{'Destination': '/opt/kin-kernel-packages', 'RW': False}]))
         else:
             print('{}')
+elif args[0] == 'run' and '--rm' in args and 'python3' in args:
+    if (root / 'fail-image-preflight').exists():
+        raise SystemExit(1)
+    print(json.dumps({'os': {'ID': 'ubuntu', 'VERSION_ID': '24.04'}, 'libc': 'glibc 2.39', 'arch': 'x86_64', 'tmux': '1' * 64}))
 elif args[0] == 'run':
     if (root / 'fail-run').exists():
         print('Injected candidate creation failure', file=sys.stderr)

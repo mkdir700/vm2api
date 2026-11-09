@@ -1,6 +1,7 @@
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
+import { prepareHermitSlotImage } from './hermit-slot-image.mjs'
 import path from 'node:path'
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
@@ -232,6 +233,18 @@ export async function runKernelTransition({
         return { ok: true, activated: true, unchanged: true, transition: publicKernelTransition(vm) }
       }
       if (t && !terminal.has(t.state)) throw fail('kernel_transition_pending', '请先回滚或确认上次切换')
+      let hermitImage
+      if (target.dataplane === 'hermit') {
+        // Reject pending tools before preparing another image; recheck after drain below.
+        if (vm.dataplane === 'hermit') {
+          const current = await transitionHealth(project, vm)
+          if (current?.switch_ready === false || Number(current?.pending_tool_results) > 0)
+            throw fail('kernel_tools_pending', '内核尚未确认工具结果已返回，未切换内核')
+        }
+        const { manifest } = await resolveHermitPackage(project, desired.kernel_package)
+        hermitImage = (await prepareHermitSlotImage(vm.kernel || 'ubuntu-24.04', { projectRoot: project, manifest }))
+          .image
+      }
       held = true
       await watchdog?.hold?.(id)
       // Match the installer: observe container identity after any watchdog restart settles.
@@ -292,12 +305,16 @@ export async function runKernelTransition({
       save(project, id, t, 'starting')
       desired.kernel_transition_id = t.id
       const boot = await startSlotReady(desired, project, {
+        hermitImage,
         routing: { ...routing, inference: { ...routing.inference, eager_start: true } },
       })
       const candidate = await inspect(vm, name)
       if (candidate) save(project, id, t, 'checking', { candidate_container_id: candidate.Id })
       if (!healthy(boot))
-        throw fail(boot?.code || boot?.rust?.reason || 'kernel_start_failed', '目标内核未通过健康检查')
+        throw fail(
+          boot?.code || boot?.rust?.reason || 'kernel_start_failed',
+          boot?.error || boot?.rust?.error || boot?.rust?.reason || '目标内核未通过健康检查',
+        )
       const observed = await rustKernelHealth(slotExec(project, desired), { timeoutMs: 2000 })
       if (!observed || observed.healthy === false || !(observed.ok === true || observed.status === 200))
         throw fail('kernel_health_failed', '目标内核未通过健康检查')
@@ -380,6 +397,7 @@ export async function runKernelTransition({
     if (rollbackStarted || (began && ['stopping', 'retaining', 'starting', 'checking', 'applied'].includes(t?.state))) {
       try {
         if (rollbackStarted) throw error
+        t.code = error.code || 'kernel_transition_failed'
         await restore(project, vm, t, routing)
         watchdog?.reset?.(id)
       } catch (rollbackError) {

@@ -118,6 +118,30 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
         !bad.json.data.items[0].ok &&
         before.equals(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json'))),
     )
+    const containerBeforePreflight = fs.readFileSync(path.join(project, 'docker-state.json'))
+    const commandFile = path.join(project, 'docker-commands.jsonl')
+    const commandsBeforePreflight = fs.existsSync(commandFile) ? fs.readFileSync(commandFile, 'utf8').length : 0
+    fs.writeFileSync(path.join(project, 'fail-image-preflight'), '1')
+    const preflightFailure = await install([target])
+    fs.unlinkSync(path.join(project, 'fail-image-preflight'))
+    fs.writeFileSync(path.join(artifact, 'failed-image-preflight.json'), JSON.stringify(preflightFailure, null, 2))
+    check('image_build_failure_is_specific', preflightFailure.json.data.items[0].code === 'hermit_guest_build_failed')
+    check('image_failure_preserves_vm_record', before.equals(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json'))))
+    check(
+      'image_failure_preserves_container',
+      containerBeforePreflight.equals(fs.readFileSync(path.join(project, 'docker-state.json'))),
+    )
+    const preflightCommands = fs
+      .readFileSync(commandFile, 'utf8')
+      .slice(commandsBeforePreflight)
+      .trim()
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line))
+    check(
+      'image_failure_sends_no_lifecycle_commands',
+      preflightCommands.every((args) => !['stop', 'rm', 'rename', 'update'].includes(args[0])),
+    )
     for (let i = 0; i < 2; i++) {
       const result = await install([target])
       fs.writeFileSync(path.join(artifact, `install-${i}.json`), JSON.stringify(result, null, 2))

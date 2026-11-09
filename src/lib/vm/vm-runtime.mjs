@@ -1,5 +1,6 @@
 import { kernelPackageRoot } from './kernel-packages.mjs'
-import { HERMIT_GUEST_PACKAGES } from './hermit-runtime.mjs'
+import { HERMIT_GUEST_PACKAGES, resolveHermitPackage } from './hermit-runtime.mjs'
+import { prepareHermitSlotImage } from './hermit-slot-image.mjs'
 /**
  * Real VM runtime: one Docker container per kin VM.
  * Mixed guest OS: Ubuntu 24.04 / Debian 12 / Arch / Fedora 41.
@@ -1017,7 +1018,11 @@ export function dockerSlotResourceArgs(vm, routing) {
   return ['--memory', memory, '--memory-swap', memory, ...(cpus > 0 ? ['--cpus', String(cpus)] : [])]
 }
 
-export async function startVmRuntime(vm, projectRoot, { recreate = false, routing, accel: accelOpt } = {}) {
+export async function startVmRuntime(
+  vm,
+  projectRoot,
+  { recreate = false, routing, accel: accelOpt, hermitImage } = {},
+) {
   if (vm.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(vm.kernel_transition.state))
     return { ok: false, code: 'kernel_transition_pending', error: '内核切换尚未完成，请先回滚' }
   const licensed = checkCragLicense(projectRoot, vm, resolveSlotRouting(projectRoot, routing))
@@ -1045,7 +1050,7 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
   vm.locale = vm.locale || STANDARD_LOCALE
   const resolvedRouting = resolveSlotRouting(projectRoot, routing)
   const mem = slotMemory(vm, resolvedRouting)
-  const image = kvm ? kvmImageForKernel(kernel) : imageForKernel(kernel)
+  let image = kvm ? kvmImageForKernel(kernel) : imageForKernel(kernel)
   const home = path.join(projectRoot, 'vms', vm.id, 'cli-home')
   fs.mkdirSync(home, { recursive: true })
   try {
@@ -1069,6 +1074,10 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
   const paths = workerPaths(projectRoot, vm.id, vm)
   const hermit = resolveKernelDataplane(vm, resolvedRouting) === 'hermit'
   if (hermit && kvm) return { ok: false, error: 'Hermit KVM 尚未验收' }
+  if (hermit) {
+    const { manifest } = await resolveHermitPackage(projectRoot, vm.kernel_package)
+    image = hermitImage || (await prepareHermitSlotImage(kernel, { projectRoot, manifest })).image
+  }
   const roleMismatch = Boolean(existing) && (hermit ? existing.role !== 'hermit' : existing.role === 'hermit')
   const replace =
     recreate ||
@@ -1166,7 +1175,7 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
   if (!kvm && !computer?.mac) return { ok: false, error: 'computer MAC missing' }
   host = computer.hostname
 
-  const img = ensureSlotImage(kernel, { projectRoot, runtime: runtimeKind(vm) })
+  const img = hermit ? { ok: true, image } : ensureSlotImage(kernel, { projectRoot, runtime: runtimeKind(vm) })
   if (!img.ok) return img
 
   try {
