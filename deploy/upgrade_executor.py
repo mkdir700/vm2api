@@ -251,8 +251,11 @@ class Executor:
                 h=kernel.get('codex_health') or kernel.get('rust_health') or kernel.get('go_health') or {}
                 kernels[vm['id']]=h.get('status')==200 and h.get('healthy') is not False and h.get('process_up') is not False
         records={}
-        for file in (self.root/'vms').glob('*.json'):
-            vm=json.loads(file.read_text());records[vm['id']]={k:vm.get(k) for k in ['dataplane','kernel_package','pending_kernel_package','proxy']}
+        for item in items:
+            file=self.root/'vms'/(item['id']+'.json')
+            vm=json.loads(file.read_text())
+            if vm.get('id')!=item['id']:raise ValueError('槽位文件与管理接口身份不匹配')
+            records[item['id']]={k:vm.get(k) for k in ['dataplane','kernel_package','pending_kernel_package','proxy']}
         return {'slots':{v['id']:{k:v.get(k) for k in ['status','schedule_off','schedulable','schedule_manual']} for v in items},'kernels':kernels,'records':records,
                 'credentials':{str(f.relative_to(self.root)):sha(f) for f in (self.root/'vms').rglob('credentials.json') if f.is_file()}}
 

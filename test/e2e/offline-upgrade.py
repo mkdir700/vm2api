@@ -112,6 +112,9 @@ def main():
         credential_digest=hashlib.sha256(credential.read_bytes()).hexdigest()
         for id, off in [('paused',True),('ready',False)]:
             (root/'vms'/f'{id}.json').write_text(json.dumps({'id':id,'name':id,'status':'stopped','schedulable':not off,'schedule_off':off,'schedule_manual':off,'proxy':None,'claude':{},'kernel':'ubuntu-24.04'}))
+        metadata={'active.json':{'active_vm':'ready','updated_at':'2026-11-09T00:00:00.000Z'},'ready-chat.json':{'messages':[{'role':'user','content':'synthetic-sidecar'}]}}
+        for name,value in metadata.items():(root/'vms'/name).write_text(json.dumps(value))
+        metadata_digests={name:hashlib.sha256((root/'vms'/name).read_bytes()).hexdigest() for name in metadata}
         (root/'docker-compose.yml').write_text(f'services:\n  vm2api:\n    image: ${{VM2API_IMAGE}}:${{VM2API_IMAGE_TAG}}\n    container_name: control\n    network_mode: host\n    init: true\n    env_file: [.env]\n    environment:\n      KIN_PROJECT_ROOT: /opt/vm2api\n    volumes:\n      - {sock}:/var/run/docker.sock\n'+''.join(f'      - {root}/{name}:/opt/vm2api/{name}\n' for name in ['data','vms','src/config','bin','share']))
         dock(['compose','--project-directory',str(root),'-p','fixture','up','-d','--pull','never'])
         for _ in range(80):
@@ -203,6 +206,7 @@ def main():
         try:check('备份数据库一致性通过',db.execute('pragma quick_check').fetchone()[0]=='ok')
         finally:db.close()
         check('非空凭据在升级和回滚后保持',hashlib.sha256(credential.read_bytes()).hexdigest()==credential_digest)
+        check('活动指针与聊天旁路文件在升级回滚后保持',all(hashlib.sha256((root/'vms'/name).read_bytes()).hexdigest()==digest for name,digest in metadata_digests.items()))
         check('其他容器身份保持',json.loads(dock(['inspect','unrelated-sentinel']))[0]['Id']==sentinel)
         (out/'backup-verification.json').write_text(json.dumps({'checksums':digests,'database':'ok','credentials_unchanged':True,'other_container_unchanged':True},indent=2))
         result['result']='PASS'
