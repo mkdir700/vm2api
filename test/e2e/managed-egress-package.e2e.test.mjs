@@ -44,7 +44,7 @@ test('VM packages retain managed exit references and refuse unavailable replacem
       expires_at: Math.floor(Date.now() / 1000) + 3600,
     })
     const credentialFile = path.join(home, '.claude', 'credentials.json')
-    const credentialBefore = digest(await readFile(credentialFile))
+    let credentialBefore = digest(await readFile(credentialFile))
     const exported = await api(gateway, 'GET', `/api/panel/vms/${vmId}/package`)
     assert.equal(exported.status, 200)
     const doc = exported.json.data
@@ -53,7 +53,7 @@ test('VM packages retain managed exit references and refuse unavailable replacem
     assert.equal(doc.proxy.id, exitId)
     assert.equal(doc.proxy.host_id, 'control-plane')
     assert.equal(doc.proxy.label, 'Package exit')
-    const before = digest(await readFile(file))
+    let before = digest(await readFile(file))
     const attempted = JSON.parse(
       JSON.stringify(doc).replaceAll('controlled-original-token', 'controlled-replacement-token'),
     )
@@ -89,8 +89,25 @@ test('VM packages retain managed exit references and refuse unavailable replacem
       headers: { authorization: '', cookie: login.headers.get('set-cookie') },
       body: { protocol: 'hysteria2', config: { server: 'localhost', password: 'controlled-owner-upstream' } },
     })
-    assert.equal(owned.status, 200)
-    await assertRefused({ ...doc.proxy, id: owned.json.data.items[0].id }, 'proxy_forbidden', 403)
+    assert.equal(owned.status, 403)
+    // Existing tenant-owned exits survive the new admin-only management policy.
+    const legacy = await api(gateway, 'POST', '/api/panel/proxies/import', {
+      body: { protocol: 'hysteria2', config: { server: 'localhost', password: 'controlled-legacy-owner' } },
+    })
+    assert.equal(legacy.status, 200)
+    const ownedId = legacy.json.data.items[0].id
+    const projectBeforeRestart = gateway.project
+    await gateway.stop()
+    const fixtureDb = new DatabaseSync(path.join(projectBeforeRestart, 'data', 'kin.db'))
+    fixtureDb.prepare('UPDATE proxies SET owner_user_id = ? WHERE id = ?').run(user.json.data.item.id, ownedId)
+    fixtureDb.close()
+    gateway = await startGateway({
+      project: projectBeforeRestart,
+      env: { VM2API_CONTAINER_NAME: `package-egress-absent-${process.pid}` },
+    })
+    before = digest(await readFile(file))
+    credentialBefore = digest(await readFile(credentialFile))
+    await assertRefused({ ...doc.proxy, id: ownedId }, 'proxy_forbidden', 403)
     const created = await api(gateway, 'POST', '/api/panel/vms/package', {
       body: { ...doc, vm: { ...doc.vm, id: 'vm-refused-package' } },
     })

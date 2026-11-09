@@ -280,6 +280,7 @@ try {
   mock.listen(0, factory ? '0.0.0.0' : '127.0.0.1')
   await once(mock, 'listening')
   let socksPort
+  let factoryDnsReplies = 0
   if (factory) {
     for (const [host, port] of [
       ['1.1.1.1', 443],
@@ -288,7 +289,20 @@ try {
       const server = net.createServer((socket) => {
         factoryProbeSockets.add(socket)
         socket.on('close', () => factoryProbeSockets.delete(socket))
-        socket.end()
+        if (port !== 53) return socket.end()
+        let query = Buffer.alloc(0)
+        socket.on('data', (chunk) => {
+          query = Buffer.concat([query, chunk])
+          if (query.length < 2 || query.length < 2 + query.readUInt16BE(0)) return
+          const response = Buffer.from(query.subarray(2, 2 + query.readUInt16BE(0)))
+          if (response.length < 12) return socket.destroy()
+          // A framed NODATA reply proves application-level reachability.
+          response.writeUInt16BE(0x8180, 2)
+          const frame = Buffer.alloc(2)
+          frame.writeUInt16BE(response.length)
+          factoryDnsReplies++
+          socket.end(Buffer.concat([frame, response]))
+        })
       })
       server.listen(port, host)
       await once(server, 'listening')
@@ -451,11 +465,13 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     })
     save('proxy-bind.json', bound)
     check('standard_proxy_bind', bound.status === 200)
+    const dnsBeforeProbe = factoryDnsReplies
     const probe = await api(gw, 'POST', `/api/panel/proxies/${factoryProxyId}/probe`, {
       headers: { cookie: login.headers.get('set-cookie') },
     })
     save('proxy-probe.json', probe)
     check('authenticated_proxy_probe', probe.status === 200 && probe.json?.data?.probe?.ok === true)
+    check('proxy_probe_received_dns_response', factoryDnsReplies > dnsBeforeProbe)
     if (managed) {
       const helperConfig = JSON.parse(
         fs.readFileSync(path.join(project, 'data/run/egress', factoryProxyId, 'egress.json')),

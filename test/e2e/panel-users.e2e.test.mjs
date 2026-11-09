@@ -253,16 +253,7 @@ test('proxy DNS URLs remain admin-only in list and config responses', async () =
       assert.equal(reader.status, 200)
       for (const route of ['/api/panel/proxies', '/api/panel/proxies/config']) {
         const response = await panel(gw, 'GET', route, { cookie: reader.cookie })
-        if (role === 'super') {
-          assert.equal(response.status, 403, response.text)
-          assert.equal(response.text.includes('private-doh-token'), false)
-          continue
-        }
-        assert.equal(response.status, 200, response.text)
-        const data = response.json.data || response.json
-        const config = route.endsWith('/config') ? data : data.config
-        assert.equal(Object.hasOwn(config, 'dns_primary'), false)
-        assert.equal(config.disconnect_on_error, true)
+        assert.equal(response.status, 403, response.text)
         assert.equal(response.text.includes('private-doh-token'), false)
       }
     }
