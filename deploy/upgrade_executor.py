@@ -20,6 +20,12 @@ import uuid
 
 COMMAND_LOG = None
 
+# Only reviewed, backward-readable additions may cross an image boundary.
+# Keep this schema on rollback: restoring a database snapshot would lose writes.
+ADDITIVE_MIGRATIONS = {
+    '054_api_keys_allowed_models.sql': 'eccb672bf1ba395bc8039856f0ee73850c16cb57c53d72b47d516ce25cbe5f56',
+}
+
 
 def sha(file):
     digest=hashlib.sha256()
@@ -218,6 +224,8 @@ class Executor:
         self.compose=['docker','compose','--project-directory',str(self.root),'--project-name',self.project,'--env-file',str(self.root/'.env')]
         for file in files:self.compose+=['-f',file]
         self.held=False;self.stopped=False;self.replaced=False;self.resuming=False
+        plan=self.directory/'migration-plan.json'
+        self.migrations=json.loads(plan.read_text()).get('additions',[]) if plan.exists() else []
         self.reason='upgrade-'+task
 
     def phase(self,name,**values):
@@ -261,6 +269,44 @@ class Executor:
         script=r'''const fs=require('fs'),crypto=require('crypto');(async()=>{const b='http://127.0.0.1:'+(process.env.PORT||8787);const r=await fetch(b+'/cc');if(!r.ok||!r.headers.get('content-type')?.includes('text/html'))throw Error('page');const paths=[...new Set([...((await r.text()).matchAll(/(?:src|href)=["'](\/assets\/[^"']+)["']/g))].map(x=>x[1]))];if(!paths.some(p=>p.endsWith('.js'))||!paths.some(p=>p.endsWith('.css')))throw Error('assets');let out={};for(const p of paths){if(p.includes('..'))throw Error('path');const r=await fetch(b+p);const body=Buffer.from(await r.arrayBuffer());if(!r.ok||!body.equals(fs.readFileSync('/opt/vm2api/web/dist'+p)))throw Error('asset');out[p]=crypto.createHash('sha256').update(body).digest('hex')}console.log(JSON.stringify(out))})().catch(()=>process.exit(1))'''
         return json.loads(command(['docker','exec',container,'node','-e',script],timeout=20))
 
+    def rehearse_migrations(self):
+        if not self.migrations:return
+        area=self.directory/'migration-rehearsal';area.mkdir(mode=0o700)
+        source=sqlite3.connect('file:'+str(self.root/'data/kin.db')+'?mode=ro',uri=True)
+        target=sqlite3.connect(area/'kin.db')
+        try:source.backup(target)
+        finally:target.close();source.close()
+        (area/'kin.db').chmod(0o600)
+        script="""import {createDatabase} from '/opt/vm2api/src/lib/db/database.mjs';
+const db=createDatabase({dbPath:'/upgrade-db/kin.db'});
+if(db.prepare('PRAGMA quick_check').get().quick_check!=='ok')throw Error('database integrity');
+console.log(JSON.stringify({result:'PASS',versions:db.prepare('SELECT version FROM schema_migrations ORDER BY version').all().map(r=>r.version)}));db.close();"""
+        results=[]
+        for image in [self.receipt['image'],self.receipt['previous_image']]:
+            value=json.loads(command(['docker','run','--rm','--pull=never','--network','none','--read-only',
+                '--mount','type=bind,src='+str(area)+',dst=/upgrade-db','--entrypoint','node',image,'--input-type=module','-e',script]))
+            if value.get('result')!='PASS':raise ValueError('数据库迁移或旧版本回读预演失败')
+            results.append({'image':image,**value})
+        atomic_json(self.directory/'migration-rehearsal.json',{'result':'PASS','checks':results})
+
+    def database_compatibility(self,rollback=False):
+        if not self.migrations:return
+        for item in self.migrations:
+            if ADDITIVE_MIGRATIONS.get(item.get('name'))!=item.get('sha256'):raise ValueError('数据库迁移计划身份无效')
+        db=sqlite3.connect('file:'+str(self.root/'data/kin.db')+'?mode=ro',uri=True)
+        try:
+            if db.execute('PRAGMA quick_check').fetchone()[0]!='ok':raise ValueError('数据库一致性检查失败')
+            columns={r[1] for r in db.execute('PRAGMA table_info(api_keys)')}
+            if 'allowed_models' not in columns:
+                if rollback:return
+                raise ValueError('054迁移未完成')
+            if not rollback:
+                row=db.execute("SELECT checksum FROM schema_migrations WHERE version='054'").fetchone()
+                if not row or row[0]!=ADDITIVE_MIGRATIONS['054_api_keys_allowed_models.sql']:raise ValueError('054迁移记录不匹配')
+            elif db.execute("SELECT COUNT(*) FROM api_keys WHERE allowed_models != '[]'").fetchone()[0]:
+                raise ValueError('已使用模型白名单，旧版本不能保持访问限制；保留目标版本并暂停调度')
+        finally:db.close()
+
     def preflight(self):
         command(self.compose+['config','--quiet'])
         name='vm2api-preflight-'+self.receipt['task_id']
@@ -273,7 +319,7 @@ class Executor:
                     self.preflight_assets=self.assets(name);break
                 except Exception:time.sleep(.5)
             else:raise RuntimeError('目标镜像预检失败')
-            # 首版只接受迁移文件和槽位载荷保持一致的升级。
+            # Existing migration files and slot payloads must stay byte-identical.
             paths=['src/lib/db/migrations','image-wrap-cli','image-crag']
             for sub in paths:
                 old=self.directory/'old'/sub;new=self.directory/'new'/sub
@@ -281,7 +327,16 @@ class Executor:
                 command(['docker','cp',self.container+':/opt/vm2api/'+sub,str(old)])
                 command(['docker','cp',name+':/opt/vm2api/'+sub,str(new)])
                 def tree(directory):return {str(p.relative_to(directory)):sha(p) for p in directory.rglob('*') if p.is_file()}
-                if tree(old)!=tree(new):raise ValueError('迁移或槽位载荷发生变化，需要协调升级')
+                old_tree=tree(old);new_tree=tree(new)
+                if sub!='src/lib/db/migrations':
+                    if old_tree!=new_tree:raise ValueError('槽位载荷发生变化，需要协调升级')
+                    continue
+                if any(new_tree.get(name)!=digest for name,digest in old_tree.items()):raise ValueError('已有数据库迁移被修改或删除')
+                additions=[{'name':name,'sha256':digest} for name,digest in sorted(new_tree.items()) if name not in old_tree]
+                if any(ADDITIVE_MIGRATIONS.get(item['name'])!=item['sha256'] for item in additions):raise ValueError('新增数据库迁移尚未验收')
+                self.migrations=additions
+                atomic_json(self.directory/'migration-plan.json',{'additions':additions,'rollback':'retain_backward_compatible_schema'})
+            self.rehearse_migrations()
             hermit=self.manifest.get('hermit')
             if hermit:
                 cli=hermit['manifest']['cli'];cache=self.root/'share/kernel-packages/cli'/cli['sha256']/'claude'
@@ -358,6 +413,7 @@ class Executor:
         if inspect(self.container)['Image']!=self.receipt['image']:raise ValueError('活动镜像不匹配')
 
     def verify(self):
+        self.database_compatibility()
         current=self.snapshot()
         if current['records']!=self.baseline['records'] or set(current['slots'])!=set(self.baseline['slots']):raise ValueError('槽位配置发生变化')
         if any(ok and not current['kernels'].get(id) for id,ok in self.baseline['kernels'].items()):raise ValueError('原健康内核不可用')
@@ -384,7 +440,11 @@ class Executor:
             self.held=True
         self.phase('rollback')
         if self.stopped:
+            if not (self.directory/'migration-plan.json').is_file():raise ValueError('迁移计划缺失，不能自动回滚')
+            self.database_compatibility(rollback=True)
             command(self.compose+['stop','-t','30','vm2api'])
+            if inspect(self.container)['State']['Running']:raise ValueError('目标控制平面停止尚未确认')
+            self.database_compatibility(rollback=True)
             backup=self.directory/'backup'
             if (backup/'.env').exists():atomic_bytes(self.root/'.env',(backup/'.env').read_bytes())
             for sub in ['bin','share/wrap-cli','share/crag','src/config']:

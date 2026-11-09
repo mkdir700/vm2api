@@ -6,6 +6,7 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
 import sqlite3
 import subprocess
 import tarfile
@@ -17,6 +18,7 @@ import traceback
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--base-image', required=True)
+    parser.add_argument('--old-image', help='实际旧控制镜像，用于验证新增054及旧版本回读')
     parser.add_argument('--dind-image', required=True)
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--hermit-package', type=Path)
@@ -45,9 +47,9 @@ def main():
     def check(name, value):
         checks.append({'name': name, 'result': 'PASS' if value else 'FAIL'})
         if not value: raise RuntimeError(name)
-    def api(path, body=None):
+    def api(path, body=None, method=None):
         script = "const r=await fetch('http://127.0.0.1:8787'+process.argv[1],{method:process.argv[2],headers:{authorization:'Bearer synthetic-upgrade-key','content-type':'application/json'},body:process.argv[3]||undefined});console.log(JSON.stringify({status:r.status,body:await r.json()}))"
-        return json.loads(dock(['exec', 'control', 'node', '--input-type=module', '-e', script, path, 'POST' if body is not None else 'GET', json.dumps(body) if body is not None else '']))
+        return json.loads(dock(['exec', 'control', 'node', '--input-type=module', '-e', script, path, method or ('POST' if body is not None else 'GET'), json.dumps(body) if body is not None else '']))
     def execute(bundle, expected=0):
         return json.loads(run(['python3', str(repo/'deploy/upgrade.py'), 'apply', '--release', str(bundle), '--root', str(root), '--project', 'fixture', '--container', 'control', '--wait'], expected=expected, env=env))
     try:
@@ -76,16 +78,31 @@ def main():
         assert json.loads(dock(['image','inspect',imported]))[0]['RootFS']==original['RootFS']
         dock(['tag',imported,'offline-fixture:base'])
         imported='offline-fixture:base'
+        if args.old_image:
+            legacy_archive=fixture/'legacy.tar'
+            run(['docker','save','-o',str(legacy_archive),args.old_image])
+            with tarfile.open(legacy_archive) as archive:
+                legacy_manifest=json.load(archive.extractfile('manifest.json'))
+                legacy_config=archive.extractfile(legacy_manifest[0]['Config']).read()
+            dock(['load','-i',str(legacy_archive)])
+            legacy=args.old_image
+            if subprocess.run(['docker','image','inspect',legacy],env=env,capture_output=True).returncode:
+                legacy='sha256:'+hashlib.sha256(legacy_config).hexdigest()
+            dock(['tag',legacy,'offline-fixture:legacy'])
+
         root = fixture/'installation'; root.mkdir()
         context = fixture/'context'; context.mkdir()
         shutil.copytree(args.web_dist,context/'web-dist')
         shutil.copy2(args.compose_binary,context/'docker-compose')
         shutil.copy2(repo/'scripts/docker-entrypoint.sh', context/'entrypoint.sh')
         shutil.copy2(repo/'src/lib/admin/panel-routes.mjs', context/'panel-routes.mjs')
-        for name, rev, broken in [('old','1'*40,False),('new','2'*40,False),('bad','3'*40,True),('migration','4'*40,False)]:
-            (context/'Dockerfile').write_text(f'FROM {imported}\nLABEL org.opencontainers.image.revision="{rev}"\nCOPY web-dist /opt/vm2api/web/dist\nCOPY docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose\nCOPY entrypoint.sh /usr/local/bin/vm2api-entrypoint\nCOPY panel-routes.mjs /opt/vm2api/src/lib/admin/panel-routes.mjs\nRUN chmod 755 /usr/local/bin/vm2api-entrypoint\n'+('COPY migration.sql /opt/vm2api/src/lib/db/migrations/999_upgrade_fixture.sql\n' if name=='migration' else '')+('COPY broken.sh /broken.sh\nENTRYPOINT ["/bin/sh", "/broken.sh"]\n' if broken else ''))
-            (context/'migration.sql').write_text('CREATE TABLE upgrade_fixture (id TEXT);\n')
+        for name, rev, broken in [('old','1'*40,False),('new','2'*40,False),('bad','3'*40,True),('migration','4'*40,False),('tampered','5'*40,False),('restricted','6'*40,True)]:
+            (context/'Dockerfile').write_text(f'FROM {"offline-fixture:legacy" if name=="old" and args.old_image else imported}\nLABEL org.opencontainers.image.revision="{rev}"\nCOPY web-dist /opt/vm2api/web/dist\nCOPY docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose\nCOPY entrypoint.sh /usr/local/bin/vm2api-entrypoint\n'+('COPY panel-routes.mjs /opt/vm2api/src/lib/admin/panel-routes.mjs\n' if name!='old' or not args.old_image else '')+'RUN chmod 755 /usr/local/bin/vm2api-entrypoint\n'+('COPY migration.sql /opt/vm2api/src/lib/db/migrations/'+('054_api_keys_allowed_models.sql' if name=='tampered' else '999_upgrade_fixture.sql')+'\n' if name in ['migration','tampered'] else '')+('COPY broken.sh /broken.sh\nENTRYPOINT ["/bin/sh", "/broken.sh"]\n' if broken else ''))
+            (context/'migration.sql').write_text((repo/'src/lib/db/migrations/054_api_keys_allowed_models.sql').read_text()+'\n-- tampered\n' if name=='tampered' else 'CREATE TABLE upgrade_fixture (id TEXT);\n')
             (context/'broken.sh').write_text('if [ "${SYNTHETIC_DEPLOY_FAIL:-}" = 1 ]; then rm -f /opt/vm2api/web/dist/assets/*.js; fi\nexec /usr/local/bin/vm2api-entrypoint\n')
+            if name=='restricted':
+                policy_script='import {createDatabase} from "/opt/vm2api/src/lib/db/database.mjs";const db=createDatabase({dbPath:"/opt/vm2api/data/kin.db"});db.prepare("UPDATE api_keys SET allowed_models = ? WHERE name = ?").run(JSON.stringify(["controlled-model"]),"migration-policy-fixture");db.close();'
+                (context/'broken.sh').write_text('if [ "${SYNTHETIC_DEPLOY_FAIL:-}" = 1 ]; then node --input-type=module -e '+shlex.quote(policy_script)+'; rm -f /opt/vm2api/web/dist/assets/*.js; fi\nexec /usr/local/bin/vm2api-entrypoint\n')
             dock(['build','--network','none','-t','offline-fixture:'+name,str(context)])
         for name in ['data','vms','src/config','bin','share']: (root/name).mkdir(parents=True,exist_ok=True)
         (root/'.env').write_text('VM2API_IMAGE=offline-fixture\nVM2API_IMAGE_TAG=old\nVM2API_CONTAINER_NAME=control\nVM2API_API_KEY=synthetic-upgrade-key\nVM2API_ADMIN_PASSWORD=synthetic-password\nVM2API_DB_SECRET='+'12'*32+'\nKIN_AUTO_SYNC_WRAP=0\nSYNTHETIC_DEPLOY_FAIL=1\n')
@@ -107,9 +124,11 @@ def main():
         credential_digest=hashlib.sha256(credential.read_bytes()).hexdigest()
         sentinel=dock(['run','-d','--network','none','--name','unrelated-sentinel','--entrypoint','sleep',imported,'infinity']).strip()
         before = json.loads(dock(['inspect','control']))[0]
+        if args.old_image:
+            check('旧版本可创建迁移策略夹具',api('/api/panel/api-keys',{'name':'migration-policy-fixture'})['status']==201)
         # 先对尚未实现的命令运行，保存红灯，再实现生产代码。
         bundles = {}
-        for name, rev in [('new','2'*40),('bad','3'*40),('migration','4'*40)]:
+        for name, rev in [('new','2'*40),('bad','3'*40),('migration','4'*40),('tampered','5'*40),('restricted','6'*40)]:
             image = json.loads(dock(['image','inspect','offline-fixture:'+name]))[0]
             acceptance = fixture/(name+'-acceptance.json')
             accepted={'format':'vm2api-offline-acceptance-1','result':'PASS','image_id':image['Id'],'source_revision':rev,'compatible_from':[before['Image'],json.loads(dock(['image','inspect','offline-fixture:new']))[0]['Id']],'scenarios':[{'name':'synthetic-release-fixture','result':'PASS'}]}
@@ -133,6 +152,25 @@ def main():
         data.write_bytes(original)
         refused=execute(bundles['migration'],expected=1)
         check('新增数据库迁移在排空前拒绝且原容器保持',refused['result']=='FAIL' and refused['failure_phase']=='preflight' and json.loads(dock(['inspect','control']))[0]['Id']==before['Id'])
+        tampered=execute(bundles['tampered'],expected=1)
+        check('已审核迁移的SQL摘要改变仍拒绝',tampered['result']=='FAIL' and tampered['failure_phase']=='preflight' and json.loads(dock(['inspect','control']))[0]['Id']==before['Id'])
+        if args.old_image:
+            restricted=execute(bundles['restricted'],expected=1)
+            check('新模型白名单阻止降级并保持目标控制面',restricted['result']=='RECOVERY_REQUIRED' and json.loads(dock(['inspect','control']))[0]['Image']==json.loads((bundles['restricted']/'release.json').read_text())['image']['id'])
+            db=sqlite3.connect('file:'+str(root/'data/kin.db')+'?mode=ro',uri=True)
+            try:policy_id=db.execute("SELECT id FROM api_keys WHERE name='migration-policy-fixture'").fetchone()[0]
+            finally:db.close()
+            check('目标版本管理API可清除新增模型策略',api('/api/panel/api-keys/'+policy_id,{'allowed_models':[]},method='PATCH')['status']==200)
+            resolved=json.loads(run(['python3',str(repo/'deploy/upgrade.py'),'recover','--root',str(root),'--wait'],env=env))
+            check('核对模型策略后可恢复原版本',resolved['result']=='ROLLED_BACK' and json.loads(dock(['inspect','control']))[0]['Image']==before['Image'])
+            migrated_failure=execute(bundles['bad'],expected=1)
+            check('054迁移后故障可回滚到真实旧版本',migrated_failure['result']=='ROLLED_BACK' and json.loads(dock(['inspect','control']))[0]['Image']==before['Image'])
+            db=sqlite3.connect('file:'+str(root/'data/kin.db')+'?mode=ro',uri=True)
+            try:
+                check('回滚保留新增列和054迁移记录', any(row[1]=='allowed_models' for row in db.execute('pragma table_info(api_keys)')) and db.execute("SELECT COUNT(*) FROM schema_migrations WHERE version='054'").fetchone()[0]==1)
+            finally:db.close()
+            created=api('/api/panel/api-keys',{'name':'after-migration-rollback','quota_usd':1})
+            check('旧版本在新schema上仍能写入APIKey',created['status']==201)
         active = execute(bundles['new'])
         check('完整离线升级成功',active['result']=='PASS' and active['phase']=='active')
         shown=api('/api/panel/upgrade-task')
