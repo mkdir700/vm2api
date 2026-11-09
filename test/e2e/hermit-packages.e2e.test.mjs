@@ -170,6 +170,8 @@ test('admin uploads immutable thin packages and shares a verified CLI cache with
       restart: false,
     })
     check('missing_package_selection_rejected', missing.status === 400)
+    const transition = await api(gw, 'GET', '/api/panel/vms/vm-sim-01/kernel-transition', { headers: { cookie } })
+    check('slot_transition_status_available', transition.status === 200 && transition.json.data.transition === null)
     const staged = await choose({
       dataplane: 'hermit',
       ids: ['vm-sim-01'],

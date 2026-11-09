@@ -249,7 +249,11 @@ export function createKernelWatchdog({
       homeDir: typeof homeDirFor === 'function' ? homeDirFor(vm) : null,
     }
     const current = await health(exec, { timeoutMs: vmNodeId(vm) ? NODE_SLOT_HEALTH_TIMEOUT_MS : 800 })
-    if (held.has(vm.id)) return
+    if (
+      held.has(vm.id) ||
+      (vm.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(vm.kernel_transition.state))
+    )
+      return
     if (vmNodeId(vm) && !rustKernelProcessUp(current) && current?.healthy !== false) {
       const failures = (nodeProbeFailures.get(vm.id) || 0) + 1
       nodeProbeFailures.set(vm.id, failures)
@@ -275,7 +279,11 @@ export function createKernelWatchdog({
     }
     const reason = current?.unhealthy_reason || current?.error || 'kernel process down'
     const observed = await observeRuntime(vm)
-    if (held.has(vm.id)) return
+    if (
+      held.has(vm.id) ||
+      (vm.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(vm.kernel_transition.state))
+    )
+      return
     // Permission/transport failures and deliberately paused containers never authorize recovery.
     if (!['running', 'missing', 'stopped', 'restarting'].includes(observed?.state)) return
     if (observed.state !== 'running') return reviveDownContainer(vm, observed.state)
@@ -300,7 +308,11 @@ export function createKernelWatchdog({
     }
     recordRestart(vm, resultAt)
     console.warn(`[kernel-watchdog] ${vm.id} recovery attempt: ${reason}`)
-    if (held.has(vm.id)) return
+    if (
+      held.has(vm.id) ||
+      (vm.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(vm.kernel_transition.state))
+    )
+      return
     // The container itself is gone or exited: a kernel restart cannot help, a full boot can.
     if (result?.reason === 'container_unavailable' && typeof revive === 'function' && vm.status === 'running') {
       // The container may disappear during ensure; do not mistake a daemon/permission error for absence.
@@ -322,7 +334,11 @@ export function createKernelWatchdog({
       // Panel can change routing.inference.engine without restarting this process.
       const routing = typeof getRouting === 'function' ? getRouting() || {} : {}
       for (const vm of vms) {
-        if (held.has(vm.id)) continue
+        if (
+          held.has(vm.id) ||
+          (vm.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(vm.kernel_transition.state))
+        )
+          continue
         if (!isKernelWatchdogTarget(vm, routing)) continue
         const work = checkVm(vm, routing)
         inflight.set(vm.id, work)

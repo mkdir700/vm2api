@@ -102,6 +102,8 @@ export function slotHasBoundProxy(vm) {
 }
 
 export function evaluateSlotGate(vm) {
+  if (vm?.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(vm.kernel_transition.state))
+    return { ok: false, reason: 'maintenance' }
   if (isCodexVm(vm)) return { ok: false, reason: 'codex_vm' }
   const blocked = proxyBlockedReason(vm?.proxy)
   if (blocked) return { ok: false, reason: blocked }

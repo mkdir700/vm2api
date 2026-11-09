@@ -1979,6 +1979,7 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     dataplane: v.dataplane || null,
     kernel_package: v.kernel_package || null,
     pending_kernel_package: v.pending_kernel_package || null,
+    kernel_transition: v.kernel_transition || null,
     resolved_inference_engine: resolveInferenceEngine(v, extras.routingConfig || {}),
     resolved_persona_preset: resolveSlotPersonaPreset(v, extras.routingConfig || {}),
     resolved_dataplane: resolveKernelDataplane(v, extras.routingConfig || {}),

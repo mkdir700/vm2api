@@ -1,5 +1,5 @@
-import { resolveHermitPackage, assertHermitActivation } from '../vm/hermit-runtime.mjs'
-import { ensureHermitKernel, stopHermitKernel } from '../transport/hermit-kernel-supervisor.mjs'
+import { runKernelTransition, publicKernelTransition } from '../vm/kernel-transition.mjs'
+import { resolveHermitPackage } from '../vm/hermit-runtime.mjs'
 import { installKernelPackage, listKernelPackages, MAX_KERNEL_PACKAGE_BYTES } from '../vm/kernel-packages.mjs'
 /**
  * /admin and /api/panel routes. Login / logout / me and { ok, data }
@@ -1164,6 +1164,8 @@ export function createPanelHandler(ctx) {
   async function applySlotPolicyWithRuntimeLocked(id, patch) {
     const current = getVm(cfg.paths.project, id)
     if (!current) return { ok: false, id, code: 'vm_not_found', error: 'vm not found' }
+    if (current.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(current.kernel_transition.state))
+      return { ok: false, id, code: 'kernel_transition_pending', error: '内核切换尚未完成，请先回滚' }
     const desired = vmWithSlotPolicyPatch(current, patch)
     const previousEngine = resolveInferenceEngine(current, ctx.routingConfig)
     const targetEngine = resolveInferenceEngine(desired, ctx.routingConfig)
@@ -1171,6 +1173,24 @@ export function createPanelHandler(ctx) {
     const targetDataplane = resolveKernelDataplane(desired, ctx.routingConfig)
     const previousVersion = resolveCragKernelVersion(current, ctx.routingConfig)
     const targetVersion = resolveCragKernelVersion(desired, ctx.routingConfig)
+    if (
+      (previousDataplane === 'hermit' || targetDataplane === 'hermit') &&
+      (previousDataplane !== targetDataplane || Object.prototype.hasOwnProperty.call(patch, 'dataplane'))
+    ) {
+      if (targetDataplane === 'hermit')
+        return { ok: false, id, code: 'hermit_package_required', error: '请在内核包入口选择 Hermit 版本并应用' }
+      const result = await runKernelTransition({
+        project: cfg.paths.project,
+        id,
+        action: 'apply',
+        target: { dataplane: targetDataplane },
+        routing: ctx.routingConfig,
+        watchdog: ctx.kernelWatchdog,
+        scheduler: ctx.poolScheduler,
+        proxyPool,
+      })
+      return { ...result, id, vm: getVm(cfg.paths.project, id) }
+    }
     const licensed = checkCragLicense(cfg.paths.project, desired, ctx.routingConfig)
     if (!licensed.ok) return { ...licensed, id }
     const dataplaneChanged = previousDataplane !== targetDataplane
@@ -2615,6 +2635,40 @@ export function createPanelHandler(ctx) {
           panel.ok({ kernel: result.kernel, ...(result.release ? { release: result.release } : {}) }),
         )
       }
+      if (/^\/api\/panel\/vms\/[^/]+\/kernel-transition$/.test(p)) {
+        if (panelIdentity(req).role !== 'admin')
+          return json(res, 403, { ok: false, error: { code: 'admin_required', message: '只有管理员可以切换内核' } })
+        const id = p.split('/')[4]
+        const vm = getVm(cfg.paths.project, id)
+        if (!vm) return json(res, 404, { ok: false, error: { code: 'vm_not_found', message: '槽位不存在' } })
+        if (req.method === 'GET') return json(res, 200, panel.ok({ transition: publicKernelTransition(vm) }))
+        if (req.method === 'POST') {
+          const body = await readBody(req, 8 * 1024)
+          const result = await withVmLock(path.join(cfg.paths.project, 'vms', `${id}.json`), () =>
+            runKernelTransition({
+              project: cfg.paths.project,
+              id,
+              action: body?.action,
+              target: body?.target,
+              routing: ctx.routingConfig,
+              watchdog: ctx.kernelWatchdog,
+              scheduler: ctx.poolScheduler,
+              proxyPool,
+            }),
+          )
+          return json(
+            res,
+            result.ok ? 200 : 409,
+            result.ok
+              ? panel.ok(result)
+              : {
+                  ok: false,
+                  error: { code: result.code, message: result.error },
+                  data: result,
+                },
+          )
+        }
+      }
       if (req.method === 'POST' && p === '/api/panel/kernels/install') {
         const body = await readBody(req, 32 * 1024)
         const selection = validateKernelTargets(cfg.paths.project, body?.targets)
@@ -2624,6 +2678,21 @@ export function createPanelHandler(ctx) {
         if (body.targets.some((target) => userMissesVmId(req, cfg.paths.project, target.id))) {
           return json(res, 403, { ok: false, error: { code: 'forbidden', message: '无权管理所选虚拟机' } })
         }
+        if (
+          body.targets.some((target) => {
+            const state = getVm(cfg.paths.project, target.id)?.kernel_transition?.state
+            return state && !['finalized', 'rolled_back'].includes(state)
+          })
+        )
+          return json(res, 409, {
+            ok: false,
+            error: { code: 'kernel_transition_pending', message: '请先回滚或确认上次切换' },
+          })
+        if (body.targets.some((target) => getVm(cfg.paths.project, target.id)?.dataplane === 'hermit'))
+          return json(res, 409, {
+            ok: false,
+            error: { code: 'hermit_transition_required', message: 'Hermit 槽位请使用切换并应用入口' },
+          })
         const report = await installKernelTargets({
           projectRoot: cfg.paths.project,
           targets: body.targets,
@@ -2679,9 +2748,6 @@ export function createPanelHandler(ctx) {
                   error: { code: 'hermit_explicit_slots_required', message: '请选择具体槽位' },
                 })
               const binding = { runtime: 'hermit', target: body.target, version: body.version }
-              const newlyStarted = []
-              const createdSlots = []
-              const activatedSlots = []
               try {
                 const installed = await resolveHermitPackage(cfg.paths.project, binding)
                 binding.manifest_sha256 = installed.manifest_sha256
@@ -2703,47 +2769,36 @@ export function createPanelHandler(ctx) {
                     }),
                   )
                 }
-                for (const vm of vms) assertHermitActivation(vm, installed.manifest)
-                if (
-                  ctx.routingConfig.compatibility?.official_cc_passthrough !== true ||
-                  ctx.routingConfig.failover?.eager_tool_streaming !== false
-                )
-                  throw Object.assign(new Error('Hermit 需要原版载荷透传，并关闭提前工具转发'), {
-                    code: 'hermit_protocol_profile_unsupported',
-                  })
                 const items = []
                 for (const vm of vms) {
-                  const proxy = proxyPool.getProxyByIdWithAuth(vm.proxy?.id)
-                  if (!proxy) throw Object.assign(new Error('槽位缺少可用的出口绑定'), { code: 'proxy_required' })
-                  const candidate = { ...vm, proxy, dataplane: 'hermit', kernel_package: binding }
-                  const exec = slotExec(cfg.paths.project, candidate)
-                  let result = await ensureHermitKernel(exec)
-                  if (!result.ok && result.reason === 'hermit_holder_missing') {
-                    const boot = await startSlotReady(candidate, cfg.paths.project, { routing: ctx.routingConfig })
-                    if (boot.action === 'created') createdSlots.push(candidate)
-                    if (!boot.ok || boot.rust_ok === false)
-                      throw Object.assign(new Error(boot.error || boot.rust?.error || 'Hermit 槽位创建失败'), {
-                        code: boot.code || boot.rust?.reason || 'hermit_slot_start_failed',
-                      })
-                    result = await ensureHermitKernel(exec)
-                  }
-                  if (!result.ok) throw Object.assign(new Error(result.error || result.reason), { code: result.reason })
-                  if (result.reason === 'started') newlyStarted.push(exec)
-                  activatedSlots.push(candidate)
-                  items.push({ id: vm.id, ok: true, manifest_sha256: binding.manifest_sha256 })
-                }
-                for (const vm of activatedSlots) {
-                  persistSlotEnginePolicy(cfg.paths.project, vm.id, {
-                    dataplane: 'hermit',
-                    kernel_package: binding,
-                    pending_kernel_package: null,
+                  const result = await runKernelTransition({
+                    project: cfg.paths.project,
+                    id: vm.id,
+                    action: 'apply',
+                    target: { dataplane: 'hermit', target: body.target, version: body.version },
+                    routing: ctx.routingConfig,
+                    watchdog: ctx.kernelWatchdog,
+                    scheduler: ctx.poolScheduler,
+                    proxyPool,
                   })
-                  patchVmRecord(cfg.paths.project, vm.id, { status: 'running', runtime: vm.runtime })
+                  items.push({ id: vm.id, ...result })
                 }
-                return json(res, 200, panel.ok({ dataplane: 'hermit', activated: true, package: binding, items }))
+                const ok = items.every((item) => item.ok)
+                return json(
+                  res,
+                  ok ? 200 : 409,
+                  ok
+                    ? panel.ok({ dataplane: 'hermit', activated: true, package: binding, items })
+                    : {
+                        ok: false,
+                        error: {
+                          code: items.find((item) => !item.ok).code,
+                          message: items.find((item) => !item.ok).error,
+                        },
+                        data: { items },
+                      },
+                )
               } catch (error) {
-                await Promise.all(newlyStarted.map((exec) => stopHermitKernel(exec)))
-                await Promise.all(createdSlots.map((vm) => stopSlot(vm)))
                 return json(
                   res,
                   [
@@ -2760,6 +2815,50 @@ export function createPanelHandler(ctx) {
             }),
           )
         }
+        const selectedVms = (targets.all ? listVms(cfg.paths.project).map((vm) => vm.id) : targets.ids)
+          .map((id) => getVm(cfg.paths.project, id))
+          .filter((vm) => vm && !isCodexVm(vm))
+        if (selectedVms.some((vm) => resolveKernelDataplane(vm, ctx.routingConfig) === 'hermit')) {
+          if (targets.all || selectedVms.some((vm) => resolveKernelDataplane(vm, ctx.routingConfig) !== 'hermit'))
+            return json(res, 409, {
+              ok: false,
+              error: { code: 'hermit_explicit_slots_required', message: '请单独选择 Hermit 槽位切换内核' },
+            })
+          return withKernelVmLocks(cfg.paths.project, targets.ids, async () => {
+            const items = []
+            for (const vm of selectedVms)
+              items.push({
+                id: vm.id,
+                ...(await runKernelTransition({
+                  project: cfg.paths.project,
+                  id: vm.id,
+                  action: 'apply',
+                  target: { dataplane: parsed.value },
+                  routing: ctx.routingConfig,
+                  watchdog: ctx.kernelWatchdog,
+                  scheduler: ctx.poolScheduler,
+                  proxyPool,
+                })),
+              })
+            const failed = items.find((item) => !item.ok)
+            return json(
+              res,
+              failed ? 409 : 200,
+              failed
+                ? { ok: false, error: { code: failed.code, message: failed.error }, data: { items } }
+                : panel.ok({ dataplane: parsed.value, ok: true, items }),
+            )
+          })
+        }
+        if (
+          selectedVms.some(
+            (vm) => vm.kernel_transition && !['finalized', 'rolled_back'].includes(vm.kernel_transition.state),
+          )
+        )
+          return json(res, 409, {
+            ok: false,
+            error: { code: 'kernel_transition_pending', message: '请先回滚或确认上次切换' },
+          })
         return await syncInstalledKernels(
           {
             project: cfg.paths.project,

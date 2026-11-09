@@ -5,7 +5,7 @@ import crypto from 'node:crypto'
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
 import { pickFreePort } from '../harness.mjs'
 
-export async function prepareControlFixture({ project, repo, root, out, apiKey, originPort, apiKernel, tls = false }) {
+export async function prepareControlFixture({ project, repo, root, out, apiKey, originPort, apiKernel, tls = false, production = false }) {
   const control = 'hermit-managed-control'
   const port = await pickFreePort()
   const composeFile = path.join(project, 'docker-compose.yml')
@@ -20,7 +20,7 @@ export async function prepareControlFixture({ project, repo, root, out, apiKey, 
     VM2API_IMAGE: 'clearcc/hermit-control-e2e', VM2API_IMAGE_TAG: 'fixture', VM2API_CONTAINER_NAME: control,
     PORT: String(port), KIN_ADMIN_USER: 'admin', KIN_ADMIN_PASSWORD: 'testpass', VM2API_ADMIN_USER: 'admin', VM2API_ADMIN_PASSWORD: 'testpass',
     KIN_API_KEY: apiKey, VM2API_API_KEY: apiKey, KIN_DB_SECRET: '12'.repeat(32),
-    KIN_KERNEL_TEST_ENDPOINTS: '1', KIN_HERMIT_API_KEY: apiKey, KIN_HERMIT_UPSTREAM_URL: tls ? 'https://api.anthropic.com' : 'http://127.0.0.1:19081/inner',
+    ...(production ? {} : { KIN_KERNEL_TEST_ENDPOINTS: '1', KIN_HERMIT_API_KEY: apiKey, KIN_HERMIT_UPSTREAM_URL: tls ? 'https://api.anthropic.com' : 'http://127.0.0.1:19081/inner' }),
     ...(tls ? { NODE_EXTRA_CA_CERTS: '/opt/vm2api/share/hermit-e2e-ca.pem' } : {}),
     KIN_CRS_MOCK: '0', KIN_AUTO_SYNC_WRAP: '0', KIN_OS_REGISTRY: '127.0.0.1:1/hermit-fixture',
     KIN_PROXY_GEO_URL: `http://198.18.0.1:${originPort}/geo`,
@@ -60,7 +60,7 @@ export async function prepareControlFixture({ project, repo, root, out, apiKey, 
     fs.writeFileSync(path.join(out, 'control-helper-pins.json'), JSON.stringify(helperPins, null, 2)+'\n')
     const inspected = JSON.parse(docker(['inspect', control]))[0]
     fs.writeFileSync(path.join(out, 'control-container.json'), JSON.stringify(inspected, null, 2)+'\n')
-    const guest = JSON.parse(docker(['exec', control, 'node', '-e', "console.log(JSON.stringify({node:process.version,pid:process.pid,root:process.env.KIN_PROJECT_ROOT,hostRoot:process.env.VM2API_HOST_ROOT||'',cwd:process.cwd()}))"]))
+    const guest = JSON.parse(docker(['exec', control, 'node', '-e', "console.log(JSON.stringify({node:process.version,pid:process.pid,root:process.env.KIN_PROJECT_ROOT,hostRoot:process.env.VM2API_HOST_ROOT||'',cwd:process.cwd(),kernelTestEndpoints:process.env.KIN_KERNEL_TEST_ENDPOINTS||'',hermitUpstream:process.env.KIN_HERMIT_UPSTREAM_URL||'',hermitApiKeyFallback:!!process.env.KIN_HERMIT_API_KEY}))"]))
     fs.writeFileSync(path.join(out, 'control-runtime.json'), JSON.stringify(guest, null, 2)+'\n')
     if (guest.root !== '/opt/vm2api' || guest.hostRoot || project === guest.root) throw new Error('内外项目目录没有分离')
     let exitCode = null, stopping = false

@@ -99,3 +99,10 @@ Linux 入口需要网络命名空间权限。每次使用新的输出目录。�
 全部七项原生 helper 的协议、凭据所有权和失败处理见 [helper 契约](hermit-helper.md)。
 
 原生 HTTPS 的隔离结果与生产接入边界见 [HTTPS 验收](hermit-https.md)。
+
+
+## 现有槽位切换与回滚
+
+后台的现有槽位应用流程见[现有槽位的 Hermit 切换与回滚](hermit-kernel-switch.md)。
+该流程保留旧容器，提供自动回滚、显式回滚和确认入口。
+模拟验收包仍不能激活生产槽位。

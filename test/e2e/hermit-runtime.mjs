@@ -13,6 +13,7 @@ import { startGateway, seedVm, api, pickFreePort, REPO_ROOT } from '../harness.m
 
 const [out, archive, receiptFile, cliSource, apiKernel] = process.argv.slice(2)
 const tlsMode = process.env.HERMIT_E2E_TLS === '1'
+const productionMode = process.env.HERMIT_E2E_PRODUCTION === '1'
 const oauthMode = process.env.HERMIT_E2E_OAUTH === '1'
 const OAUTH_AT = 'sk-ant-oat01-runtime-old'
 const OAUTH_RT = 'sk-ant-ort01-runtime-old'
@@ -384,6 +385,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       apiKernel,
       originPort: mock.address().port,
       tls: tlsMode,
+      production: productionMode,
     })
   }
   const launchGateway = () =>
@@ -494,6 +496,17 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     check('wrong_socks_password_rejected', wrong.ok === false)
   }
 
+  if (factory) {
+    // A real existing container exercises conversion instead of first-slot creation.
+    const started = await api(gw, 'POST', '/api/panel/vms/vm-hermit/start', { headers: { cookie } })
+    save('before-switch-start.json', started)
+    check('existing_native_slot_started', started.status === 200 && !started.json.data?.start_error)
+    const inspected = JSON.parse(
+      execFileSync('/usr/bin/docker', ['inspect', vm.runtime.container], { encoding: 'utf8' }),
+    )[0]
+    save('before-switch-container.json', { id: inspected.Id, role: inspected.Config.Labels['kin.vm.role'] })
+    check('existing_slot_is_not_hermit', inspected.Config.Labels['kin.vm.role'] !== 'hermit')
+  }
   const bytes = fs.readFileSync(archive)
   let res = await fetch(gw.baseUrl + '/api/panel/kernel-packages', {
     method: 'POST',
@@ -513,6 +526,19 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
   const manifest = JSON.parse(
     fs.readFileSync(path.join(pool, 'versions/hermit/linux-amd64', expected.version, 'payload/manifest.json')),
   )
+  if (productionMode) {
+    const control = JSON.parse(fs.readFileSync(path.join(out, 'control-runtime.json')))
+    check(
+      'production_mode_has_no_experiment_flags',
+      control.kernelTestEndpoints === '' && control.hermitUpstream === '' && control.hermitApiKeyFallback === false,
+    )
+    check(
+      'production_package_declares_supported_activation',
+      manifest.acceptance === 'production' &&
+        manifest.capabilities.production === true &&
+        manifest.capabilities.switch_readiness === true,
+    )
+  }
   if (slotApiKey) {
     const valid = fs.readFileSync(credentialFile)
     const validMode = fs.statSync(credentialFile).mode & 0o777
@@ -655,6 +681,215 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     completed = true
   } else {
     check('manager_starts_hermit', res.status === 200 && result.data.activated === true)
+    if (factory) {
+      const original = JSON.parse(fs.readFileSync(path.join(out, 'before-switch-container.json')))
+      const beforeCredential = fs.readFileSync(credentialFile)
+      let state = await api(gw, 'GET', '/api/panel/vms/vm-hermit/kernel-transition', { headers: { cookie } })
+      save('transition-applied.json', state)
+      check('transition_can_rollback', state.status === 200 && state.json.data.transition.state === 'applied')
+      if (controlMode) {
+        gw.child.kill('SIGTERM')
+        const deadline = Date.now() + 25000
+        while (gw.child.exitCode === null && Date.now() < deadline)
+          await new Promise((resolve) => setTimeout(resolve, 25))
+        check('transition_control_restart_exits_cleanly', gw.child.exitCode === 0)
+        gw = await launchGateway()
+        state = await api(gw, 'GET', '/api/panel/vms/vm-hermit/kernel-transition', { headers: { cookie } })
+        save('transition-after-control-restart.json', state)
+        check(
+          'rollback_record_survives_control_restart',
+          state.status === 200 && state.json.data.transition.state === 'applied',
+        )
+      }
+
+      const retained = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-hermit.json'))).kernel_transition
+      const parked = retained.backup + '-parked'
+      execFileSync('/usr/bin/docker', ['rename', retained.backup, parked])
+      const targetBeforeRollback = JSON.parse(
+        execFileSync('/usr/bin/docker', ['inspect', vm.runtime.container], { encoding: 'utf8' }),
+      )[0]
+      const refusedRollback = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'rollback' },
+      })
+      save('transition-rollback-missing-backup.json', refusedRollback)
+      check(
+        'missing_backup_keeps_slot_on_hold',
+        refusedRollback.status === 409 &&
+          refusedRollback.json.error?.code === 'kernel_rollback_failed' &&
+          JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-hermit.json'))).schedule_hold?.reason === 'maintenance',
+      )
+      const stillPresent = JSON.parse(
+        execFileSync('/usr/bin/docker', ['inspect', vm.runtime.container], { encoding: 'utf8' }),
+      )[0]
+      check(
+        'missing_backup_does_not_remove_current_container',
+        stillPresent.Id === targetBeforeRollback.Id && stillPresent.State.Running,
+      )
+      const blockedRetry = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'apply', target: { dataplane: 'hermit', target: 'linux-amd64', version: expected.version } },
+      })
+      save('transition-unfinished-apply.json', blockedRetry)
+      check(
+        'same_version_apply_cannot_bypass_failed_rollback',
+        blockedRetry.status === 409 && blockedRetry.json.error?.code === 'kernel_transition_pending',
+      )
+      execFileSync('/usr/bin/docker', ['rename', parked, retained.backup])
+      const rollback = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'rollback' },
+      })
+      save('transition-rollback.json', rollback)
+      check('explicit_rollback_succeeds', rollback.status === 200 && rollback.json.data.ok)
+      const restored = JSON.parse(
+        execFileSync('/usr/bin/docker', ['inspect', vm.runtime.container], { encoding: 'utf8' }),
+      )[0]
+      check('rollback_restores_original_container', restored.Id === original.id && restored.State.Running)
+      check('rollback_preserves_current_credentials', beforeCredential.equals(fs.readFileSync(credentialFile)))
+      const badVersion = expected.version + '-bad-tmux'
+      const badArchive = path.join(root, 'bad-tmux.tar.gz')
+      const badReceipt = JSON.parse(
+        execFileSync(
+          'python3',
+          [
+            '-c',
+            `import tarfile,io,json,hashlib,sys
+source,dest,version=sys.argv[1:]
+with tarfile.open(source) as archive: files={m.name:archive.extractfile(m).read() for m in archive if m.isfile()}
+manifest=json.loads(files['manifest.json']);manifest['version']=version;manifest['dependencies']['tmux']['sha256']='0'*64
+files['manifest.json']=(json.dumps(manifest,sort_keys=True,indent=2)+'\\n').encode()
+with tarfile.open(dest,'w:gz') as archive:
+ for name,data in files.items():
+  member=tarfile.TarInfo(name);member.size=len(data);member.mode=493 if name=='bin/hermit' else 420;archive.addfile(member,io.BytesIO(data))
+raw=open(dest,'rb').read();print(json.dumps({'archive':{'sha256':hashlib.sha256(raw).hexdigest(),'bytes':len(raw)},'manifest_sha256':hashlib.sha256(files['manifest.json']).hexdigest()}))`,
+            archive,
+            badArchive,
+            badVersion,
+          ],
+          { encoding: 'utf8' },
+        ),
+      )
+      const badInstall = await fetch(gw.baseUrl + '/api/panel/kernel-packages', {
+        method: 'POST',
+        headers: {
+          cookie,
+          'content-type': 'application/gzip',
+          'x-kernel-sha256': badReceipt.archive.sha256,
+          'x-kernel-bytes': String(badReceipt.archive.bytes),
+          'x-kernel-manifest-sha256': badReceipt.manifest_sha256,
+        },
+        body: fs.readFileSync(badArchive),
+      })
+      check('invalid_guest_candidate_installed', badInstall.status === 200)
+      const failed = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'apply', target: { dataplane: 'hermit', target: 'linux-amd64', version: badVersion } },
+      })
+      save('transition-auto-rollback.json', failed)
+      check(
+        'guest_failure_reports_automatic_rollback',
+        failed.status === 409 && failed.json.data?.transition?.state === 'rolled_back',
+      )
+      const afterFailure = JSON.parse(
+        execFileSync('/usr/bin/docker', ['inspect', vm.runtime.container], { encoding: 'utf8' }),
+      )[0]
+      check('guest_failure_restores_original_container', afterFailure.Id === original.id && afterFailure.State.Running)
+      check('guest_failure_preserves_credentials', beforeCredential.equals(fs.readFileSync(credentialFile)))
+
+      const stopped = await api(gw, 'POST', '/api/panel/vms/vm-hermit/stop', { headers: { cookie } })
+      check('operator_can_stop_before_switch', stopped.status === 200)
+      const stoppedApply = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'apply', target: { dataplane: 'hermit', target: 'linux-amd64', version: expected.version } },
+      })
+      save('transition-stopped-apply.json', stoppedApply)
+      const stoppedRecord = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-hermit.json')))
+      const stoppedContainer = JSON.parse(
+        execFileSync('/usr/bin/docker', ['inspect', vm.runtime.container], { encoding: 'utf8' }),
+      )[0]
+      check(
+        'stopped_slot_switch_does_not_start_service',
+        stoppedApply.status === 200 &&
+          stoppedRecord.status === 'stopped' &&
+          stoppedRecord.runtime.stopped === true &&
+          stoppedContainer.State.Running === false,
+      )
+      const repeatedStopped = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'apply', target: { dataplane: 'hermit', target: 'linux-amd64', version: expected.version } },
+      })
+      save('transition-stopped-repeat.json', repeatedStopped)
+      const repeatedContainer = JSON.parse(
+        execFileSync('/usr/bin/docker', ['inspect', vm.runtime.container], { encoding: 'utf8' }),
+      )[0]
+      check(
+        'same_version_apply_preserves_stopped_container',
+        repeatedStopped.status === 200 &&
+          repeatedStopped.json.data.unchanged === true &&
+          !repeatedContainer.State.Running &&
+          repeatedContainer.Id === stoppedContainer.Id,
+      )
+      const stoppedRollback = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'rollback' },
+      })
+      save('transition-stopped-rollback.json', stoppedRollback)
+      const originalStopped = JSON.parse(
+        execFileSync('/usr/bin/docker', ['inspect', vm.runtime.container], { encoding: 'utf8' }),
+      )[0]
+      check(
+        'stopped_slot_rollback_preserves_original_container_and_stop',
+        stoppedRollback.status === 200 && originalStopped.Id === original.id && !originalStopped.State.Running,
+      )
+      const nativeResumed = await api(gw, 'POST', '/api/panel/vms/vm-hermit/start', { headers: { cookie } })
+      check('operator_can_start_restored_native_slot', nativeResumed.status === 200)
+      const manualOff = await api(gw, 'POST', '/api/panel/vms/vm-hermit/schedulable', {
+        headers: { cookie },
+        body: { schedulable: false },
+      })
+      check('operator_can_pause_before_switch', manualOff.status === 200)
+      const reapplied = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'apply', target: { dataplane: 'hermit', target: 'linux-amd64', version: expected.version } },
+      })
+      save('transition-reapply.json', reapplied)
+      check('existing_slot_reapply_succeeds', reapplied.status === 200 && reapplied.json.data.ok)
+      const finalized = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'finalize' },
+      })
+      save('transition-finalize.json', finalized)
+      check('finalize_removes_only_backup', finalized.status === 200 && finalized.json.data.ok)
+      const paused = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-hermit.json')))
+      check(
+        'switch_preserves_operator_schedule_off',
+        paused.schedule_off === true &&
+          paused.schedule_manual === true &&
+          paused.schedule_disabled_reason === 'disabled',
+      )
+      const resumed = await api(gw, 'POST', '/api/panel/vms/vm-hermit/schedulable', {
+        headers: { cookie },
+        body: { schedulable: true },
+      })
+      check('operator_can_resume_after_switch', resumed.status === 200)
+      const native = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'apply', target: { dataplane: 'wrap' } },
+      })
+      save('transition-back-to-native.json', native)
+      check('hermit_can_switch_back_to_native', native.status === 200 && native.json.data.ok)
+      execFileSync('/usr/bin/docker', ['kill', '--signal', 'KILL', vm.runtime.container])
+      check('native_crash_leaves_owned_stale_socket', fs.lstatSync(path.join(run, 'kernel.sock')).isSocket())
+
+      const backToHermit = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+        headers: { cookie },
+        body: { action: 'rollback' },
+      })
+      save('transition-return-to-hermit.json', backToHermit)
+      check('native_switch_can_rollback_to_hermit', backToHermit.status === 200 && backToHermit.json.data.ok)
+    }
+
     if (factory) {
       const inspection = JSON.parse(
         execFileSync('/usr/bin/docker', ['inspect', vm.runtime.container], { encoding: 'utf8' }),
@@ -1098,6 +1333,18 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
           typeof pendingToolID === 'string' && pendingToolID.startsWith('toolu_'),
         )
         save('pending-tool-link.json', { model_id: 'toolu_01HermitRestartPending0001', outer_id: pendingToolID })
+        const blockedSwitch = await api(gw, 'POST', '/api/panel/vms/vm-hermit/kernel-transition', {
+          headers: { cookie },
+          body: {
+            action: 'apply',
+            target: { dataplane: 'hermit', target: 'linux-amd64', version: expected.version + '-bad-tmux' },
+          },
+        })
+        save('transition-tools-pending.json', blockedSwitch)
+        check(
+          'switch_refuses_pending_external_tools',
+          blockedSwitch.status === 409 && blockedSwitch.json.error?.code === 'kernel_tools_pending',
+        )
       }
       const previousRoot = ownerRoot
       gw.child.kill('SIGTERM')
@@ -1435,6 +1682,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     managed_hysteria2: managed,
     control_container: controlMode,
     mock_docker_boundary: !realDocker,
+    production_activation: productionMode,
     real_provider: 'NOT RUN',
     physical_docker: realDocker ? 'RUN' : 'NOT RUN',
   })

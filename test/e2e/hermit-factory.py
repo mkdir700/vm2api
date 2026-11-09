@@ -22,6 +22,7 @@ def sha(path):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--production', action='store_true', help='关闭实验标记，验证生产包激活契约')
     parser.add_argument('--tls', action='store_true', help='通过受管出口验证固定 HTTPS 目标')
     parser.add_argument('--oauth', action='store_true', help='验证 OAuth helper 与刷新后消息续接')
     parser.add_argument('--slot-api-key', action='store_true', help='验证槽位独立 API Key')
@@ -33,6 +34,7 @@ def main():
     parser.add_argument('--managed-image', help='受管 sing-box 镜像完整 ID；启用 Hysteria 2 场景')
     args = parser.parse_args()
     if args.tls and (not args.control_image or not args.managed_image):parser.error('--tls requires actual control and managed images')
+    if args.production and not args.tls:parser.error('--production requires isolated TLS control fixture')
     out = args.out.resolve(); out.mkdir(parents=True, exist_ok=False)
     repo = Path(__file__).resolve().parents[2]
     sources = sorted({*repo.glob('src/**/*.mjs'), *repo.glob('scripts/*.py'), *repo.glob('test/e2e/hermit-*'), *repo.glob('test/fixtures/hermit-*'), repo/'docker/kin-os/ubuntu-24.04/Dockerfile',repo/'deploy/payload.json',repo/'docker-compose.yml',repo/'deploy/init-managed-egress.sh'})
@@ -141,6 +143,7 @@ print(json.dumps({'remote_egress':checks}))
         env = {'PATH':str(args.node.parent)+':/usr/sbin:/usr/bin:/sbin:/bin','HOME':str(out),
             'DOCKER_HOST':inner_env['DOCKER_HOST'],'NODE_NO_WARNINGS':'1',
             'HERMIT_E2E_TLS':'1' if args.tls else '',
+            'HERMIT_E2E_PRODUCTION':'1' if args.production else '',
             'HERMIT_E2E_OAUTH':'1' if args.oauth else '',
             'HERMIT_E2E_SLOT_API_KEY':'1' if args.slot_api_key or args.oauth else '',
             'HERMIT_E2E_FACTORY':'1','HERMIT_E2E_FIXTURE_ROOT':str(fixture/'fixture'),

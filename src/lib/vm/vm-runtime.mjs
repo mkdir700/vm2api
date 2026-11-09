@@ -1018,6 +1018,8 @@ export function dockerSlotResourceArgs(vm, routing) {
 }
 
 export async function startVmRuntime(vm, projectRoot, { recreate = false, routing, accel: accelOpt } = {}) {
+  if (vm.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(vm.kernel_transition.state))
+    return { ok: false, code: 'kernel_transition_pending', error: '内核切换尚未完成，请先回滚' }
   const licensed = checkCragLicense(projectRoot, vm, resolveSlotRouting(projectRoot, routing))
   if (!licensed.ok) return licensed
   if (!isKvmRuntime(vm)) slotDockerCpus(vm) // reject corrupt persisted quotas before any lifecycle changes
@@ -1266,6 +1268,7 @@ export async function startVmRuntime(vm, projectRoot, { recreate = false, routin
       `kin.vm.os=${kernel}`,
       '--label',
       'kin.vm.runtime=docker',
+      ...(vm.kernel_transition_id ? ['--label', `kin.vm.kernel-transition=${vm.kernel_transition_id}`] : []),
       ...(codex ? ['--label', `kin.vm.role=${CODEX_SLOT_ROLE}`] : hermit ? ['--label', 'kin.vm.role=hermit'] : []),
       ...(hermit ? ['-v', `${hostOf(kernelPackageRoot(projectRoot))}:${HERMIT_GUEST_PACKAGES}:ro`] : []),
       '-v',

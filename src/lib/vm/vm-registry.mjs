@@ -94,6 +94,17 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
     dataplane: vm.dataplane || null,
     kernel_package: vm.kernel_package || null,
     pending_kernel_package: vm.pending_kernel_package || null,
+    kernel_transition: vm.kernel_transition
+      ? {
+          id: vm.kernel_transition.id,
+          state: vm.kernel_transition.state,
+          target: vm.kernel_transition.target,
+          previous: vm.kernel_transition.previous,
+          started_at: vm.kernel_transition.started_at,
+          code: vm.kernel_transition.code || null,
+          can_rollback: !['finalized', 'rolled_back'].includes(vm.kernel_transition.state),
+        }
+      : null,
     crag_kernel_version: vm.crag_kernel_version || null,
     kernel_installation: vm.kernel_installation
       ? {

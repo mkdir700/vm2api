@@ -29,6 +29,7 @@ import {
   vmQueryOptions,
 } from '@/features/vm/queries'
 import { useVmPerms } from '@/features/vm/vm-perms'
+import { HermitSlotSwitch } from './kernel-transition-controls'
 
 export function VmEngineEditor({
   id,
@@ -92,7 +93,8 @@ export function VmEngineEditor({
       </div>
       <p className='mt-3 text-xs leading-relaxed text-muted-foreground'>
         运输固定 {HOP_TRANSPORT_LABEL}。{DATAPLANE_HINT} 本槽可在 cli-node 与
-        CRAG v2 之间切换，不改其他槽、不改凭证、不删容器。舰队级 cc / crag
+        CRAG v2 及 Hermit 之间切换。Hermit
+        切换会重建本槽容器，并保留旧容器供回滚。切换不改凭据。舰队级 cc / crag
         legacy 仍在{' '}
         <Link to='/wrap' className='underline underline-offset-4'>
           内核页
@@ -128,6 +130,7 @@ function kernelLabel(vm: Vm) {
   )
     return 'CRAG v2'
   if (vm.resolved_dataplane === 'crag') return 'crag legacy'
+  if (vm.resolved_dataplane === 'hermit') return 'Hermit'
   if (vm.resolved_dataplane === 'cc') return 'cc-node'
   return 'cli-node'
 }
@@ -310,6 +313,7 @@ function SlotKernelSwitch({
           )}
         </div>
       ) : null}
+      <HermitSlotSwitch id={id} disabled={blocked || busy} />
       <ConfirmDialog
         open={pending != null}
         onOpenChange={(open) => {
@@ -318,8 +322,8 @@ function SlotKernelSwitch({
         title={pending === 'v2' ? '本槽切到 CRAG v2？' : '本槽切回 cli-node？'}
         desc={
           pending === 'v2'
-            ? '重启本槽内核。不 docker rm，不改凭证，不影响其他槽。cli-node 保留，可再切回。'
-            : '铺回 wrap kernel 和 cli-node，并重启本槽内核。CRAG v2 文件留在盘上但不再 exec。'
+            ? '切换本槽内核。从 Hermit 切换时重建容器，并保留旧容器供回滚。请先结束工具调用。凭据保持不变。'
+            : '切回 cli-node。从 Hermit 切换时重建容器，并保留旧容器供回滚。请先结束工具调用。凭据保持不变。'
         }
         cancelBtnText='取消'
         confirmText='切换'

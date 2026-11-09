@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import { api } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { KernelTransitionControls } from '@/features/vm/kernel-transition-controls'
 
 type Receipt = {
   archive: { sha256: string; bytes: number }
@@ -16,7 +17,12 @@ type Package = {
   manifest_sha256: string
   acceptance: string
   cli: { version: string }
-  capabilities: { production: boolean }
+  capabilities: {
+    production: boolean
+    helper_integration?: boolean
+    https_upstream?: boolean
+    switch_readiness?: boolean
+  }
 }
 
 export function HermitPackages({ ids }: { ids: string[] }) {
@@ -108,6 +114,7 @@ export function HermitPackages({ ids }: { ids: string[] }) {
         {packages.error && (
           <p className='text-sm text-destructive'>{packages.error.message}</p>
         )}
+        <KernelTransitionControls ids={ids} />
         {packages.data?.items.map((item) => (
           <div
             key={`${item.target}/${item.version}`}
@@ -131,6 +138,22 @@ export function HermitPackages({ ids }: { ids: string[] }) {
             >
               暂存到所选槽位
             </Button>
+            <KernelTransitionControls
+              recovery={false}
+              ids={ids}
+              target={{
+                dataplane: 'hermit',
+                target: item.target,
+                version: item.version,
+              }}
+              disabled={
+                item.acceptance !== 'production' ||
+                !item.capabilities.production ||
+                !item.capabilities.helper_integration ||
+                !item.capabilities.https_upstream ||
+                !item.capabilities.switch_readiness
+              }
+            />
           </div>
         ))}
       </CardContent>

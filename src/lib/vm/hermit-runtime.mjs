@@ -61,13 +61,22 @@ export function assertHermitActivation(vm, manifest) {
   if (isCodexVm(vm)) throw Object.assign(new Error('Codex 槽位不能选择 Hermit'), { code: 'hermit_codex_unsupported' })
   if (vm.node_id || runtimeKind(vm) !== 'docker')
     throw Object.assign(new Error('当前只验收本机 Docker 执行接口'), { code: 'hermit_placement_unsupported' })
-  // 生产激活尚未验收。实验开关和显式上游地址仍为必要条件。
-  if (process.env.KIN_KERNEL_TEST_ENDPOINTS !== '1' || !process.env.KIN_HERMIT_UPSTREAM_URL) {
+  const laboratory = process.env.KIN_KERNEL_TEST_ENDPOINTS === '1' && !!process.env.KIN_HERMIT_UPSTREAM_URL
+  if (
+    !laboratory &&
+    (manifest.acceptance !== 'production' ||
+      manifest.capabilities.production !== true ||
+      manifest.capabilities.helper_integration !== true ||
+      manifest.capabilities.https_upstream !== true ||
+      manifest.capabilities.switch_readiness !== true)
+  ) {
     throw Object.assign(new Error('当前 Hermit 包只完成模拟验收，不能激活生产槽位'), {
       code: 'hermit_activation_unqualified',
     })
   }
   const urls = hermitUpstreamURLs()
+  if (!laboratory && !urls.https)
+    throw Object.assign(new Error('生产槽位需要固定 HTTPS 上游'), { code: 'hermit_environment_unsupported' })
   if (urls.https) hermitExtraCA()
   if (manifest.target !== 'linux-amd64')
     throw Object.assign(new Error('Hermit 实验环境不匹配'), { code: 'hermit_environment_unsupported' })
