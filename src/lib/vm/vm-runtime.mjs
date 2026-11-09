@@ -24,6 +24,7 @@ import { workerPaths as transportWorkerPaths } from '../transport/go-worker-clie
 import {
   assertCliHopAllowed,
   resolveKernelDataplane,
+  resolveSessionSlots,
   resolveCragKernelVersion,
   resolveOfficialCcInference,
   resolveSlotPersonaPreset,
@@ -1242,7 +1243,8 @@ export async function startVmRuntime(
       ...(hermit ? ['--init'] : []),
       ...dockerSlotResourceArgs(vm, resolvedRouting),
       '--pids-limit',
-      '256',
+      // 每个 Hermit 会话沿用单会话的进程预算。其他内核保持原上限。
+      String(hermit ? 256 * resolveSessionSlots(vm, resolvedRouting) : 256),
       '--user',
       runtimeUser(vm),
       ...(typeof process.getuid === 'function' && process.getuid() === 0

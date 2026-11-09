@@ -740,6 +740,7 @@ export class FailoverRunner {
     // put this session back into session_slots. VM / account memory and its
     // original sticky expiry stay.
     const releaseStickySlots = () => {
+      if (lastSelected?.retainsSeat?.()) return
       if (!this.stickyRouter?.bind) return
       for (const key of bindKeys) {
         if (pinMoved(key)) continue
@@ -1055,6 +1056,7 @@ export class FailoverRunner {
           }
         }
         if (verifiedSuccess(result)) {
+          selected.setPendingTools?.((result.stopReason || result.body?.stop_reason) === 'tool_use')
           if (repairKey && (knownSearchRepair || searchRepair?.key === repairKey)) {
             this.searchRepairs.delete(repairKey)
             while (this.searchRepairs.size >= SEARCH_REPAIR_LIMIT) {

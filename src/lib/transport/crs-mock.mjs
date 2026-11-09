@@ -63,7 +63,14 @@ function message({ text, stop = 'end_turn', content = null }) {
 }
 
 export function mockCrsPayload(options = {}) {
-  const scenario = options.scenario || process.env.KIN_MOCK_SCENARIO || 'text'
+  let scenario = options.scenario || process.env.KIN_MOCK_SCENARIO || 'text'
+  if (scenario === 'tool_cycle') {
+    scenario = options.body?.messages?.some(
+      (message) => Array.isArray(message.content) && message.content.some((block) => block.type === 'tool_result'),
+    )
+      ? 'text'
+      : 'tool_use'
+  }
   const text = process.env.KIN_MOCK_TEXT || 'pong'
   if (scenario === 'error') {
     return {

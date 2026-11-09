@@ -599,7 +599,7 @@ async function callGoWorkerAdmitted({
     })
     reportEnvelope(onEnvelope, { body: outboundBody, headers })
     writeCrsTrace({ body: outboundBody, headers, stream: false })
-    const mock = mockCrsPayload({ scenario: mockScenario(exec) })
+    const mock = mockCrsPayload({ scenario: mockScenario(exec), body })
     return {
       ...mock,
       via: 'go-worker-mock',
@@ -759,7 +759,7 @@ async function streamGoWorkerAdmitted({
         committed: true,
       }
     }
-    const payload = mockCrsPayload({ scenario })
+    const payload = mockCrsPayload({ scenario, body })
     if (!payload.ok) {
       return {
         ...payload,

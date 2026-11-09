@@ -935,6 +935,12 @@ export class PoolScheduler extends EventEmitter {
       reservation: {
         ...reservation,
         slotIndex: seat.index,
+        retainsSeat: () => seat.live && seat.pendingTools === true,
+        setPendingTools: (pending) => {
+          if (candidate.vm?.dataplane !== 'hermit' || candidate.vm?.kernel_package?.native_session_pool !== true) return
+          seat.pendingTools = !!pending
+          this.planner.changed()
+        },
         release: () => {
           if (released) return
           released = true

@@ -152,6 +152,7 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
       const record = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json')))
       check(`install_${i}_stopped`, record.status === 'stopped' && record.runtime.stopped && record.schedule_off)
       check(`install_${i}_binding`, record.dataplane === 'hermit' && record.kernel_package.version === '0.1.0-ui-e2e')
+      check(`install_${i}_legacy_capacity`, record.kernel_package.native_session_pool !== true)
       check(`install_${i}_credentials`, JSON.stringify(record.claude) === JSON.stringify(vm.claude))
       check(
         `install_${i}_finalized`,
@@ -172,6 +173,7 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
       `http://127.0.0.1:${upstream.address().port}/cli`,
       createHash('sha256').update(cli).digest('hex'),
       'production',
+      'pool',
     ])
     const nextReceipt = JSON.parse(fs.readFileSync(path.join(next, 'release.json')))
     const oldDir = path.join(project, 'share/kernel-packages/versions/hermit/linux-amd64/0.1.0-ui-e2e')
@@ -200,6 +202,12 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
       updated.json.data.items[0].ok && updated.json.data.items[0].version === '0.2.0-ui-e2e',
     )
     check('reinstall_removes_unused_deployed_files', !fs.existsSync(oldDir))
+    const poolRecord = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json')))
+    check('pool_capability_persisted', poolRecord.kernel_package.native_session_pool === true)
+    const poolView = await api(gw, 'GET', `/api/panel/vms/${vm.id}`, { headers })
+    fs.writeFileSync(path.join(artifact, 'pool-view.json'), JSON.stringify(poolView.json, null, 2))
+    const poolData = poolView.json.data?.vm || poolView.json.data || poolView.json
+    check('new_package_exposes_twenty_seats', poolData.session_slots === 20 && poolData.seats_max === 20)
     const beforeFailure = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json')))
     const invalidBatch = await install([target, { id: 'vm-other', kernel: 'hermit' }])
     check(
@@ -233,6 +241,19 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
       native.status === 200 && native.json.data.items[0].code === 'cli_node_package_missing',
     )
     const commands = fs.readFileSync(path.join(project, 'docker-commands.jsonl'), 'utf8')
+    const created = commands
+      .trim()
+      .split('\n')
+      .map((line) => JSON.parse(line))
+      .filter((args) => args[0] === 'run' && args.includes('--name'))
+    check(
+      'legacy_package_keeps_single_session_pid_budget',
+      created.some((args) => args[args.indexOf('--pids-limit') + 1] === '256'),
+    )
+    check(
+      'pool_package_scales_pid_budget',
+      created.some((args) => args[args.indexOf('--pids-limit') + 1] === '5120'),
+    )
     fs.writeFileSync(path.join(artifact, 'docker-commands.jsonl'), commands)
     check('hermit_mount_created', commands.includes('/opt/kin-kernel-packages'))
     fs.writeFileSync(

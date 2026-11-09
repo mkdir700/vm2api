@@ -65,8 +65,8 @@ export function normalizeSessionSlots(value, fallback = SESSION_SLOT_MAX) {
 }
 
 export function resolveSessionSlots(vm, routing = {}) {
-  // 当前原生内核每个进程只拥有一个外层会话，不能继承 wrap 的 20 会话容量。
-  if (resolveKernelDataplane(vm, routing) === 'hermit') return 1
+  // 仅已安装包声明会话池能力时，Hermit 才能继承 VM 的席位容量。
+  if (resolveKernelDataplane(vm, routing) === 'hermit' && vm?.kernel_package?.native_session_pool !== true) return 1
   return normalizeSessionSlots(vm?.policy?.sessionSlots ?? vm?.session_slots, routing?.inference?.session_slots)
 }
 

@@ -854,7 +854,8 @@ export function writeKernelConfig(
   vm,
   { token, proxyUrl, proxyRequired, officialCcInference, timezone, routing, publish = true } = {},
 ) {
-  if (resolveKernelDataplane(vm, routing || {}) === 'hermit') return writeHermitKernelConfig(projectRoot, vm)
+  if (resolveKernelDataplane(vm, routing || {}) === 'hermit')
+    return writeHermitKernelConfig(projectRoot, vm, { routing })
   // Callers pass partial vm snapshots; persisted placement owns the guest run mount.
   const record = getVm(projectRoot, vm.id) || vm
 

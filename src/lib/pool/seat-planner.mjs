@@ -7,10 +7,9 @@
  * device are two seats. Seat capacity is the VM's `session_slots`;
  * concurrency and RPM stay with PoolScheduler.reserve().
  *
- * A seat stays taken after its last request ends. It frees only when sticky
- * TTL expires, or when the scheduler drops it because the home left the pool
- * (unschedulable, quota, credential, failover). `graceMs` is unused; the
- * field remains so older routing config still loads.
+ * A completed dialog releases its seat. A native Hermit tool continuation
+ * keeps its seat until the next verified response ends the tool loop.
+ * Sticky VM memory has its own TTL. `graceMs` is unused.
  *
  * Queues:
  *   vmQueue[vm]  `conc` tickets: a seated session waiting for VM concurrency.
@@ -276,7 +275,7 @@ export class SeatPlanner {
    * slot is free now. `heldUntil` is a restart handoff only.
    */
   finishDialog(seat) {
-    if (!seat?.live || seat.inflight !== 0 || seat.timer) return
+    if (!seat?.live || seat.inflight !== 0 || seat.timer || seat.pendingTools) return
     if (this.followUpWaiting(seat)) return
     const stored = Number(seat.heldUntil)
     const until = stored > Date.now() ? stored : 0
@@ -530,7 +529,7 @@ function sessionView(seat) {
   return {
     index: seat.index,
     session_id: id.startsWith('seat:sess:') ? id.slice('seat:sess:'.length) : id,
-    state: seat.inflight > 0 ? 'active' : held ? 'held' : 'idle',
+    state: seat.inflight > 0 ? 'active' : seat.pendingTools ? 'waiting_tools' : held ? 'held' : 'idle',
     inflight: seat.inflight,
     held_until: seat.heldUntil ?? seat.graceUntil ?? null,
   }

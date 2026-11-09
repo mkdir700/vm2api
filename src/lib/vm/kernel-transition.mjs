@@ -165,6 +165,8 @@ async function prepare(project, vm, target, routing) {
         '当前 Hermit 包不支持工具参数流式，请安装具有 eager_tool_streaming 能力的版本',
       )
     desired.kernel_package = { ...binding, manifest_sha256: installed.manifest_sha256 }
+    if (installed.manifest.capabilities.native_session_pool === true) desired.kernel_package.native_session_pool = true
+    else delete desired.kernel_package.native_session_pool
     delete desired.crag_kernel_version
   } else {
     if (!['wrap', 'crag'].includes(target.dataplane))

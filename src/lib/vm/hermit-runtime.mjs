@@ -6,6 +6,8 @@ import { runtimeKind } from './runtime-kind.mjs'
 import { isCodexVm } from './vm-kind.mjs'
 import { credentialModeOfVm, looksLikeConsoleApiKey } from '../oauth/credential-mode.mjs'
 import { readWorkerCredentialFile, slotWorkerCredentialPath, runtimeFileOwner } from '../oauth/oauth-credentials.mjs'
+import { readRoutingConfigFile } from '../core/config.mjs'
+import { resolveSessionSlots, normalizeSessionIdleTtlSeconds } from './slot-engine.mjs'
 
 export const HERMIT_GUEST_PACKAGES = '/opt/kin-kernel-packages'
 const name = (value) => typeof value === 'string' && /^[A-Za-z0-9][A-Za-z0-9.+-]{0,79}$/.test(value)
@@ -159,7 +161,7 @@ function privateFile(file, body, vm) {
     if (process.getuid?.() === 0) fs.chownSync(file, owner.uid, owner.gid)
   } catch {}
 }
-export function writeHermitKernelConfig(project, vm, { force = false } = {}) {
+export function writeHermitKernelConfig(project, vm, { force = false, routing } = {}) {
   const binding = hermitBinding(vm)
   const paths = hermitPackagePaths(project, binding)
   const manifest = JSON.parse(fs.readFileSync(path.join(paths.payload, 'manifest.json'), 'utf8'))
@@ -185,8 +187,19 @@ export function writeHermitKernelConfig(project, vm, { force = false } = {}) {
   privateFile(tokenPath, token + '\n', vm)
   if (force || !fs.existsSync(configPath)) {
     const root = `/run/kin/h-${crypto.randomBytes(5).toString('hex')}`
+    const poolRouting =
+      manifest.capabilities.native_session_pool === true ? routing || readRoutingConfigFile(project) : null
     if (ca) privateFile(path.join(runDir, 'native-ca.pem'), ca, vm)
     const body = {
+      ...(manifest.capabilities.native_session_pool === true
+        ? {
+            session_capacity: resolveSessionSlots(
+              { ...vm, kernel_package: { ...binding, native_session_pool: true } },
+              poolRouting,
+            ),
+            session_idle_ttl_seconds: normalizeSessionIdleTtlSeconds(poolRouting.inference?.session_idle_ttl_seconds),
+          }
+        : {}),
       session: {
         root,
         managed: {
