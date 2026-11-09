@@ -122,28 +122,30 @@ test('managed import persists through the real panel API without exposing listen
       body: { host_id: 'remote-node', link: `hy2://${secret}@localhost/` },
     })
     assert.equal(deniedRemote.status, 403)
-    assert.equal(deniedRemote.json.error.code, 'admin_required')
+    assert.equal(deniedRemote.json.error.code, 'forbidden')
     const owned = await api(gateway, 'POST', '/api/panel/proxies/import', {
       headers: userHeaders,
       body: { link: `hy2://${secret}@localhost/`, owner_user_id: 'fake-owner' },
     })
-    assert.equal(owned.status, 200, owned.text)
-    const ownedId = (owned.json.data || owned.json).items[0].id
-    assert.equal((owned.json.data || owned.json).items[0].owner_user_id, ownerId)
+    assert.equal(owned.status, 403, owned.text)
+    assert.equal(owned.json.error.code, 'forbidden')
+    assert.ok(!owned.text.includes(secret))
+    const assigned = await api(gateway, 'POST', '/api/panel/proxies/import', {
+      body: { link: `hy2://${secret}@localhost/` },
+    })
+    assert.equal(assigned.status, 200, assigned.text)
+    const ownedId = (assigned.json.data || assigned.json).items[0].id
+    assert.equal((assigned.json.data || assigned.json).items[0].owner_user_id, null)
     const deniedApply = await api(gateway, 'POST', '/api/panel/proxies/apply', { headers: userHeaders })
     assert.equal(deniedApply.status, 403)
     assert.equal((await api(gateway, 'POST', '/api/panel/proxies/recover', { headers: userHeaders })).status, 403)
     const denied = await api(gateway, 'DELETE', `/api/panel/proxies/${rows[0].id}`, { headers: userHeaders })
     assert.ok([403, 404].includes(denied.status), denied.text)
     const userList = await api(gateway, 'GET', '/api/panel/proxies', { headers: userHeaders })
-    assert.equal(userList.status, 200)
-    assert.ok(
-      (userList.json.data || userList.json).proxies.every(
-        (item) => !Object.hasOwn(item, 'managed_host_id') && !Object.hasOwn(item, 'managed_host_name'),
-      ),
-    )
-    assert.ok(!(userList.json.data || userList.json).proxies.some((item) => rows.some((row) => row.id === item.id)))
-    const deleted = await api(gateway, 'DELETE', `/api/panel/proxies/${ownedId}`, { headers: userHeaders })
+    assert.equal(userList.status, 403)
+    assert.ok(!userList.text.includes(secret))
+    assert.equal((await api(gateway, 'DELETE', `/api/panel/proxies/${ownedId}`, { headers: userHeaders })).status, 403)
+    const deleted = await api(gateway, 'DELETE', `/api/panel/proxies/${ownedId}`)
     assert.equal(deleted.status, 200, deleted.text)
     assert.equal((deleted.json.data || deleted.json).application_status, 'pending')
     assert.equal((await api(gateway, 'POST', '/api/panel/proxies/apply')).status, 409)

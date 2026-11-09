@@ -8,11 +8,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { validTimezone } from '../core/timezone.mjs'
 import { normalizeAuthScheme } from '../oauth/auth-scheme.mjs'
-import {
-  persistOauthToVm,
-  readWorkerCredentialFile,
-  writeWorkerCredentialFile,
-} from '../oauth/oauth-credentials.mjs'
+import { persistOauthToVm, readWorkerCredentialFile, writeWorkerCredentialFile } from '../oauth/oauth-credentials.mjs'
 import { oauthToSub2apiExport, sub2apiAccountToOauth } from '../oauth/sub2api-account.mjs'
 import { parseScheduleLevelInput } from '../pool/credential-weight.mjs'
 import { applyScheduleOff, applyUnschedulable, migrateScheduleRecord } from '../pool/schedule-state.mjs'
@@ -40,8 +36,10 @@ import { normalizeVmConfig, resolveMachineSpec } from './machine-spec.mjs'
 import {
   SESSION_SLOT_MAX,
   SESSION_SLOT_MIN,
+  normalizeCragKernelVersion,
   normalizeKernelDataplane,
   normalizeSlotPersonaPreset,
+  parseCragKernelVersionPatch,
   parseKernelDataplanePatch,
 } from './slot-engine.mjs'
 export const VM_PACKAGE_TYPE = 'vm2api-vm-package'
@@ -187,6 +185,7 @@ export function buildVmPackage({
       persona_preset: personaOf(vm.persona_preset) || '',
       inference_engine: engineOf(vm.inference_engine) || '',
       dataplane: normalizeKernelDataplane(vm.dataplane, { inherit: true }) || '',
+      crag_kernel_version: normalizeCragKernelVersion(vm.crag_kernel_version, { inherit: true }) || '',
       auth_scheme: codex ? '' : normalizeAuthScheme(vm.claude?.auth_scheme || vm.auth_scheme),
       proxy_cli_enabled: hasBoundExit(proxy || vm.proxy),
       schedulable: operatorSchedulable(vm),
@@ -220,8 +219,7 @@ function parsePolicy(raw, codex) {
     value.maxConcurrency = raw.maxConcurrency
     value.concurrencyOverride = raw.concurrencyOverride !== false
   } else if (has(raw, 'concurrencyOverride')) {
-    if (typeof raw.concurrencyOverride !== 'boolean')
-      return fail('invalid_package', 'concurrencyOverride 必须是布尔')
+    if (typeof raw.concurrencyOverride !== 'boolean') return fail('invalid_package', 'concurrencyOverride 必须是布尔')
     value.concurrencyOverride = raw.concurrencyOverride
   }
   if (has(raw, 'maxRpm')) {
@@ -316,8 +314,7 @@ function parseProxy(raw) {
 
 function parseCredential(raw, codex) {
   if (raw == null) return { ok: true, value: null }
-  if (typeof raw !== 'object' || Array.isArray(raw))
-    return fail('invalid_package', 'credential 必须是对象或 null')
+  if (typeof raw !== 'object' || Array.isArray(raw)) return fail('invalid_package', 'credential 必须是对象或 null')
   const platform = cleanText(raw.platform, 16).toLowerCase()
   if (codex || platform === 'openai') {
     if (!codex) return fail('credential_kind_mismatch', 'Claude 槽的包不能带 Codex 凭证')
@@ -341,8 +338,7 @@ function parseCredential(raw, codex) {
 }
 
 export function parseVmPackage(doc) {
-  if (!doc || typeof doc !== 'object' || Array.isArray(doc))
-    return fail('invalid_package', '包必须是 JSON 对象')
+  if (!doc || typeof doc !== 'object' || Array.isArray(doc)) return fail('invalid_package', '包必须是 JSON 对象')
   if (doc.type !== VM_PACKAGE_TYPE || doc.version !== VM_PACKAGE_VERSION) {
     return fail('invalid_package', '不是 vm2api 单槽包')
   }
@@ -370,6 +366,8 @@ export function parseVmPackage(doc) {
   if (persona == null) return fail('invalid_package', 'persona_preset 无效')
   const dataplane = parseKernelDataplanePatch(vm.dataplane)
   if (!dataplane.ok) return fail('invalid_package', dataplane.error || 'dataplane 无效')
+  const cragVersion = parseCragKernelVersionPatch(vm.crag_kernel_version)
+  if (!cragVersion.ok) return fail('invalid_package', cragVersion.error || 'crag_kernel_version 无效')
   const policy = parsePolicy(vm.policy, codex)
   if (!policy.ok) return policy
   const proxy = parseProxy(doc.proxy)
@@ -396,13 +394,13 @@ export function parseVmPackage(doc) {
         persona_preset: persona,
         inference_engine: engine,
         dataplane: dataplane.value,
+        crag_kernel_version: cragVersion.value,
         auth_scheme: auth,
         proxy_cli_enabled: vm.proxy_cli_enabled === true,
         schedulable: vm.schedulable !== false,
         schedule_manual: vm.schedule_manual === true,
         policy: policy.value,
-        seed_policy:
-          vm.seed_policy && typeof vm.seed_policy === 'object' ? defaultSeedPolicy(vm.seed_policy) : null,
+        seed_policy: vm.seed_policy && typeof vm.seed_policy === 'object' ? defaultSeedPolicy(vm.seed_policy) : null,
       },
       proxy: proxy.value,
       credential: credential.value,
@@ -473,6 +471,8 @@ function applyTraits(vm, spec) {
   else delete vm.inference_engine
   if (traits.dataplane) vm.dataplane = traits.dataplane
   else delete vm.dataplane
+  if (traits.crag_kernel_version) vm.crag_kernel_version = traits.crag_kernel_version
+  else delete vm.crag_kernel_version
   if (!spec.codex) {
     vm.claude = vm.claude && typeof vm.claude === 'object' ? vm.claude : {}
     if (traits.auth_scheme) vm.claude.auth_scheme = traits.auth_scheme
@@ -637,14 +637,12 @@ export async function commitVmPackage({
   const create = mode === 'create'
   let id = create ? spec.id : targetId
   let renamedFrom = null
-  if (!isValidVmId(id))
-    return { ok: false, status: 400, error: { code: 'invalid_id', message: 'vm.id 无效' } }
+  if (!isValidVmId(id)) return { ok: false, status: 400, error: { code: 'invalid_id', message: 'vm.id 无效' } }
   if (create && fs.existsSync(path.join(projectRoot, 'vms', `${id}.json`))) {
     renamedFrom = id
     id = nextFreePackageVmId(projectRoot, occupied)
     const oldLabel = slotLabel(renamedFrom)
-    if (!spec.vm.name || spec.vm.name === oldLabel || spec.vm.name === renamedFrom)
-      spec.vm.name = slotLabel(id)
+    if (!spec.vm.name || spec.vm.name === oldLabel || spec.vm.name === renamedFrom) spec.vm.name = slotLabel(id)
   }
   const file = path.join(projectRoot, 'vms', `${id}.json`)
   if (!create && !fs.existsSync(file)) {

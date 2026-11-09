@@ -8,11 +8,20 @@ import path from 'node:path'
 const root = fileURLToPath(new URL('../', import.meta.url))
 const dir = path.join(root, '.tmp/managed-egress-e2e')
 const names = [
-  'receipt.json', 'api-receipt.json', 'admission-receipt.json',
-  'probe-receipt.json', 'helper-receipt.json', 'remote-endpoint-receipt.json',
-  'package-receipt.json', 'linux-receipt.json', 'compose-receipt.json',
-  'independent-host-receipt.json', 'public-remote-receipt.json',
-  'image-upgrade-receipt.json', 'installer-receipt.json', 'host-reboot-receipt.json',
+  'receipt.json',
+  'api-receipt.json',
+  'admission-receipt.json',
+  'probe-receipt.json',
+  'helper-receipt.json',
+  'remote-endpoint-receipt.json',
+  'package-receipt.json',
+  'linux-receipt.json',
+  'compose-receipt.json',
+  'independent-host-receipt.json',
+  'public-remote-receipt.json',
+  'image-upgrade-receipt.json',
+  'installer-receipt.json',
+  'host-reboot-receipt.json',
 ]
 const hash = (bytes) => createHash('sha256').update(bytes).digest('hex')
 const receipts = []
@@ -67,8 +76,17 @@ const artifact = {
   remaining_gates: ['real_provider_and_claude_requests', 'user_visual_acceptance'],
   runtime_receipts: receipts.length,
   source_entries: receipts.reduce((sum, r) => sum + r.source_entries, 0),
-  receipts, links, problems,
+  receipts,
+  links,
+  problems,
 }
 await writeFile(path.join(dir, 'completion-audit.json'), `${JSON.stringify(artifact, null, 2)}\n`)
-console.log(JSON.stringify({ provenance_status: artifact.provenance_status, runtime_receipts: artifact.runtime_receipts, source_entries: artifact.source_entries, problems }))
+console.log(
+  JSON.stringify({
+    provenance_status: artifact.provenance_status,
+    runtime_receipts: artifact.runtime_receipts,
+    source_entries: artifact.source_entries,
+    problems,
+  }),
+)
 if (problems.length) process.exitCode = 1

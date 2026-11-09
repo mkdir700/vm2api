@@ -440,12 +440,16 @@ else if (args[0] !== 'restart') process.exit(2);
 `,
       { mode: 0o700 },
     )
-    await writeFile(path.join(fixtureBin, 'iptables'), String.raw`#!/usr/bin/env node
+    await writeFile(
+      path.join(fixtureBin, 'iptables'),
+      String.raw`#!/usr/bin/env node
 const fs = require('node:fs');
 const fixture = JSON.parse(fs.readFileSync(process.env.MANAGED_DOCKER_FIXTURE, 'utf8'));
 // Command contract only. Real Linux rules/traffic are covered by separate E2Es.
 if (!process.argv.slice(2).includes('-C') || !fixture.networks?.length) process.exit(2);
-`, { mode: 0o700 })
+`,
+      { mode: 0o700 },
+    )
     const saveFixture = () => writeFile(dockerFixturePath, JSON.stringify(fixture))
     await writeFile(
       path.join(fixtureBin, 'ss'),
@@ -803,11 +807,18 @@ process.stdout.write(f.ssRaw ?? (f.busyPorts || []).map(port => 'LISTEN 0 128 12
           },
         ]
         const routingNames = slotEgressNames('vm-one')
-        fixture.networks = [{ Name: routingNames.network, Driver: 'bridge',
-          Labels: { 'kin.egress.vm': 'vm-one' },
-          Options: { 'com.docker.network.bridge.name': routingNames.bridge,
-            'com.docker.network.bridge.enable_ip_masquerade': 'false' },
-          IPAM: { Config: [{ Subnet: '172.29.0.0/24' }] } }]
+        fixture.networks = [
+          {
+            Name: routingNames.network,
+            Driver: 'bridge',
+            Labels: { 'kin.egress.vm': 'vm-one' },
+            Options: {
+              'com.docker.network.bridge.name': routingNames.bridge,
+              'com.docker.network.bridge.enable_ip_masquerade': 'false',
+            },
+            IPAM: { Config: [{ Subnet: '172.29.0.0/24' }] },
+          },
+        ]
         fixture.controlSocket = remotePath
         fixture.ids = []
         await saveFixture()

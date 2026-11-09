@@ -740,13 +740,19 @@ test('two real Hysteria 2 routes isolate upstream failure without direct fallbac
         })
       await delay(30)
       assert.equal(editFinished, false, 'a distinct edit must wait for the draining apply')
-      assert.equal(applyingPool.state.proxies.find((row) => row.id === exits[0].id).managed_config.password, exits[0].config.password)
+      assert.equal(
+        applyingPool.state.proxies.find((row) => row.id === exits[0].id).managed_config.password,
+        exits[0].config.password,
+      )
       releaseOrigin()
       assert.equal(await pendingRequest, 'controlled-origin')
       pendingRequest = null
       assert.equal((await drainingApply).ok, true)
       assert.equal((await concurrentEdit).ok, true)
-      assert.equal(applyingPool.state.proxies.find((row) => row.id === exits[0].id).managed_config.password, 'concurrent-wrong-upstream')
+      assert.equal(
+        applyingPool.state.proxies.find((row) => row.id === exits[0].id).managed_config.password,
+        'concurrent-wrong-upstream',
+      )
       assert.equal(applyingPool.snapshot().proxies.find((row) => row.id === exits[0].id).application_status, 'pending')
       assert.equal(await readFile(path.join(hostDir, 'config.json'), 'utf8'), active)
       for (const exit of exits) assert.equal(await request(exit), 'controlled-origin')
@@ -754,7 +760,10 @@ test('two real Hysteria 2 routes isolate upstream failure without direct fallbac
       assert.equal(rejectedEdit.ok, false)
       assert.equal(rejectedEdit.error, 'managed_apply_failed_rolled_back')
       for (const exit of exits) assert.equal(await request(exit), 'controlled-origin')
-      assert.equal((await applyingPool.updateManaged(exits[0].id, { config: { password: exits[0].config.password } })).ok, true)
+      assert.equal(
+        (await applyingPool.updateManaged(exits[0].id, { config: { password: exits[0].config.password } })).ok,
+        true,
+      )
       assert.equal((await applyingPool.applyManaged()).ok, true)
       assert.equal(applyingPool.getProxyByIdWithAuth(exits[0].id).port, exits[0].port)
       assert.equal(applyingPool.getProxyByIdWithAuth(exits[0].id).password, exits[0].password)
@@ -1002,7 +1011,8 @@ test('two real Hysteria 2 routes isolate upstream failure without direct fallbac
               'read-only startup reconciliation, isolated node failure, shared-process failure and recovery passed',
             lifecycle:
               'serialized apply, drain timeout, verified rollback, failed rollback isolation and recovery passed',
-            concurrent_distinct_edit: 'edit queued during held-request drain; later desired config remains pending; old route preserved; bad edit rolls back; corrected edit applies with stable listener',
+            concurrent_distinct_edit:
+              'edit queued during held-request drain; later desired config remains pending; old route preserved; bad edit rolls back; corrected edit applies with stable listener',
             wrong_listener_auth: 'rejected',
             upstream_failure: 'isolated',
             client_stop: 'no direct fallback',

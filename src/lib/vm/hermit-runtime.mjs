@@ -33,11 +33,28 @@ const HERMIT_API_ORIGIN = 'https://api.anthropic.com'
 const HERMIT_TOKEN_URL = 'https://platform.claude.com/v1/oauth/token'
 function hermitUpstreamURLs() {
   const upstream = process.env.KIN_HERMIT_UPSTREAM_URL || HERMIT_API_ORIGIN
-  const invalid = () => Object.assign(new Error('Hermit 上游地址不符合固定 HTTPS 或回环实验要求'), { code: 'hermit_environment_unsupported' })
+  const invalid = () =>
+    Object.assign(new Error('Hermit 上游地址不符合固定 HTTPS 或回环实验要求'), {
+      code: 'hermit_environment_unsupported',
+    })
   if (upstream === HERMIT_API_ORIGIN) return { upstream, token: HERMIT_TOKEN_URL, https: true }
   let url
-  try { url = new URL(upstream) } catch { throw invalid() }
-  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' || url.username || url.password || url.search || url.hash || upstream.includes('?') || upstream.includes('#')) throw invalid()
+  try {
+    url = new URL(upstream)
+  } catch {
+    throw invalid()
+  }
+  if (
+    url.protocol !== 'http:' ||
+    url.hostname !== '127.0.0.1' ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    upstream.includes('?') ||
+    upstream.includes('#')
+  )
+    throw invalid()
   return { upstream, token: upstream.replace(/\/$/, '') + '/v1/oauth/token', https: false }
 }
 export function assertHermitActivation(vm, manifest) {
@@ -52,7 +69,8 @@ export function assertHermitActivation(vm, manifest) {
   }
   const urls = hermitUpstreamURLs()
   if (urls.https) hermitExtraCA()
-  if (manifest.target !== 'linux-amd64') throw Object.assign(new Error('Hermit 实验环境不匹配'), { code: 'hermit_environment_unsupported' })
+  if (manifest.target !== 'linux-amd64')
+    throw Object.assign(new Error('Hermit 实验环境不匹配'), { code: 'hermit_environment_unsupported' })
   if (urls.https && manifest.capabilities.https_upstream !== true)
     throw Object.assign(new Error('当前 Hermit 包没有固定 HTTPS 能力'), { code: 'hermit_https_unsupported' })
 }
@@ -62,14 +80,17 @@ function hermitExtraCA() {
   const invalid = () => Object.assign(new Error('Hermit CA 文件无效'), { code: 'hermit_ca_invalid' })
   try {
     const stat = fs.lstatSync(file)
-    if (!path.isAbsolute(file) || path.normalize(file) !== file || !stat.isFile() || stat.size > 1024 * 1024) throw invalid()
+    if (!path.isAbsolute(file) || path.normalize(file) !== file || !stat.isFile() || stat.size > 1024 * 1024)
+      throw invalid()
     const data = fs.readFileSync(file)
     if (data.length > 1024 * 1024) throw invalid()
     const certificates = data.toString('utf8').match(/-----BEGIN CERTIFICATE-----[\s\S]+?-----END CERTIFICATE-----/g)
     if (!certificates?.length) throw invalid()
     for (const certificate of certificates) new crypto.X509Certificate(certificate)
     return data
-  } catch { throw invalid() }
+  } catch {
+    throw invalid()
+  }
 }
 export function hermitAuthentication(project, vm, { allowOAuth = false } = {}) {
   const invalid = () =>

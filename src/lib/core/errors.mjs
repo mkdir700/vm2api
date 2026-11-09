@@ -54,6 +54,7 @@ export const ErrorCode = {
   API_KEY_QUOTA_EXHAUSTED: 'api_key_quota_exhausted',
   API_KEY_RATE_LIMIT: 'api_key_rate_limit',
   API_KEY_CONCURRENCY_LIMIT: 'api_key_concurrency_limit',
+  API_KEY_MODEL_NOT_ALLOWED: 'api_key_model_not_allowed',
   KEY_GROUP_MISMATCH: 'key_group_mismatch',
   VM_POOL_UNAVAILABLE: 'vm_pool_unavailable',
   API_BACKEND_FORBIDDEN: 'api_backend_forbidden',
@@ -432,6 +433,14 @@ export function mapUpstreamError(status, body, headers = {}) {
     (upType ? body?.message : null) ||
     body?.raw ||
     null
+  if (/^license_(required|expired|not_yet_valid|invalid|binding_mismatch|unconfigured)$/.test(inboundCode)) {
+    return makeError({
+      type: ErrorType.PERMISSION,
+      code: inboundCode,
+      message: String(msg || 'CRAG registration is required.'),
+      status: 403,
+    })
+  }
   if (inboundCode === ErrorCode.FABLE_REQUIRES_MAX) {
     return makeError({
       type: ErrorType.RATE_LIMIT,

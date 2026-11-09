@@ -290,12 +290,24 @@ export async function buildUpdateStatus({ projectRoot: root, currentVersion, upg
   const current = currentVersion || readLocalVersion(project)
   if (process.env.VM2API_SLOT_RUNTIME === 'hermit') {
     return {
-      current, current_tag: normalizeTag(current), latest: null, latest_tag: null,
-      update_available: false, check_status: 'managed', published_at: null,
-      html_url: 'https://github.com/mkdir700/vm2api', name: 'Hermit 集成镜像',
-      notes: '请在部署主机重新运行 Hermit 部署命令。', changelog: [], needs_wrap_cli_sync: false,
-      upgrade_command: '', check_command: '', repo: 'mkdir700/vm2api', source_error: null,
-      managed_runtime: 'hermit', ...(upgrade ? { upgrade } : {}),
+      current,
+      current_tag: normalizeTag(current),
+      latest: null,
+      latest_tag: null,
+      update_available: false,
+      check_status: 'managed',
+      published_at: null,
+      html_url: 'https://github.com/mkdir700/vm2api',
+      name: 'Hermit 集成镜像',
+      notes: '请在部署主机重新运行 Hermit 部署命令。',
+      changelog: [],
+      needs_wrap_cli_sync: false,
+      upgrade_command: '',
+      check_command: '',
+      repo: 'mkdir700/vm2api',
+      source_error: null,
+      managed_runtime: 'hermit',
+      ...(upgrade ? { upgrade } : {}),
     }
   }
   const entries = loadChangelog(project)
@@ -454,10 +466,13 @@ export async function startHostUpgrade({
   now,
 } = {}) {
   if ((env?.VM2API_SLOT_RUNTIME ?? process.env.VM2API_SLOT_RUNTIME) === 'hermit') {
-    return { status: 409, error: {
-      code: 'managed_hermit_deployment',
-      message: 'Hermit 集成部署不支持上游升级。请在部署主机重新运行 Hermit 部署命令。',
-    } }
+    return {
+      status: 409,
+      error: {
+        code: 'managed_hermit_deployment',
+        message: 'Hermit 集成部署不支持上游升级。请在部署主机重新运行 Hermit 部署命令。',
+      },
+    }
   }
   const requested = version != null && String(version).trim() !== '' ? parseReleaseTag(version) : null
   if (version != null && String(version).trim() !== '' && !requested) {

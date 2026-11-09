@@ -37,6 +37,7 @@ import {
 import { extraHeadersFromLimitError } from '../pool/quota-window.mjs'
 import { createStreamTiming } from '../protocol/stream-timing.mjs'
 import { mergeUsage } from '../protocol/openai-usage.mjs'
+import { ensureRedaction, maskJson, restoreJsonValue, createSseRestorer } from '../redaction/runtime.mjs'
 
 const MAX_BODY = 64 * 1024 * 1024
 const credentialRefreshTail = new Map()
@@ -63,7 +64,10 @@ function withCredentialRefreshLock(key, fn) {
 
 export function workerPaths(exec = {}) {
   const slotRoot = exec.homeDir ? path.dirname(exec.homeDir) : null
-  const runDir = exec.vm?.runtime?.worker_run_dir || (slotRoot ? path.join(slotRoot, 'run') : null)
+  const runDir =
+    exec.runRoot && exec.vm?.id
+      ? path.join(exec.runRoot, exec.vm.id)
+      : exec.vm?.runtime?.worker_run_dir || (slotRoot ? path.join(slotRoot, 'run') : null)
   return {
     runDir,
     socketPath: exec.vm?.runtime?.worker_socket || (runDir ? path.join(runDir, 'worker.sock') : null),
@@ -406,7 +410,7 @@ function dumpSessionEnvelope(envelope) {
  * body on the VM's HTTP betas would lift every role=system turn into system[],
  * so system grows each turn and no cached prefix is ever read.
  */
-export function finalizeWorkerPayload({
+export function prepareWorkerPayload({
   body,
   reqHeaders,
   exec,
@@ -439,12 +443,30 @@ export function finalizeWorkerPayload({
   const gated = cliHop ? { ...main, betas } : sanitizeAnthropicBodyForBetaTokens(main, headers['anthropic-beta'])
   return {
     headers,
-    body: sealClaudeCodeCch(gated, { enabled: routing?.compatibility?.cch_enabled !== false, seal: !cliHop }),
+    gated,
+    cliHop,
+    routing,
     thread: thread.turn,
   }
 }
 
-function workerEnvelope({
+function sealPreparedPayload(prepared, gated) {
+  return {
+    headers: prepared.headers,
+    body: sealClaudeCodeCch(gated, {
+      enabled: prepared.routing?.compatibility?.cch_enabled !== false,
+      seal: !prepared.cliHop,
+    }),
+    thread: prepared.thread,
+  }
+}
+
+export function finalizeWorkerPayload(args = {}) {
+  const prepared = prepareWorkerPayload(args)
+  return sealPreparedPayload(prepared, prepared.gated)
+}
+
+async function workerEnvelope({
   requestContext = null,
   body,
   reqHeaders,
@@ -458,8 +480,10 @@ function workerEnvelope({
   preserveCacheBreakpoints = null,
   cliHop = false,
   repaired = false,
+  redactionPrincipal = '',
+  redactionSession = '',
 } = {}) {
-  const finalized = finalizeWorkerPayload({
+  const prepared = prepareWorkerPayload({
     body,
     reqHeaders,
     exec,
@@ -470,6 +494,9 @@ function workerEnvelope({
     requestContext,
     repaired,
   })
+  const redaction = await redactionContext({ routing, exec, redactionPrincipal, redactionSession })
+  const gated = redaction ? await maskJson(prepared.gated, redaction) : prepared.gated
+  const finalized = sealPreparedPayload(prepared, gated)
   const envelope = {
     ...(requestContext ? { request_context: requestContext } : {}),
     body: finalized.body,
@@ -480,7 +507,41 @@ function workerEnvelope({
     cache_ttl: cacheTtl == null ? null : String(cacheTtl),
   }
   dumpSessionEnvelope(envelope)
-  return { envelope, thread: finalized.thread }
+  return { envelope, thread: finalized.thread, redaction }
+}
+
+async function redactionContext({ routing, exec, redactionPrincipal, redactionSession }) {
+  const projectRoot = exec?.projectRoot || process.env.KIN_PROJECT_ROOT || ''
+  const state = await ensureRedaction(routing, { projectRoot })
+  if (!state.enabled) return null
+  return { principal: redactionPrincipal, session: redactionSession || '' }
+}
+
+async function maskEnvelopeBody(envelope, redaction) {
+  if (!redaction || !envelope?.body) return envelope
+  return { ...envelope, body: await maskJson(envelope.body, redaction) }
+}
+
+function redactionResult(error) {
+  if (!String(error?.code || '').startsWith('redaction_')) return null
+  return {
+    ok: false,
+    status: error.status || 503,
+    via: 'redaction',
+    body: {
+      type: 'error',
+      error: {
+        type: 'api_error',
+        code: error.code,
+        message: String(error.message || error).slice(0, 300),
+      },
+    },
+    headers: {},
+    terminalState: 'rejected',
+    transportError: false,
+    committed: false,
+    upstreamExecutions: 0,
+  }
 }
 
 /**
@@ -521,6 +582,8 @@ async function callGoWorkerAdmitted({
   cliHop = false,
   repaired = false,
   onEnvelope = null,
+  redactionPrincipal = '',
+  redactionSession = '',
 } = {}) {
   if (isCrsMock()) {
     const { body: outboundBody, headers } = finalizeWorkerPayload({
@@ -549,9 +612,10 @@ async function callGoWorkerAdmitted({
   const requestId = randomUUID()
   const stopCancel = cancelOnAbort(exec, signal, requestId)
   try {
+    const redaction = await redactionContext({ routing, exec, redactionPrincipal, redactionSession })
     const prepared = envelope
-      ? { envelope, thread: null }
-      : workerEnvelope({
+      ? { envelope: await maskEnvelopeBody(envelope, redaction), thread: null, redaction }
+      : await workerEnvelope({
           body,
           reqHeaders,
           exec,
@@ -564,6 +628,8 @@ async function callGoWorkerAdmitted({
           cliHop,
           requestContext,
           repaired,
+          redactionPrincipal,
+          redactionSession,
         })
     reportEnvelope(onEnvelope, prepared.envelope)
     const response = await workerRequest(exec, {
@@ -575,10 +641,10 @@ async function callGoWorkerAdmitted({
       timeoutMs,
     })
     const data = await readAll(response)
-    const parsed = parseJson(data, response.statusCode)
+    const parsedRaw = parseJson(data, response.statusCode)
+    const parsed = prepared.redaction ? await restoreJsonValue(parsedRaw, prepared.redaction) : parsedRaw
     const headers = mergeRateLimitHeaders(publicHeaders(response.headers))
     const ok = response.statusCode >= 200 && response.statusCode < 300 && parsed?.type !== 'error'
-    if (ok) rememberThreadTurn(parsed?.id, prepared.thread)
     return restoreKernelErrorStatus({
       ok,
       status: response.statusCode || 0,
@@ -593,6 +659,8 @@ async function callGoWorkerAdmitted({
       threadBetas: prepared.thread,
     })
   } catch (error) {
+    const blocked = redactionResult(error)
+    if (blocked) return blocked
     return {
       ok: false,
       status: error.status === 413 ? 413 : 0,
@@ -638,6 +706,8 @@ async function streamGoWorkerAdmitted({
   repaired = false,
   onEnvelope = null,
   onOutboundHeaders = null,
+  redactionPrincipal = '',
+  redactionSession = '',
 } = {}) {
   if (isCrsMock()) {
     const { body: outboundBody, headers } = finalizeWorkerPayload({
@@ -724,9 +794,10 @@ async function streamGoWorkerAdmitted({
   const requestId = randomUUID()
   const stopCancel = cancelOnAbort(exec, signal, requestId)
   try {
+    const redaction = await redactionContext({ routing, exec, redactionPrincipal, redactionSession })
     const prepared = envelope
-      ? { envelope, thread: null }
-      : workerEnvelope({
+      ? { envelope: await maskEnvelopeBody(envelope, redaction), thread: null, redaction }
+      : await workerEnvelope({
           body,
           reqHeaders,
           exec,
@@ -740,6 +811,8 @@ async function streamGoWorkerAdmitted({
           cliHop,
           requestContext,
           repaired,
+          redactionPrincipal,
+          redactionSession,
         })
     reportEnvelope(onEnvelope, prepared.envelope)
     const response = await workerRequest(exec, {
@@ -841,12 +914,14 @@ async function streamGoWorkerAdmitted({
       // message_stop is the protocol terminal event, but the kernel still sends
       // job_done and its trailers afterward. Keep reading until the worker
       // closes the response so a normal completion is not mistaken for cancel.
+      const sseRestorer = prepared.redaction ? createSseRestorer(prepared.redaction) : null
       for await (const chunk of response) {
         receivedAt = Date.now()
         buffer += Buffer.isBuffer(chunk) ? chunk.toString('utf8') : String(chunk)
         let newline
         while ((newline = buffer.indexOf('\n')) >= 0) {
-          const line = buffer.slice(0, newline).replace(/\r$/, '')
+          let line = buffer.slice(0, newline).replace(/\r$/, '')
+          if (sseRestorer) line = await sseRestorer.line(line)
           buffer = buffer.slice(newline + 1)
           // CLI diagnostics share the internal stream, never the caller's SSE.
           if (line.startsWith('event:')) outboundHeadersFrame = line.slice(6).trim() === 'kin_outbound_headers'
@@ -945,6 +1020,8 @@ async function streamGoWorkerAdmitted({
       if (idleTimer) clearInterval(idleTimer)
     }
   } catch (error) {
+    const blocked = redactionResult(error)
+    if (blocked) return { ...blocked, ...timing.snapshot(), committed }
     if (signal?.aborted) {
       return clientCancelledResult({
         via: 'go-worker-stream',

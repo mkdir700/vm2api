@@ -118,10 +118,18 @@ try {
   fs.writeFileSync(source, 'ONLY_OUTER_EXECUTES_READ\n')
   function sse(ordinal) {
     const tools = requests.at(-1).body.tools
-    const restartTool = tlsMode && !restartToolIssued && JSON.stringify(requests.at(-1).body.messages).includes('HERMIT_MANAGER_TURN_30')
+    const restartTool =
+      tlsMode && !restartToolIssued && JSON.stringify(requests.at(-1).body.messages).includes('HERMIT_MANAGER_TURN_30')
     if (restartTool) restartToolIssued = true
     const blocks = restartTool
-      ? [{ type: 'tool_use', id: 'toolu_01HermitRestartPending0001', name: tools.find(tool => tool.name.includes('ExternalProbe')).name, input: { label: 'WAIT_FOR_RESTART' } }]
+      ? [
+          {
+            type: 'tool_use',
+            id: 'toolu_01HermitRestartPending0001',
+            name: tools.find((tool) => tool.name.includes('ExternalProbe')).name,
+            input: { label: 'WAIT_FOR_RESTART' },
+          },
+        ]
       : ordinal === 1
         ? [
             { type: 'tool_use', id: 'native-read-1', name: 'mcp__outer__Read', input: { file_path: source } },
@@ -167,7 +175,10 @@ try {
     events.push(
       {
         type: 'message_delta',
-        delta: { stop_reason: blocks.some(block => block.type === 'tool_use') ? 'tool_use' : 'end_turn', stop_sequence: null },
+        delta: {
+          stop_reason: blocks.some((block) => block.type === 'tool_use') ? 'tool_use' : 'end_turn',
+          stop_sequence: null,
+        },
         usage: { output_tokens: 10 },
       },
       { type: 'message_stop' },
@@ -181,7 +192,9 @@ try {
       return
     }
     if (tlsMode && req.url.startsWith('/api/claude_code/')) {
-      res.writeHead(404, { 'content-type': 'application/json' });res.end('{"error":{"type":"not_found_error"}}');return
+      res.writeHead(404, { 'content-type': 'application/json' })
+      res.end('{"error":{"type":"not_found_error"}}')
+      return
     }
     if (req.method === 'GET' && req.url.split('?')[0].endsWith('/v1/models')) {
       modelRequests.push({
@@ -225,7 +238,12 @@ try {
     }
     const body = JSON.parse(bytes)
     if (req.url.endsWith('/v1/oauth/token')) {
-      refreshRequests.push({ ...body, source: req.socket.remoteAddress, host: req.headers.host, tls: !!req.socket.encrypted })
+      refreshRequests.push({
+        ...body,
+        source: req.socket.remoteAddress,
+        host: req.headers.host,
+        tls: !!req.socket.encrypted,
+      })
       save('oauth-refresh-requests.json', refreshRequests)
       res.setHeader('content-type', 'application/json')
       res.end(
@@ -567,18 +585,36 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
   }
   if (tlsMode && slotApiKey) {
     const validCA = fs.readFileSync(httpsFixture.ca)
-    const select = () => api(gw, 'POST', '/api/panel/dataplane', { headers: { cookie }, body: { dataplane: 'hermit', ids: ['vm-hermit'], target: 'linux-amd64', version: expected.version, restart: true } })
+    const select = () =>
+      api(gw, 'POST', '/api/panel/dataplane', {
+        headers: { cookie },
+        body: {
+          dataplane: 'hermit',
+          ids: ['vm-hermit'],
+          target: 'linux-amd64',
+          version: expected.version,
+          restart: true,
+        },
+      })
     for (const [name, replace] of [
       ['missing', () => fs.unlinkSync(httpsFixture.ca)],
-      ['symlink', () => { fs.unlinkSync(httpsFixture.ca);fs.symlinkSync(path.join(root, 'origin-ca.key'), httpsFixture.ca) }],
+      [
+        'symlink',
+        () => {
+          fs.unlinkSync(httpsFixture.ca)
+          fs.symlinkSync(path.join(root, 'origin-ca.key'), httpsFixture.ca)
+        },
+      ],
       ['oversize', () => fs.writeFileSync(httpsFixture.ca, Buffer.alloc(1024 * 1024 + 1))],
       ['invalid', () => fs.writeFileSync(httpsFixture.ca, 'invalid pem')],
     ]) {
       replace()
-      const denied = await select();save('tls-ca-'+name+'.json', denied)
-      check('tls_ca_'+name+'_rejected', denied.status !== 200 && denied.json.error?.code === 'hermit_ca_invalid')
-      check('tls_ca_'+name+'_creates_no_owner', !fs.existsSync(path.join(run, 'native-slot.json')))
-      fs.rmSync(httpsFixture.ca, { force: true });fs.writeFileSync(httpsFixture.ca, validCA)
+      const denied = await select()
+      save('tls-ca-' + name + '.json', denied)
+      check('tls_ca_' + name + '_rejected', denied.status !== 200 && denied.json.error?.code === 'hermit_ca_invalid')
+      check('tls_ca_' + name + '_creates_no_owner', !fs.existsSync(path.join(run, 'native-slot.json')))
+      fs.rmSync(httpsFixture.ca, { force: true })
+      fs.writeFileSync(httpsFixture.ca, validCA)
     }
   }
   res = await fetch(gw.baseUrl + '/api/panel/dataplane', {
@@ -632,21 +668,21 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
         const { configureTLSSlot } = await import('../fixtures/hermit-https.mjs')
         check('tls_slot_dns_configured', configureTLSSlot(vm.runtime.container) === 'configured')
       } else {
-      fs.copyFileSync(
-        path.join(REPO_ROOT, 'test/fixtures/hermit-origin-relay.py'),
-        path.join(run, 'mock-origin-relay.py'),
-      )
-      execFileSync('/usr/bin/docker', [
-        'exec',
-        '-d',
-        '-u',
-        '10001:987',
-        vm.runtime.container,
-        'python3',
-        '/run/kin/mock-origin-relay.py',
-        String(mock.address().port),
-      ])
-      await new Promise((resolve) => setTimeout(resolve, 200))
+        fs.copyFileSync(
+          path.join(REPO_ROOT, 'test/fixtures/hermit-origin-relay.py'),
+          path.join(run, 'mock-origin-relay.py'),
+        )
+        execFileSync('/usr/bin/docker', [
+          'exec',
+          '-d',
+          '-u',
+          '10001:987',
+          vm.runtime.container,
+          'python3',
+          '/run/kin/mock-origin-relay.py',
+          String(mock.address().port),
+        ])
+        await new Promise((resolve) => setTimeout(resolve, 200))
       }
     }
     const duplicate = await Promise.all(
@@ -700,29 +736,29 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
           const { configureTLSSlot } = await import('../fixtures/hermit-https.mjs')
           check('tls_slot_dns_restored_after_restart', configureTLSSlot(vm.runtime.container) === 'configured')
         } else {
-        // 模拟上游转发进程属于槽位；Docker stop 会终止该测试进程。
-        execFileSync('/usr/bin/docker', [
-          'exec',
-          '-d',
-          '-u',
-          '10001:987',
-          vm.runtime.container,
-          'python3',
-          '/run/kin/mock-origin-relay.py',
-          String(mock.address().port),
-        ])
-        const relayReady = execFileSync(
-          '/usr/bin/docker',
-          [
+          // 模拟上游转发进程属于槽位；Docker stop 会终止该测试进程。
+          execFileSync('/usr/bin/docker', [
             'exec',
+            '-d',
+            '-u',
+            '10001:987',
             vm.runtime.container,
             'python3',
-            '-c',
-            "import socket,time;\nfor _ in range(30):\n try:\n  s=socket.create_connection(('127.0.0.1',19081),.2);s.close();print('ready');break\n except OSError:time.sleep(.1)\nelse:raise SystemExit(1)",
-          ],
-          { encoding: 'utf8' },
-        )
-        check('mock_origin_relay_restarted', relayReady.trim() === 'ready')
+            '/run/kin/mock-origin-relay.py',
+            String(mock.address().port),
+          ])
+          const relayReady = execFileSync(
+            '/usr/bin/docker',
+            [
+              'exec',
+              vm.runtime.container,
+              'python3',
+              '-c',
+              "import socket,time;\nfor _ in range(30):\n try:\n  s=socket.create_connection(('127.0.0.1',19081),.2);s.close();print('ready');break\n except OSError:time.sleep(.1)\nelse:raise SystemExit(1)",
+            ],
+            { encoding: 'utf8' },
+          )
+          check('mock_origin_relay_restarted', relayReady.trim() === 'ready')
         }
       }
       check('activation_response_contains_no_slot_key', !JSON.stringify(result).includes(SLOT_KEY))
@@ -737,9 +773,19 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       check('config_contains_no_refresh_token', !JSON.stringify(config).includes('never-forward'))
     }
     if (tlsMode) {
-      check('config_uses_fixed_https_origins', config.session.managed.upstream_url === 'https://api.anthropic.com' && config.helper.oauth_token_url === 'https://platform.claude.com/v1/oauth/token')
-      check('config_uses_slot_ca', config.session.managed.environment.includes('NODE_EXTRA_CA_CERTS=/run/kin/native-ca.pem'))
-      check('slot_ca_matches_control_ca', fs.readFileSync(path.join(run, 'native-ca.pem')).equals(fs.readFileSync(httpsFixture.ca)))
+      check(
+        'config_uses_fixed_https_origins',
+        config.session.managed.upstream_url === 'https://api.anthropic.com' &&
+          config.helper.oauth_token_url === 'https://platform.claude.com/v1/oauth/token',
+      )
+      check(
+        'config_uses_slot_ca',
+        config.session.managed.environment.includes('NODE_EXTRA_CA_CERTS=/run/kin/native-ca.pem'),
+      )
+      check(
+        'slot_ca_matches_control_ca',
+        fs.readFileSync(path.join(run, 'native-ca.pem')).equals(fs.readFileSync(httpsFixture.ca)),
+      )
     }
     ownerRoot = realDocker ? config.session.root.replace('/run/kin', run) : config.session.root
     check(
@@ -1024,11 +1070,17 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
         pendingTurn = sendTurn(30, 240000)
         pendingTurn.catch(() => {})
         const until = Date.now() + 45000
-        while (!fs.existsSync(path.join(out, 'mcp-pending.json')) && Date.now() < until) await new Promise(resolve => setTimeout(resolve, 50))
+        while (!fs.existsSync(path.join(out, 'mcp-pending.json')) && Date.now() < until)
+          await new Promise((resolve) => setTimeout(resolve, 50))
         check('outer_tool_pending_before_restart', fs.existsSync(path.join(out, 'mcp-pending.json')))
-        const call = lines.flatMap(row => Array.isArray(row.message?.content) ? row.message.content : []).find(block => block.type === 'tool_use' && block.input?.label === 'WAIT_FOR_RESTART')
+        const call = lines
+          .flatMap((row) => (Array.isArray(row.message?.content) ? row.message.content : []))
+          .find((block) => block.type === 'tool_use' && block.input?.label === 'WAIT_FOR_RESTART')
         pendingToolID = call?.id
-        check('pending_tool_id_observed_by_outer_client', typeof pendingToolID === 'string' && pendingToolID.startsWith('toolu_'))
+        check(
+          'pending_tool_id_observed_by_outer_client',
+          typeof pendingToolID === 'string' && pendingToolID.startsWith('toolu_'),
+        )
         save('pending-tool-link.json', { model_id: 'toolu_01HermitRestartPending0001', outer_id: pendingToolID })
       }
       const previousRoot = ownerRoot
@@ -1082,9 +1134,31 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       if (tlsMode) {
         fs.writeFileSync(restartRelease, 'release')
         await pendingTurn
-        check('pending_tool_result_restored_after_restart', requests.at(-1).body.messages.some(message => Array.isArray(message.content) && message.content.some(block => block.type === 'tool_result' && block.tool_use_id === pendingToolID && JSON.stringify(block.content).includes('WAIT_FOR_RESTART') && JSON.stringify(block.content).includes('P1_DYNAMIC_MCP_RESULT'))))
-        const receipts = fs.readFileSync(effects, 'utf8').trim().split('\n').map(line => JSON.parse(line))
-        check('pending_outer_tool_not_reexecuted', receipts.filter(row => row.arguments?.label === 'WAIT_FOR_RESTART').length === 1)
+        check(
+          'pending_tool_result_restored_after_restart',
+          requests
+            .at(-1)
+            .body.messages.some(
+              (message) =>
+                Array.isArray(message.content) &&
+                message.content.some(
+                  (block) =>
+                    block.type === 'tool_result' &&
+                    block.tool_use_id === pendingToolID &&
+                    JSON.stringify(block.content).includes('WAIT_FOR_RESTART') &&
+                    JSON.stringify(block.content).includes('P1_DYNAMIC_MCP_RESULT'),
+                ),
+            ),
+        )
+        const receipts = fs
+          .readFileSync(effects, 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
+        check(
+          'pending_outer_tool_not_reexecuted',
+          receipts.filter((row) => row.arguments?.label === 'WAIT_FOR_RESTART').length === 1,
+        )
       }
       await sendTurn(3)
       check(
@@ -1241,9 +1315,23 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       )
   }
   if (tlsMode && completed) {
-    check('messages_and_models_use_fixed_tls_api_host', [...requests, ...modelRequests].every(row => row.tls && row.host === 'api.anthropic.com' && row.source === '127.0.0.2'))
-    if (oauthMode) check('refresh_uses_separate_tls_host', refreshRequests.length === 2 && refreshRequests.every(row => row.tls && row.host === 'platform.claude.com' && row.source === '127.0.0.2'))
-    check('tls_sni_uses_expected_domains', httpsFixture.connections.some(row => row.sni === 'api.anthropic.com') && (!oauthMode || httpsFixture.connections.some(row => row.sni === 'platform.claude.com')))
+    check(
+      'messages_and_models_use_fixed_tls_api_host',
+      [...requests, ...modelRequests].every(
+        (row) => row.tls && row.host === 'api.anthropic.com' && row.source === '127.0.0.2',
+      ),
+    )
+    if (oauthMode)
+      check(
+        'refresh_uses_separate_tls_host',
+        refreshRequests.length === 2 &&
+          refreshRequests.every((row) => row.tls && row.host === 'platform.claude.com' && row.source === '127.0.0.2'),
+      )
+    check(
+      'tls_sni_uses_expected_domains',
+      httpsFixture.connections.some((row) => row.sni === 'api.anthropic.com') &&
+        (!oauthMode || httpsFixture.connections.some((row) => row.sni === 'platform.claude.com')),
+    )
   }
   if (slotApiKey && completed) {
     check(
@@ -1271,7 +1359,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
   }
   if (httpsFixture) {
     httpsFixture.server.closeAllConnections()
-    await new Promise(resolve => httpsFixture.server.close(resolve))
+    await new Promise((resolve) => httpsFixture.server.close(resolve))
   }
   if (mock) {
     mock.closeAllConnections()

@@ -52,6 +52,7 @@ import { AccountQuota } from './lib/pool/account-quota.mjs'
 import { normalizeTiers } from './lib/pool/quota-tiers.mjs'
 import { ApiKeyStore } from './lib/admin/api-keys.mjs'
 import { keyScopeFromRequest } from './lib/admin/key-scope.mjs'
+import { filterModelCatalogForKey } from './lib/admin/key-models.mjs'
 import { GroupsRepo } from './lib/db/repos/groups-repo.mjs'
 import { SettingsRepo } from './lib/db/repos/settings-repo.mjs'
 import { ApiEndpointStore } from './lib/admin/api-endpoints.mjs'
@@ -106,11 +107,13 @@ import { stopAllRustKernels } from './lib/transport/rust-kernel-supervisor.mjs'
 import { createRespond, parseRequestUrl } from './lib/http/respond.mjs'
 import { corsHeadersForRequest } from './lib/http/cors.mjs'
 import { isConsoleEntry, tryServeWebDist } from './lib/http/web-dist.mjs'
+import { createGracefulShutdown } from './lib/http/graceful-shutdown.mjs'
 import { createRoutingRuntime } from './lib/admin/routing-runtime.mjs'
 import { createImportCommit } from './lib/oauth/import-commit.mjs'
 import { createHandleProtocol } from './lib/protocol/handle-protocol.mjs'
 import { createResponsesWsHandler } from './lib/protocol/responses-ws.mjs'
 import { handleUserUsage } from './lib/protocol/user-count-tokens.mjs'
+import { createKeySelfHandler, KEY_SELF_PATHS } from './lib/protocol/key-self.mjs'
 import { createPanelHandler } from './lib/admin/panel-routes.mjs'
 
 const FEATURES = [
@@ -794,7 +797,8 @@ function rejectAuth(req, res, error) {
   return false
 }
 
-function requireAuth(req, res) {
+/** `keyGate: false` (key self-service) skips the managed key's quota / RPM / concurrency gate and the gateway bucket. */
+function requireAuth(req, res, { keyGate = true } = {}) {
   req.presentedApiKey = extractApiKey(req)
   const token = extractPanelToken(req) || req.presentedApiKey
   if (!token) {
@@ -865,7 +869,7 @@ function requireAuth(req, res) {
       }),
     )
   }
-  const gate = apiKeyStore.canAccept(managed.record)
+  const gate = keyGate ? apiKeyStore.canAccept(managed.record) : { ok: true }
   if (!gate.ok) {
     const type =
       gate.status === 429
@@ -885,7 +889,7 @@ function requireAuth(req, res) {
       }),
     )
   }
-  if (!allowRate(token)) {
+  if (keyGate && !allowRate(token)) {
     return rejectAuth(
       req,
       res,
@@ -927,6 +931,13 @@ const importCommit = createImportCommit({
 })
 
 const { commitImportedOauth, requireSlotProxy, officialCcStatsHandler } = importCommit
+
+const handleKeySelf = createKeySelfHandler({
+  json,
+  requireAuth,
+  apiKeyStore,
+  getUsageLogs: () => requestLog.repo,
+})
 
 const { handleProtocol, handleSearch, handleImages } = createHandleProtocol({
   json,
@@ -1123,6 +1134,59 @@ const handlePanel = createPanelHandler({
   slotShell,
 })
 
+const gracefulShutdown = createGracefulShutdown({
+  beforeDrain: async () => {
+    installJevUsageRecorder(null)
+    try {
+      vmTestSchedule.stop()
+    } catch {}
+    try {
+      backupService.stopScheduler()
+    } catch {}
+    try {
+      proxyPool.stopManagedMonitor()
+      proxyPool.stopScheduler()
+    } catch {}
+    try {
+      healthMonitor?.stop?.()
+    } catch {}
+    try {
+      credentialRefreshMonitor?.stop?.()
+    } catch {}
+    try {
+      kernelWatchdog?.stop?.()
+    } catch {}
+    try {
+      cliNodeGuard?.stop?.()
+    } catch {}
+    try {
+      usageProbeMonitor?.stop?.()
+    } catch {}
+    try {
+      catalogMonitor?.stop?.()
+    } catch {}
+    try {
+      notifyMonitor?.stop?.()
+    } catch {}
+  },
+  afterDrain: async () => {
+    try {
+      stopVmWatch()
+    } catch {}
+    try {
+      await stopAllHermitKernels()
+      stopAllRustKernels()
+    } catch {}
+    try {
+      await remoteManagedEgress?.close()
+      await clusterManager.stop()
+    } catch {}
+    try {
+      closeDatabase()
+    } catch {}
+  },
+})
+
 const server = http.createServer(async (req, res) => {
   try {
     res.req = req
@@ -1136,6 +1200,20 @@ const server = http.createServer(async (req, res) => {
       return json(res, 400, { error: { message: 'Invalid URL', type: 'invalid_request' } })
     }
     const p = url.pathname
+    if (gracefulShutdown.isShuttingDown()) {
+      res.setHeader('Connection', 'close')
+      if (p === '/health' || p === '/healthz') {
+        return json(res, 503, { status: 'shutting_down' })
+      }
+      return json(res, 503, {
+        error: {
+          type: 'overloaded_error',
+          code: 'server_shutting_down',
+          message: 'Gateway is shutting down; retry shortly',
+        },
+      })
+    }
+    gracefulShutdown.trackRequest(req, res)
 
     if (isTelemetryPath(p)) {
       return json(res, 200, telemetryInterceptResponse(p))
@@ -1213,6 +1291,8 @@ const server = http.createServer(async (req, res) => {
           responses: '/v1/responses',
           messages: '/v1/messages',
           usage: '/v1/usage',
+          me_quota: '/v1/me/quota',
+          me_usage: '/v1/me/usage',
           models: '/v1/models',
           intercept_rules: '/admin/intercept/rules',
         },
@@ -1220,13 +1300,14 @@ const server = http.createServer(async (req, res) => {
       })
     }
 
-    if (req.method === 'GET' && p === '/v1/models') {
+    if (req.method === 'GET' && (p === '/v1/models' || p === '/models')) {
       if (!requireAuth(req, res)) return
+      const groupType = keyScopeFromRequest(req).group_type
       if (resolveInferenceBackend(req) === 'api') {
-        return json(res, 200, apiScheduler.catalog())
+        return json(res, 200, filterModelCatalogForKey(apiScheduler.catalog({ groupType }), req))
       }
-      const result = await fetchWorkerModels({ groupType: keyScopeFromRequest(req).group_type })
-      return json(res, 200, result)
+      const result = await fetchWorkerModels({ groupType })
+      return json(res, 200, filterModelCatalogForKey(result, req))
     }
     if (req.method === 'POST' && p === '/admin/models/refresh') {
       if (!requireAuth(req, res)) return
@@ -1243,6 +1324,9 @@ const server = http.createServer(async (req, res) => {
         projectRoot: cfg.paths.project,
         getPoolScheduler: () => poolScheduler,
       })
+    }
+    if (req.method === 'GET' && KEY_SELF_PATHS.has(p)) {
+      return await handleKeySelf(req, res, url)
     }
     if (req.method === 'POST' && (p === '/v1/messages/count_tokens' || p === '/messages/count_tokens')) {
       return json(res, 404, { error: { message: 'not found: ' + p } })
@@ -1292,12 +1376,16 @@ const server = http.createServer(async (req, res) => {
     }
   }
 })
-
 server.on('upgrade', (req, socket, head) => {
+  if (gracefulShutdown.isShuttingDown()) {
+    socket.destroy()
+    return
+  }
   if (responsesWs.handleUpgrade(req, socket, head)) return
   if (clusterRoutes.handleUpgrade(req, socket, head)) return
   if (!slotShell.handleUpgrade(req, socket, head)) socket.destroy()
 })
+gracefulShutdown.setServer(server)
 
 server.on('clientError', (err, socket) => {
   try {
@@ -1337,6 +1425,8 @@ const pub = {
     responses: publicEndpoint('/v1/responses'),
     messages: publicEndpoint('/v1/messages'),
     usage: publicEndpoint('/v1/usage'),
+    me_quota: publicEndpoint('/v1/me/quota'),
+    me_usage: publicEndpoint('/v1/me/usage'),
     intercept_rules: publicEndpoint('/admin/intercept/rules'),
   },
 }
@@ -1346,68 +1436,9 @@ fs.writeFileSync(path.join(cfg.paths.root, 'config', 'gateway-v2.public.json'), 
 process.on('uncaughtException', (e) => console.error('[uncaught]', e))
 process.on('unhandledRejection', (e) => console.error('[unhandled]', e))
 
-// Graceful shutdown: stop schedulers/watchers, close the DB (WAL checkpoint).
-let _shuttingDown = false
-async function shutdown(signal) {
-  if (_shuttingDown) return
-  _shuttingDown = true
-  installJevUsageRecorder(null)
-  console.log(`[shutdown] ${signal} — closing`)
-  try {
-    vmTestSchedule.stop()
-  } catch {}
-  try {
-    backupService.stopScheduler()
-  } catch {}
-  try {
-    proxyPool.stopManagedMonitor()
-    proxyPool.stopScheduler()
-  } catch {}
-  try {
-    healthMonitor?.stop?.()
-  } catch {}
-  try {
-    credentialRefreshMonitor?.stop?.()
-  } catch {}
-  try {
-    kernelWatchdog?.stop?.()
-  } catch {}
-  try {
-    cliNodeGuard?.stop?.()
-  } catch {}
-  try {
-    usageProbeMonitor?.stop?.()
-  } catch {}
-  try {
-    catalogMonitor?.stop?.()
-  } catch {}
-
-  try {
-    notifyMonitor?.stop?.()
-  } catch {}
-  try {
-    stopVmWatch()
-  } catch {}
-  try {
-    await stopAllHermitKernels()
-    stopAllRustKernels()
-  } catch {}
-  try {
-    await remoteManagedEgress?.close()
-  } catch {}
-  try {
-    await clusterManager.stop()
-  } catch {}
-  try {
-    server.close(() => {})
-  } catch {}
-  try {
-    closeDatabase()
-  } catch {}
-  process.exit(0)
-}
-process.on('SIGTERM', () => shutdown('SIGTERM'))
-process.on('SIGINT', () => shutdown('SIGINT'))
+// Graceful shutdown on termination signals (Issue #376).
+process.on('SIGTERM', () => gracefulShutdown.shutdown('SIGTERM'))
+process.on('SIGINT', () => gracefulShutdown.shutdown('SIGINT'))
 
 if (process.env.KIN_CRS_MOCK !== '1') {
   syncLocalSlotRestartPolicies(listVms(cfg.paths.project))

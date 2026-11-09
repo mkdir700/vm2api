@@ -318,9 +318,23 @@ test('a pinned real SSH host preserves two managed exits and existing services',
     await pool.inspectManaged()
     for (let index = 0; index < 2; index++) {
       assert.ok(pool.getProxyForVm(`vm-me-${nonce}-${index}`))
-      assert.equal(await docker(['exec', traffic[index], 'curl', '--silent', '--show-error', '--fail',
-        '--noproxy', '*', '--max-time', '5', `${originUrl}/source`]), observed[index],
-        'inspection must restore a bound slot route after its ephemeral NAT rules are lost')
+      assert.equal(
+        await docker([
+          'exec',
+          traffic[index],
+          'curl',
+          '--silent',
+          '--show-error',
+          '--fail',
+          '--noproxy',
+          '*',
+          '--max-time',
+          '5',
+          `${originUrl}/source`,
+        ]),
+        observed[index],
+        'inspection must restore a bound slot route after its ephemeral NAT rules are lost',
+      )
     }
 
     const shared = await host.runtime.locate()

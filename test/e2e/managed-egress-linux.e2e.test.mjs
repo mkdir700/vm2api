@@ -43,13 +43,14 @@ import { rustKernelHealth, rustKernelProcessUp } from '../../src/lib/transport/r
 const execute = promisify(execFile)
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 const packageReplay = process.env.MANAGED_EGRESS_PACKAGE_REPLAY === '1'
-const artifact = path.resolve(`.tmp/managed-egress-e2e/${packageReplay ? 'package-runtime-replay' : 'linux'}-receipt.json`)
+const artifact = path.resolve(
+  `.tmp/managed-egress-e2e/${packageReplay ? 'package-runtime-replay' : 'linux'}-receipt.json`,
+)
 const command =
   'MANAGED_EGRESS_LINUX_E2E=1 MANAGED_EGRESS_FULL_SLOT_PAYLOAD=<payload> MANAGED_EGRESS_SLOT_IMAGE=<local-image> MANAGED_EGRESS_ORIGIN_HOST=<host-IPv4> SING_BOX_BIN=<binary> KIN_EGRESS_TEST_BIN=<binary> node --test test/e2e/managed-egress-linux.e2e.test.mjs'
 async function receipt(value) {
   await mkdir(path.dirname(artifact), { recursive: true })
-  const target =
-    value.status === 'NOT RUN' ? artifact.replace('-receipt.json', '-not-run-receipt.json') : artifact
+  const target = value.status === 'NOT RUN' ? artifact.replace('-receipt.json', '-not-run-receipt.json') : artifact
   await writeFile(target, JSON.stringify(value, null, 2))
 }
 async function freePort(udp = false) {
@@ -601,12 +602,24 @@ test('Linux containers use two managed Hysteria exits through real transparent h
     assert.equal((initialProbe.json.data || initialProbe.json).probe.ok, true)
     const probeHelperDir = egressRunDir(apiRoot, httpId)
     const probeHelperConfig = JSON.parse(await readFile(path.join(probeHelperDir, 'egress.json'), 'utf8'))
-    assert.equal(probeHelperConfig.control_socket, path.join(probeHelperDir, 'drain.sock'),
-      'manual probe must preserve managed helper control before periodic inspection')
-    assert.equal((await new EgressDrainClient({ id: httpId, socketPath: probeHelperConfig.control_socket })
-      .request('GET', '/status')).paused, false)
+    assert.equal(
+      probeHelperConfig.control_socket,
+      path.join(probeHelperDir, 'drain.sock'),
+      'manual probe must preserve managed helper control before periodic inspection',
+    )
+    assert.equal(
+      (
+        await new EgressDrainClient({ id: httpId, socketPath: probeHelperConfig.control_socket }).request(
+          'GET',
+          '/status',
+        )
+      ).paused,
+      false,
+    )
     await delay(17000)
-    const afterMonitor = (await api(apiGateway, 'GET', '/api/panel/proxies')).json.data.proxies.find(p => p.id === httpId)
+    const afterMonitor = (await api(apiGateway, 'GET', '/api/panel/proxies')).json.data.proxies.find(
+      (p) => p.id === httpId,
+    )
     assert.equal(afterMonitor.blocked_reason, null, 'manual probe must stay ready after monitor')
     assert.equal(afterMonitor.observed_ip, '127.0.0.2')
     const probeGeo = await api(apiGateway, 'POST', `/api/panel/proxies/${httpId}/geo`)
@@ -866,9 +879,15 @@ test('Linux containers use two managed Hysteria exits through real transparent h
           }
         }
         const config = JSON.parse(await readFile(path.join(record.runtime.worker_run_dir, 'kernel.json'), 'utf8'))
-        return { name: record.name, user: info.Config.User, network: info.HostConfig.NetworkMode,
-          worker_run_dir: record.runtime.worker_run_dir, kernel_socket: record.runtime.kernel_socket,
-          configured_socket: config.socket_path, files }
+        return {
+          name: record.name,
+          user: info.Config.User,
+          network: info.HostConfig.NetworkMode,
+          worker_run_dir: record.runtime.worker_run_dir,
+          kernel_socket: record.runtime.kernel_socket,
+          configured_socket: config.socket_path,
+          files,
+        }
       }
       const before = await state()
       const doc = (await api(apiGateway, 'GET', `/api/panel/vms/${apiVmId}/package`)).json.data
@@ -883,7 +902,12 @@ test('Linux containers use two managed Hysteria exits through real transparent h
       assert.equal(after.user, before.user, 'package traits must preserve the deployed runtime UID')
       await verifyActualKernel(factoryId)
       assert.equal(await slotSource(factoryId), '127.0.0.2')
-      await receipt({ status: 'PASS', scope: 'minimal actual package write-back, runtime ownership and selected route', before, after })
+      await receipt({
+        status: 'PASS',
+        scope: 'minimal actual package write-back, runtime ownership and selected route',
+        before,
+        after,
+      })
       return
     }
     assert.equal((await api(apiGateway, 'POST', `/api/panel/vms/${apiVmId}/start`)).status, 200)
@@ -1074,7 +1098,10 @@ test('Linux containers use two managed Hysteria exits through real transparent h
     assert.equal(packageQuota.status, 409)
     assert.equal(packageQuota.json.error.code, 'proxy_bind_limit')
     await assert.rejects(stat(path.join(apiRoot, 'vms', packageVmId)), { code: 'ENOENT' })
-    assert.equal((await api(apiGateway, 'PUT', '/api/panel/proxies/config', { body: { bind_limit: previousBindLimit } })).status, 200)
+    assert.equal(
+      (await api(apiGateway, 'PUT', '/api/panel/proxies/config', { body: { bind_limit: previousBindLimit } })).status,
+      200,
+    )
     apiSlotIds.push(packageVmId)
     const packageCreated = await api(apiGateway, 'POST', '/api/panel/vms/package', {
       body: { ...packageDoc, vm: { ...packageDoc.vm, id: packageVmId } },
@@ -1083,19 +1110,28 @@ test('Linux containers use two managed Hysteria exits through real transparent h
     assert.equal(packageCreated.json.data.start_error, null)
     await verifyActualKernel(packageVmId)
     assert.equal(await slotSource(packageVmId), '127.0.0.2')
-    assert.equal(JSON.parse(await readFile(path.join(apiRoot, 'vms', `${packageVmId}.json`), 'utf8')).proxy.id, autoExitId)
+    assert.equal(
+      JSON.parse(await readFile(path.join(apiRoot, 'vms', `${packageVmId}.json`), 'utf8')).proxy.id,
+      autoExitId,
+    )
     assert.equal((await api(apiGateway, 'POST', `/api/panel/vms/${packageVmId}/stop`)).status, 200)
     const factoryRuntimeUser = JSON.parse(await docker(['inspect', containerName(factoryId)]))[0].Config.User
     const writeBack = await api(apiGateway, 'PUT', `/api/panel/vms/${factoryId}/package`, { body: packageDoc })
     assert.equal(writeBack.status, 200, `managed package write-back: ${writeBack.json?.error?.code || ''}`)
-    assert.equal(JSON.parse(await readFile(path.join(apiRoot, 'vms', `${factoryId}.json`), 'utf8')).proxy.id, autoExitId)
+    assert.equal(
+      JSON.parse(await readFile(path.join(apiRoot, 'vms', `${factoryId}.json`), 'utf8')).proxy.id,
+      autoExitId,
+    )
     assert.equal((await api(apiGateway, 'POST', `/api/panel/vms/${factoryId}/start`)).status, 200)
     assert.equal(JSON.parse(await docker(['inspect', containerName(factoryId)]))[0].Config.User, factoryRuntimeUser)
     await verifyActualKernel(factoryId)
     assert.equal(await slotSource(factoryId), '127.0.0.2')
     assert.equal((await api(apiGateway, 'POST', `/api/panel/vms/${factoryId}/stop`)).status, 200)
     const afterPackages = (await api(apiGateway, 'GET', '/api/panel/proxies')).json.data.proxies
-    assert.equal(afterPackages.filter((row) => row.managed).length, restoredPool.proxies.filter((row) => row.managed).length)
+    assert.equal(
+      afterPackages.filter((row) => row.managed).length,
+      restoredPool.proxies.filter((row) => row.managed).length,
+    )
     assert.equal(afterPackages.filter((row) => !row.managed && row.protocol !== 'local').length, 0)
     await apiGateway.stop()
     apiGateway = null

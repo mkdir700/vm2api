@@ -82,8 +82,9 @@ def main():
         shutil.copy2(args.compose_binary,context/'docker-compose')
         shutil.copy2(repo/'scripts/docker-entrypoint.sh', context/'entrypoint.sh')
         shutil.copy2(repo/'src/lib/admin/panel-routes.mjs', context/'panel-routes.mjs')
-        for name, rev, broken in [('old','1'*40,False),('new','2'*40,False),('bad','3'*40,True)]:
-            (context/'Dockerfile').write_text(f'FROM {imported}\nLABEL org.opencontainers.image.revision="{rev}"\nCOPY web-dist /opt/vm2api/web/dist\nCOPY docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose\nCOPY entrypoint.sh /usr/local/bin/vm2api-entrypoint\nCOPY panel-routes.mjs /opt/vm2api/src/lib/admin/panel-routes.mjs\nRUN chmod 755 /usr/local/bin/vm2api-entrypoint\n'+('COPY broken.sh /broken.sh\nENTRYPOINT ["/bin/sh", "/broken.sh"]\n' if broken else ''))
+        for name, rev, broken in [('old','1'*40,False),('new','2'*40,False),('bad','3'*40,True),('migration','4'*40,False)]:
+            (context/'Dockerfile').write_text(f'FROM {imported}\nLABEL org.opencontainers.image.revision="{rev}"\nCOPY web-dist /opt/vm2api/web/dist\nCOPY docker-compose /usr/local/libexec/docker/cli-plugins/docker-compose\nCOPY entrypoint.sh /usr/local/bin/vm2api-entrypoint\nCOPY panel-routes.mjs /opt/vm2api/src/lib/admin/panel-routes.mjs\nRUN chmod 755 /usr/local/bin/vm2api-entrypoint\n'+('COPY migration.sql /opt/vm2api/src/lib/db/migrations/999_upgrade_fixture.sql\n' if name=='migration' else '')+('COPY broken.sh /broken.sh\nENTRYPOINT ["/bin/sh", "/broken.sh"]\n' if broken else ''))
+            (context/'migration.sql').write_text('CREATE TABLE upgrade_fixture (id TEXT);\n')
             (context/'broken.sh').write_text('if [ "${SYNTHETIC_DEPLOY_FAIL:-}" = 1 ]; then rm -f /opt/vm2api/web/dist/assets/*.js; fi\nexec /usr/local/bin/vm2api-entrypoint\n')
             dock(['build','--network','none','-t','offline-fixture:'+name,str(context)])
         for name in ['data','vms','src/config','bin','share']: (root/name).mkdir(parents=True,exist_ok=True)
@@ -108,7 +109,7 @@ def main():
         before = json.loads(dock(['inspect','control']))[0]
         # 先对尚未实现的命令运行，保存红灯，再实现生产代码。
         bundles = {}
-        for name, rev in [('new','2'*40),('bad','3'*40)]:
+        for name, rev in [('new','2'*40),('bad','3'*40),('migration','4'*40)]:
             image = json.loads(dock(['image','inspect','offline-fixture:'+name]))[0]
             acceptance = fixture/(name+'-acceptance.json')
             accepted={'format':'vm2api-offline-acceptance-1','result':'PASS','image_id':image['Id'],'source_revision':rev,'compatible_from':[before['Image'],json.loads(dock(['image','inspect','offline-fixture:new']))[0]['Id']],'scenarios':[{'name':'synthetic-release-fixture','result':'PASS'}]}
@@ -130,6 +131,8 @@ def main():
         execute(bundles['new'],expected=1)
         check('坏工件在停止原服务前被拒绝',json.loads(dock(['inspect','control']))[0]['Id']==before['Id'])
         data.write_bytes(original)
+        refused=execute(bundles['migration'],expected=1)
+        check('新增数据库迁移在排空前拒绝且原容器保持',refused['result']=='FAIL' and refused['failure_phase']=='preflight' and json.loads(dock(['inspect','control']))[0]['Id']==before['Id'])
         active = execute(bundles['new'])
         check('完整离线升级成功',active['result']=='PASS' and active['phase']=='active')
         shown=api('/api/panel/upgrade-task')

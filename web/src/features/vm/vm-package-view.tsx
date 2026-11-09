@@ -50,8 +50,9 @@ export function readPackageFacts(text: string): PackageRead | null {
       kind === 'managed'
         ? `受管出口：${textOf(proxy.label) || textOf(proxy.id) || '未指定'}`
         : kind === 'local' || proxy.host === 'local'
-        ? `${localProxyText()}（本地代理）`
-        : [textOf(proxy.host), proxy.port].filter(Boolean).join(':') || 'SOCKS5'
+          ? `${localProxyText()}（本地代理）`
+          : [textOf(proxy.host), proxy.port].filter(Boolean).join(':') ||
+            'SOCKS5'
   }
   let credentialText = '无凭证'
   if (credential) {

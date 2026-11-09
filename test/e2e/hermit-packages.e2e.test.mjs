@@ -194,8 +194,15 @@ test('admin uploads immutable thin packages and shares a verified CLI cache with
     const after = JSON.parse(fs.readFileSync(path.join(gw.project, 'vms/vm-sim-01.json')))
     check('failed_activation_preserves_active_kernel', after.dataplane === undefined)
 
-    const invalidTLS = await send(fixture('0.2.0-tls-invalid', { manifest: { capabilities: { production: false, helper_integration: false, https_upstream: 'true' } } }))
-    check('tls_capability_requires_boolean', invalidTLS.response.status === 400 && invalidTLS.body.error?.code === 'invalid_capabilities')
+    const invalidTLS = await send(
+      fixture('0.2.0-tls-invalid', {
+        manifest: { capabilities: { production: false, helper_integration: false, https_upstream: 'true' } },
+      }),
+    )
+    check(
+      'tls_capability_requires_boolean',
+      invalidTLS.response.status === 400 && invalidTLS.body.error?.code === 'invalid_capabilities',
+    )
     const invalidHelper = await send(
       fixture('0.2.0-helper-invalid', { manifest: { capabilities: { production: false, helper_integration: true } } }),
     )

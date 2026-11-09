@@ -67,13 +67,14 @@ import { loggedReasoningEffort } from './thinking.mjs'
 import { reasoningEffortOf, sessionIdForLog } from './log-fields.mjs'
 import { ownerScopeFromRequest } from '../admin/resource-owner.mjs'
 import { keyScopeFromRequest, vmPoolDenial } from '../admin/key-scope.mjs'
+import { keyModelError } from '../admin/key-models.mjs'
 import {
   resolveInferenceEngine,
   resolveOfficialCcInference,
   resolveSlotPersonaPreset,
   slotPersonaModeOverride,
 } from '../vm/slot-engine.mjs'
-import { isValidVmId } from '../vm/vm-file.mjs'
+import { isValidVmId, readJsonParsedCached } from '../vm/vm-file.mjs'
 import {
   makeError,
   mapUpstreamError,
@@ -131,6 +132,7 @@ import {
   claudeCodeOnlyError,
   claudeCodeOnlyFromRouting,
   isClaudeCodeFamilyRequest,
+  isClaudeDesktopConnectionProbe,
 } from '../identity/claude-code-only.mjs'
 import { createDownstreamKeepalive } from './stream-keepalive.mjs'
 import {
@@ -153,7 +155,15 @@ import {
   fillMissingCacheTtl,
   validateCacheBreakpoints,
 } from './cache-ttl.mjs'
-import { confirmCachePrefix, describeCacheContinuity, formatCacheBreak, prepareCachePrefix } from './cache-prefix.mjs'
+import {
+  confirmCachePrefix,
+  describeCacheContinuity,
+  formatCacheBreak,
+  peekInterceptSession,
+  prepareCachePrefix,
+} from './cache-prefix.mjs'
+import { createRequestBodyContext, shallowCopyBody } from './request-body-context.mjs'
+import { jevInterceptSessionCache } from './jev-intercept.mjs'
 import { ensureClaudeWebSearch, shouldInjectClaudeWebSearch } from './web-search.mjs'
 import { dispatchStreamInference } from '../transport/kernel-router.mjs'
 import { syncClaudeKernelConfigsFromFile } from '../transport/rust-kernel-supervisor.mjs'
@@ -236,6 +246,17 @@ export function createHandleProtocol(deps) {
       status: gate.status,
       details: gate.detail || undefined,
     }).body
+  }
+
+  /** Key allowlist on the model the client named, before any mapping: 400 in the caller's protocol. */
+  function rejectKeyModel(req, res, protocol, model, logBag) {
+    const denied = keyModelError(req, model, { anthropic: protocol === 'anthropic.messages' })
+    if (!denied) return false
+    stats.errors++
+    logBag.error_code = denied.body.error.code
+    logBag.error_message = denied.body.error.message
+    json(res, denied.status, denied.body)
+    return true
   }
 
   // Codex handlers write usage onto logBag themselves. The key is charged the
@@ -376,6 +397,8 @@ export function createHandleProtocol(deps) {
     res,
     account = null,
     scopeMatched = false,
+    bodyCtx = null,
+    interceptSessionKey = null,
   }) {
     const official =
       isOfficialClaudeCodeTraffic(req.headers, inbound) ||
@@ -388,6 +411,7 @@ export function createHandleProtocol(deps) {
     } catch {
       jev = readJevConfig()
     }
+    const interceptSession = interceptSessionKey ? peekInterceptSession(interceptSessionKey) : null
     const decision = await runProtocolIntercept({
       inbound,
       body,
@@ -402,6 +426,8 @@ export function createHandleProtocol(deps) {
       requestId,
       account,
       scopeMatched,
+      bodyCtx,
+      interceptSession,
     })
     if (!decision || decision.action !== 'block') {
       if (decision?.intercept) logBag.intercept = decision.intercept
@@ -523,6 +549,8 @@ export function createHandleProtocol(deps) {
     noGoFallback = false,
     onEnvelope = null,
     onOutboundHeaders = null,
+    redactionPrincipal = '',
+    redactionSession = '',
   }) {
     const assembler = createClaudeMessageAssembler()
     const workerResult = await dispatchStreamInference({
@@ -543,8 +571,9 @@ export function createHandleProtocol(deps) {
       slotWaitMs: candidate.slotWaitMs,
       noGoFallback,
       ensureCredential: (exec) => ensureWorkerCredential(exec),
+      redactionPrincipal,
+      redactionSession,
       onEnvelope,
-      onOutboundHeaders,
       onEvent: async (line) => {
         if (/response_headers/.test(String(line))) return
         applyClaudeSSELineToMessage(restoreToolNamesInSSELine(line, toolNames), assembler)
@@ -673,6 +702,34 @@ export function createHandleProtocol(deps) {
     if (
       claudeCodeOnlyFromRouting(routingNow) &&
       !panelDiagnostics &&
+      protocol === 'anthropic.messages' &&
+      isClaudeDesktopConnectionProbe(req.headers, inbound)
+    ) {
+      // Claude Desktop's gateway sign-in check: acknowledge the authenticated connection
+      // locally. No account is picked and no model runs, so the fixed body spends nothing.
+      stats.requests++
+      stats.by_route[protocol] = (stats.by_route[protocol] || 0) + 1
+      logBag.via = 'desktop-connection-probe'
+      logBag.attempt_count = 0
+      logBag.usage = { input_tokens: 0, output_tokens: 0 }
+      logBag.stop_reason = 'end_turn'
+      logBag.final_state = 'desktop-connection-probe'
+      return json(res, 200, {
+        id: `msg_probe_${logCtx.request_id}`,
+        type: 'message',
+        role: 'assistant',
+        model: inbound.model,
+        content: [{ type: 'text', text: 'OK' }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: logBag.usage,
+      })
+    }
+    // After the Desktop sign-in probe, which runs no model.
+    if (rejectKeyModel(req, res, protocol, inbound?.model, logBag)) return
+    if (
+      claudeCodeOnlyFromRouting(routingNow) &&
+      !panelDiagnostics &&
       detectInboundPlatform(inbound?.model).platform === 'anthropic' &&
       (protocol !== 'anthropic.messages' ||
         isHealthShape(req.headers, inbound, getHealthMonitor()?.getConfig?.() || DEFAULT_HEALTH_PROBE, protocol) ||
@@ -794,7 +851,11 @@ export function createHandleProtocol(deps) {
     // API endpoint protocols own routing; apply model overrides before choosing the channel.
     if (inferenceBackend === 'api') ctx = applyIntercept(cfg.intercept.rules, 'before_upstream', ctx)
     const apiInbound = inferenceBackend === 'api' ? ctx.body : null
-    const apiPicked = inferenceBackend === 'api' ? apiScheduler.pick(ctx.body?.model) : null
+    const apiKeyScope = inferenceBackend === 'api' ? keyScopeFromRequest(req) : null
+    const apiPicked =
+      inferenceBackend === 'api'
+        ? apiScheduler.pick(ctx.body?.model, Date.now(), { groupType: apiKeyScope?.group_type })
+        : null
     if (apiPicked && !apiPicked.ok) {
       stats.errors++
       logBag.error_code = apiPicked.code
@@ -886,6 +947,7 @@ export function createHandleProtocol(deps) {
         return json(res, 200, mock)
       }
     }
+    const earlyBodyCtx = createRequestBodyContext(ctx.body)
     if (
       preReviewEnabled &&
       (await applyProtocolIntercept({
@@ -897,6 +959,7 @@ export function createHandleProtocol(deps) {
         requestId: logCtx.request_id,
         res,
         scopeMatched: apiRiskReview,
+        bodyCtx: earlyBodyCtx,
       }))
     ) {
       return
@@ -1094,11 +1157,21 @@ export function createHandleProtocol(deps) {
         }
       }
     }
+    const bodyCtx = createRequestBodyContext(ctx.body)
     // API endpoint opt-in is checked once before conversion, including when dedup is disabled.
     if (
       !apiRiskReview &&
       preReviewEnabled &&
-      (await applyProtocolIntercept({ req, inbound, body: ctx.body, fp, logBag, requestId: logCtx.request_id, res }))
+      (await applyProtocolIntercept({
+        req,
+        inbound,
+        body: ctx.body,
+        fp,
+        logBag,
+        requestId: logCtx.request_id,
+        res,
+        bodyCtx,
+      }))
     ) {
       return
     }
@@ -1296,6 +1369,9 @@ export function createHandleProtocol(deps) {
           cacheTtl,
           requestContext,
           passthrough: officialPassthrough,
+          routing: getRouting(),
+          redactionPrincipal: req.apiKeyRecord?.id || (req.apiKeyKind === 'master' ? 'master' : ''),
+          redactionSession: String(req.headers?.['x-claude-code-session-id'] || ''),
           converters: {
             createClaudeMessageAssembler,
             applyClaudeSSELineToMessage,
@@ -1433,6 +1509,7 @@ export function createHandleProtocol(deps) {
       const { body: prepared, ...prefix } = prepareCachePrefix(key, body, Date.now(), {
         imageKey,
         preserveMessageCache,
+        ctx: bodyCtx,
       }) || { body }
       logBag.cache_prefix = prefix
       logBag.cache_prefix_key = key
@@ -1486,6 +1563,7 @@ export function createHandleProtocol(deps) {
           body: canonicalBody,
           sessionId: outboundSessionId || callerSession || stickyKey,
           preserveMessageCache,
+          bodyCtx,
         },
         stream: upstreamStream,
         deliveryMode,
@@ -1512,6 +1590,8 @@ export function createHandleProtocol(deps) {
               requestId: logCtx.request_id,
               res,
               account: scopeAccountFromVm(selected?.vm, findAccount(accountQuota, selected?.vm)?.unified),
+              bodyCtx,
+              interceptSessionKey: attemptSessionId ? `${selected.accountId}:${attemptSessionId}` : null,
             })
             if (blocked) {
               const error = new Error('response already sent')
@@ -1542,7 +1622,8 @@ export function createHandleProtocol(deps) {
           const modeOverride = slotPersonaModeOverride(selected.vm)
           let routingNow = getRouting()
           try {
-            routingNow = JSON.parse(fs.readFileSync(routingConfigPath, 'utf8'))
+            const disk = readJsonParsedCached(routingConfigPath)
+            if (disk) routingNow = disk
           } catch {
             // A mid-write routing file keeps the in-memory snapshot for this request.
           }
@@ -1568,7 +1649,7 @@ export function createHandleProtocol(deps) {
             const outboundProfile = profileForPreset(resolvedPersona)
             // Render once from caller input with the selected slot's identity, not the pre-selection environment.
             if (!requestContext && !officialPassthrough) {
-              hopBody = applyCrsUnofficialPersona(prepareCliPersonaInput(structuredClone(personaIn), resolvedPersona), {
+              hopBody = applyCrsUnofficialPersona(prepareCliPersonaInput(shallowCopyBody(personaIn), resolvedPersona), {
                 forceConfigured: true,
                 routingFile: routingConfigPath,
                 cacheTtl: requestedCacheTtl,
@@ -1666,7 +1747,7 @@ export function createHandleProtocol(deps) {
           cacheTtl = requestedCacheTtl
           if (!requestContext && !officialPassthrough && (modeOverride || officialTraffic)) {
             const configuredMode = modeOverride || resolveSlotPersonaPreset(selected.vm, routingNow)
-            const rewritten = applyCrsUnofficialPersona(structuredClone(personaIn), {
+            const rewritten = applyCrsUnofficialPersona(shallowCopyBody(personaIn), {
               officialClient: false,
               forceConfigured: true,
               routingFile: routingConfigPath,
@@ -1766,6 +1847,8 @@ export function createHandleProtocol(deps) {
               noGoFallback: !!pinVmId,
               onEnvelope: noteOutboundEnvelope,
               onOutboundHeaders: noteOutboundHeaders,
+              redactionPrincipal: req.apiKeyRecord?.id || (req.apiKeyKind === 'master' ? 'master' : ''),
+              redactionSession: String(req.headers?.['x-claude-code-session-id'] || ''),
             })
           }
           let state
@@ -1813,6 +1896,8 @@ export function createHandleProtocol(deps) {
               slotWaitMs: candidate.slotWaitMs,
               noGoFallback: !!pinVmId,
               ensureCredential: (exec) => ensureWorkerCredential(exec),
+              redactionPrincipal: req.apiKeyRecord?.id || (req.apiKeyKind === 'master' ? 'master' : ''),
+              redactionSession: String(req.headers?.['x-claude-code-session-id'] || ''),
               onEnvelope: noteOutboundEnvelope,
               onOutboundHeaders: noteOutboundHeaders,
               onCommit: () => {
@@ -1871,7 +1956,9 @@ export function createHandleProtocol(deps) {
 
     result = acceptAssistantHop(result)
     if (result?.finalState === 'verified' && logBag.cache_prefix_key) {
-      confirmCachePrefix(logBag.cache_prefix_key)
+      confirmCachePrefix(logBag.cache_prefix_key, Date.now(), {
+        intercept: jevInterceptSessionCache(inbound, ctx.body, { ctx: bodyCtx }),
+      })
     }
     logBag.vm_id = result?.vmId || null
     logBag.account_id = result?.accountId || null
@@ -2067,6 +2154,7 @@ export function createHandleProtocol(deps) {
     }
     logBag.model = typeof body?.model === 'string' ? body.model : null
     logBag.inbound_summary = summarizeBody(body)
+    if (rejectKeyModel(req, res, protocol, body?.model, logBag)) return
     return runWithCodexKey(req, res, logBag, () =>
       handleCodexSearch({
         req,
@@ -2279,6 +2367,8 @@ export function createHandleProtocol(deps) {
     }
     logBag.model = typeof body?.model === 'string' ? body.model : null
     logBag.inbound_summary = summarizeImagesBody(body)
+    // No model means the upstream default, which a limited key cannot name.
+    if (rejectKeyModel(req, res, protocol, body?.model, logBag)) return
     return runWithCodexKey(req, res, logBag, () =>
       handleCodexImages({
         req,

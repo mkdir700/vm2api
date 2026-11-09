@@ -87,12 +87,22 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
     status: vm.status || 'unknown',
     kernel: vm.kernel || null,
     runtime_type: runtimeKind(vm),
+    migration_pending: ['running', 'needs_attention'].includes(vm.slot_migration?.status),
     machine: vm.machine || null,
     inference_engine: vm.inference_engine || null,
     persona_preset: vm.persona_preset || null,
     dataplane: vm.dataplane || null,
     kernel_package: vm.kernel_package || null,
     pending_kernel_package: vm.pending_kernel_package || null,
+    crag_kernel_version: vm.crag_kernel_version || null,
+    kernel_installation: vm.kernel_installation
+      ? {
+          kernel: vm.kernel_installation.kernel,
+          version: vm.kernel_installation.version ?? null,
+          installed_at: vm.kernel_installation.installed_at,
+        }
+      : null,
+
     seed_policy: vm.seed_policy || null,
     region: vm.region || vm.zone || null,
     node_id: vm.node_id || null,
@@ -445,6 +455,10 @@ function applySlotEnginePatch(vm, patch = {}) {
     if (patch.dataplane) vm.dataplane = patch.dataplane
     else delete vm.dataplane
   }
+  if (Object.prototype.hasOwnProperty.call(patch, 'crag_kernel_version')) {
+    if (patch.crag_kernel_version) vm.crag_kernel_version = patch.crag_kernel_version
+    else delete vm.crag_kernel_version
+  }
 }
 
 export function persistSlotEnginePolicy(projectRoot, vmId, patch = {}) {
@@ -764,6 +778,22 @@ export function patchVmRecord(projectRoot, id, patch) {
   vm.updated_at = new Date().toISOString()
   atomicWriteJson(file, vm, { mode: 0o600 })
   return vm
+}
+
+/** Panel label only. The slot id stays the creation number. */
+export const VM_DISPLAY_NAME_MAX = 80
+
+export function parseVmDisplayName(value) {
+  if (typeof value !== 'string') return { ok: false, error: '名称必须是文本' }
+  const name = value.trim()
+  if (!name) return { ok: false, error: '名称不能为空' }
+  if (/[\u0000-\u001F\u007F\u2028\u2029]/.test(name)) {
+    return { ok: false, error: '名称不能包含控制字符' }
+  }
+  if ([...name].length > VM_DISPLAY_NAME_MAX) {
+    return { ok: false, error: `名称最长 ${VM_DISPLAY_NAME_MAX} 个字符` }
+  }
+  return { ok: true, value: name }
 }
 
 /**

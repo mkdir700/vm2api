@@ -7,6 +7,8 @@
  */
 
 import { THINKING_DISPLAY_MODES } from '../protocol/thinking.mjs'
+import { normalizeRedaction } from '../redaction/policy.mjs'
+import { redactionStatus } from '../redaction/runtime.mjs'
 import { readSlotProcessStatus } from '../vm/slot-process-status.mjs'
 import os from 'node:os'
 import { usagePoolEnabled, usageRead } from '../db/sqlite-pool.mjs'
@@ -24,6 +26,7 @@ import {
 import { clearRecoverableVmCooldown, markVmRefreshError } from '../oauth/oauth-credentials.mjs'
 import {
   resolveInferenceEngine,
+  resolveCragKernelVersion,
   resolveKernelDataplane,
   normalizeSessionSlots,
   normalizeSessionIdleTtlSeconds,
@@ -1509,6 +1512,8 @@ export function buildRouting({ routingConfig, stickyRouter }) {
     notify: publicNotifyConfig(routingConfig?.notify),
     vm: normalizeVmConfig(routingConfig?.vm),
     telemetry: { upload_interval_seconds: telemetryUploadInterval(routingConfig) },
+    redaction: normalizeRedaction(routingConfig?.redaction),
+    redaction_runtime: redactionStatus(),
     sessions: stickyRouter.stats(),
   })
 }
@@ -1977,6 +1982,8 @@ function enrichVm(v, accountQuota, active, extras = {}) {
     resolved_inference_engine: resolveInferenceEngine(v, extras.routingConfig || {}),
     resolved_persona_preset: resolveSlotPersonaPreset(v, extras.routingConfig || {}),
     resolved_dataplane: resolveKernelDataplane(v, extras.routingConfig || {}),
+    crag_kernel_version: v.crag_kernel_version || null,
+    resolved_crag_kernel_version: isCodex ? null : resolveCragKernelVersion(v, extras.routingConfig || {}),
     note: v.note || null,
     region: v.region || null,
     node_id: v.node_id || null,

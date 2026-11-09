@@ -268,7 +268,7 @@ export class RemoteManagedEgressHosts {
       }
       controls = await this.helpers(record, proxy.managed_host_id, [proxy], path.posix.dirname(record.root), clientFor)
       const states = await Promise.all(controls.map((control) => control.inspect()))
-      return states.every((state) => !state.paused) && await this.routing(record, proxy)
+      return states.every((state) => !state.paused) && (await this.routing(record, proxy))
     } catch {
       return false
     } finally {
@@ -287,19 +287,30 @@ export class RemoteManagedEgressHosts {
       const network = networks?.[0]
       const subnet = network?.IPAM?.Config?.[0]?.Subnet
       if (
-        networks.length !== 1 || network?.Name !== names.network ||
-        network.Driver !== 'bridge' || network.Labels?.['kin.egress.vm'] !== vmId ||
+        networks.length !== 1 ||
+        network?.Name !== names.network ||
+        network.Driver !== 'bridge' ||
+        network.Labels?.['kin.egress.vm'] !== vmId ||
         network.Options?.['com.docker.network.bridge.name'] !== names.bridge ||
         network.Options?.['com.docker.network.bridge.enable_ip_masquerade'] !== 'false' ||
-        typeof subnet !== 'string' || !/^\d+\.\d+\.\d+\.\d+\/\d+$/.test(subnet)
-      ) return false
-      const plan = iptablesPlan({ chain: names.chain, bridge: names.bridge, subnet,
-        tcpPort: names.ports.tcp, dnsPort: names.ports.dns })
+        typeof subnet !== 'string' ||
+        !/^\d+\.\d+\.\d+\.\d+\/\d+$/.test(subnet)
+      )
+        return false
+      const plan = iptablesPlan({
+        chain: names.chain,
+        bridge: names.bridge,
+        subnet,
+        tcpPort: names.ports.tcp,
+        dnsPort: names.ports.dns,
+      })
       // Check all expected jumps, redirects and fail-closed filters without changing them.
-      const checks = plan.add.filter((args) => args.includes('-C') || args.includes('-A'))
-        .map((args) => args.map((arg) => arg === '-A' ? '-C' : arg))
-      const script = repair ? remoteIptablesScript(plan, { sudo }) :
-        `set -e\n${checks.map((args) => `${sudo ? 'sudo -n ' : ''}iptables ${args.map(shellQuote).join(' ')} 2>/dev/null`).join('\n')}`
+      const checks = plan.add
+        .filter((args) => args.includes('-C') || args.includes('-A'))
+        .map((args) => args.map((arg) => (arg === '-A' ? '-C' : arg)))
+      const script = repair
+        ? remoteIptablesScript(plan, { sudo })
+        : `set -e\n${checks.map((args) => `${sudo ? 'sudo -n ' : ''}iptables ${args.map(shellQuote).join(' ')} 2>/dev/null`).join('\n')}`
       const response = await execCollect(record.client, script, { timeoutMs: 10000, maxBytes: 65536 })
       if (record.closed || this.cluster.client(proxy.managed_host_id) !== record.client || response.code !== 0)
         return false
