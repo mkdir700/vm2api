@@ -1257,7 +1257,26 @@ raw=open(dest,'rb').read();print(json.dumps({'archive':{'sha256':hashlib.sha256(
       save('outer-turn-' + turn + '.json', results.at(-1) || null)
       check('actual_outer_turn_' + turn, results.length > before && !results.at(-1).is_error)
     }
-    for (const turn of [1, 2]) await sendTurn(turn)
+    for (const turn of [1, 2]) {
+      await sendTurn(turn)
+      if (turn === 1) {
+        const nativeMcp = JSON.parse(fs.readFileSync(path.join(ownerRoot, 'mcp.json')))
+        const nativeSettings = JSON.parse(fs.readFileSync(path.join(ownerRoot, 'config/settings.json')))
+        const events = fs.readFileSync(path.join(ownerRoot, 'observations/native-input-events.jsonl'), 'utf8')
+          .trim().split('\n').map((line) => JSON.parse(line))
+        const evidence = {
+          report_ready: nativeMcp.mcpServers.outer.args.includes('--report-ready'),
+          wait_ready: nativeSettings.hooks.SessionStart.some((group) =>
+            group.hooks.some((hook) => hook.command.includes('--wait-ready'))),
+          catalog_verified: events.filter((event) => event.event === 'dispatch_catalog_verified'),
+          catalog_rejected: events.filter((event) => event.event === 'dispatch_catalog_rejected'),
+        }
+        save('initial-mcp-ready-barrier.json', evidence)
+        check('new_session_waits_for_mcp_catalog', evidence.report_ready && evidence.wait_ready)
+        check('new_session_dispatch_catalog_verified',
+          evidence.catalog_verified.length > 0 && evidence.catalog_rejected.length === 0)
+      }
+    }
     fs.writeFileSync(path.join(out, 'outer-stdout.jsonl'), Buffer.concat(raw))
     save('outer-messages.json', lines)
     check(
