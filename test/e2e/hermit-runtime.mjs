@@ -13,6 +13,8 @@ import { startGateway, seedVm, api, pickFreePort, REPO_ROOT } from '../harness.m
 
 const [out, archive, receiptFile, cliSource, apiKernel] = process.argv.slice(2)
 const tlsMode = process.env.HERMIT_E2E_TLS === '1'
+const vm2apiProfile = process.env.HERMIT_E2E_VM2API_PROFILE === '1'
+const systemMarker = 'HERMIT_VM2API_SYSTEM_20261109'
 const productionMode = process.env.HERMIT_E2E_PRODUCTION === '1'
 const oauthMode = process.env.HERMIT_E2E_OAUTH === '1'
 const OAUTH_AT = 'sk-ant-oat01-runtime-old'
@@ -91,14 +93,15 @@ try {
       scope: 'user:profile user:inference user:sessions:claude_code',
     })
   const routing = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'src/config/routing.json')))
-  routing.compatibility = { ...routing.compatibility, official_cc_passthrough: true, cache_ttl: '1h' }
+  routing.compatibility = { ...routing.compatibility, official_cc_passthrough: !vm2apiProfile, cache_ttl: '1h',
+    ...(vm2apiProfile ? { persona_preset: 'official_full', persona_templates: { official_full: [{ id: 'harness', type: 'text', text: systemMarker }] } } : {}) }
   routing.kernel_watchdog = { enabled: false }
   routing.credential_refresh = { enabled: false }
   routing.pool = { ...routing.pool, worker_health_ttl_ms: 5000 }
   routing.inference = { ...routing.inference, health_ttl_ms: 0, slot_wait_ms: 500, session_slots: 20 }
   routing.failover = {
     ...routing.failover,
-    eager_tool_streaming: false,
+    eager_tool_streaming: vm2apiProfile,
     total_retry_deadline_ms: 15000,
     queue_keepalive_delay_ms: 60000,
   }
@@ -173,6 +176,17 @@ try {
         },
         { type: 'content_block_stop', index },
       )
+    if (vm2apiProfile) {
+      for (let i = events.length - 1; i >= 0; i--) {
+        const event = events[i]
+        if (event.delta?.type !== 'input_json_delta') continue
+        const value = event.delta.partial_json
+        const middle = Math.max(1, Math.floor(value.length / 2))
+        events.splice(i, 1,
+          { ...event, delta: { type: 'input_json_delta', partial_json: value.slice(0, middle) } },
+          { ...event, delta: { type: 'input_json_delta', partial_json: value.slice(middle) } })
+      }
+    }
     events.push(
       {
         type: 'message_delta',
@@ -1039,6 +1053,43 @@ raw=open(dest,'rb').read();print(json.dumps({'archive':{'sha256':hashlib.sha256(
       )
     }
     ownerRoot = realDocker ? config.session.root.replace('/run/kin', run) : config.session.root
+    if (vm2apiProfile) {
+      const internalCall = (body, id) => new Promise((resolve, reject) => {
+        const request = http.request({ socketPath: path.join(run, 'kernel.sock'),
+          path: '/internal/v1/messages', method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-kin-internal-token': config.internal_token } }, (response) => {
+          const chunks = []
+          response.on('data', (chunk) => chunks.push(chunk))
+          response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(Buffer.concat(chunks)) }))
+        })
+        request.on('error', reject)
+        request.end(JSON.stringify({ request_id: id, stream: false,
+          headers: { 'x-claude-code-session-id': 'profile-negative' }, body }))
+      })
+      const base = { model: 'claude-sonnet-4-6', stream: true,
+        messages: [{ role: 'user', content: 'PROFILE_INVALID' }],
+        tools: [{ name: 'Read', input_schema: { type: 'object' } }] }
+      const cases = [
+        ['cache-scope-invalid', { ...base, system: [{ type: 'text', text: 'invalid', cache_control: { type: 'ephemeral', scope: 'invalid' } }] }],
+        ['system-text-missing', { ...base, system: [{ type: 'text' }] }],
+        ['system-number', { ...base, system: 5 }],
+        ['system-image', { ...base, system: [{ type: 'image', text: 'invalid' }] }],
+        ['system-oversize', { ...base, system: 'x'.repeat(1024 * 1024) }],
+        ...[null, 'true', 1].map((value, index) => ['stream-type-' + index,
+          { ...base, tools: [{ ...base.tools[0], eager_input_streaming: value }] }]),
+        ['mixed-streaming', { ...base, tools: [
+          { ...base.tools[0], eager_input_streaming: true },
+          { name: 'Edit', input_schema: { type: 'object' }, eager_input_streaming: false } ] }],
+      ]
+      for (const [name, body] of cases) {
+        const response = await internalCall(body, 'invalid-' + name)
+        save('profile-rejected-' + name + '.json', response)
+        check('profile_rejects_' + name, response.status === 400)
+      }
+      check('invalid_profile_creates_no_native_runtime',
+        !JSON.parse(fs.readFileSync(path.join(ownerRoot, 'owner.json'))).runtime_launch_attempted)
+      check('invalid_profile_sends_no_upstream_request', requests.length === 0)
+    }
     check(
       'config_uses_shared_cli',
       config.session.managed.native_binary ===
@@ -1283,6 +1334,11 @@ raw=open(dest,'rb').read();print(json.dumps({'archive':{'sha256':hashlib.sha256(
       'native_received_tool_results',
       requests.length === 3 && requests[1].body.messages.some((m) => JSON.stringify(m).includes('tool_result')),
     )
+    if (vm2apiProfile) {
+      save('vm2api-profile-wire.json', requests.map((row) => ({ system: row.body.system, tools: row.body.tools })))
+      check('vm2api_system_reaches_native_upstream', requests.every((row) => JSON.stringify(row.body.system).includes(systemMarker)))
+      check('native_eager_streaming_enabled', requests.every((row) => row.body.tools.every((tool) => tool.eager_input_streaming === true)))
+    }
     check(
       'only_proxy_tools',
       requests.every((row) => row.body.tools.every((tool) => tool.name.startsWith('mcp__outer__'))),
@@ -1521,6 +1577,11 @@ raw=open(dest,'rb').read();print(json.dumps({'archive':{'sha256':hashlib.sha256(
       const row = listing.json.data.proxies.find((row) => row.id === factoryProxyId)
       check('managed_bound_exit_ready_after_recovery', row.exit_status === 'ready' && row.blocked_reason === null)
       await sendTurn(4)
+    }
+    if (vm2apiProfile) {
+      check('vm2api_system_survives_all_restorations', requests.every((row) => JSON.stringify(row.body.system).includes(systemMarker)))
+      check('eager_streaming_survives_all_restorations', requests.every((row) => row.body.tools.every((tool) => tool.eager_input_streaming === true)))
+      save('vm2api-profile-final-wire.json', requests.map((row) => ({ system: row.body.system, tools: row.body.tools })))
     }
     const log = JSON.parse(fs.readFileSync(path.join(ownerRoot, 'owner.json')))
     save('owner-before-stop.json', log)

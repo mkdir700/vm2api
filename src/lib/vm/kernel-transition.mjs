@@ -138,8 +138,22 @@ async function prepare(project, vm, target, routing) {
     const installed = await resolveHermitPackage(project, binding)
     assertHermitActivation(desired, installed.manifest)
     hermitAuthentication(project, vm, { allowOAuth: installed.manifest.capabilities.helper_integration === true })
-    if (routing.compatibility?.official_cc_passthrough !== true || routing.failover?.eager_tool_streaming !== false)
-      throw fail('hermit_protocol_profile_unsupported', 'Hermit 需要原版载荷透传，并关闭提前工具转发')
+    if (
+      routing.compatibility?.official_cc_passthrough !== true &&
+      installed.manifest.capabilities.system_prompt !== true
+    )
+      throw fail(
+        'hermit_protocol_profile_unsupported',
+        '当前 Hermit 包不支持 vm2api 系统提示词，请安装具有 system_prompt 能力的版本',
+      )
+    if (
+      routing.failover?.eager_tool_streaming === true &&
+      installed.manifest.capabilities.eager_tool_streaming !== true
+    )
+      throw fail(
+        'hermit_protocol_profile_unsupported',
+        '当前 Hermit 包不支持工具参数流式，请安装具有 eager_tool_streaming 能力的版本',
+      )
     desired.kernel_package = { ...binding, manifest_sha256: installed.manifest_sha256 }
     delete desired.crag_kernel_version
   } else {
