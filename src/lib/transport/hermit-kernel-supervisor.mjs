@@ -18,7 +18,8 @@ import {
 const execute = promisify(execFile)
 const owners = new Map()
 const starting = new Map()
-const key = (exec) => `${exec.projectRoot}:${exec.vmId || exec.vm?.id}`
+const projectRootOf = (exec) => exec.projectRoot || (exec.homeDir ? path.resolve(exec.homeDir, '../../..') : null)
+const key = (exec) => `${projectRootOf(exec)}:${exec.vmId || exec.vm?.id}`
 export const hasHermitKernel = (exec) => owners.has(key(exec))
 export const selectedHermit = (exec) => exec?.vm?.dataplane === 'hermit'
 
@@ -63,7 +64,36 @@ export async function stopHermitSlot(vm) {
 export async function stopAllHermitKernels() {
   return Promise.all([...owners.values()].map((entry) => stopHermitKernel(entry.exec)))
 }
+// The controller owns each stdin lease. Restore recorded-running owners before
+// opening HTTP admission, including VMs paused by an upgrade's scheduling hold.
+export async function restoreHermitKernels(projectRoot, vms) {
+  const pending = (vm) =>
+    vm.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(vm.kernel_transition.state)
+  return Promise.all(
+    vms
+      .filter(
+        (vm) =>
+          vm.status === 'running' &&
+          vm.dataplane === 'hermit' &&
+          !vm.node_id &&
+          !vm.migration_pending &&
+          !['running', 'needs_attention'].includes(vm.slot_migration?.status) &&
+          !pending(vm),
+      )
+      .map(async (vm) => {
+        const result = await ensureHermitKernel({
+          projectRoot,
+          vmId: vm.id,
+          vm,
+          homeDir: path.join(projectRoot, 'vms', vm.id, 'cli-home'),
+        })
+        if (!result.ok) console.warn(`[hermit-startup] ${vm.id}: ${result.reason}`)
+        return { vmId: vm.id, ...result }
+      }),
+  )
+}
 export function ensureHermitKernel(exec, opts = {}) {
+  exec = { ...exec, projectRoot: projectRootOf(exec) }
   const id = key(exec)
   if (starting.has(id)) return starting.get(id).then(() => ensureHermitKernel(exec, opts))
   const promise = start(exec, opts).finally(() => starting.delete(id))

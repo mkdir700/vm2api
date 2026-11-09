@@ -1,4 +1,4 @@
-import { stopAllHermitKernels } from './lib/transport/hermit-kernel-supervisor.mjs'
+import { restoreHermitKernels, stopAllHermitKernels } from './lib/transport/hermit-kernel-supervisor.mjs'
 import { EgressDrainClient, acquireManagedDrain } from './lib/vm/managed-egress-drain.mjs'
 import { egressRunDir, egressPidsForProxyConfig } from './lib/vm/egress.mjs'
 import { ManagedEgressHost } from './lib/vm/managed-egress-host.mjs'
@@ -1444,6 +1444,7 @@ if (process.env.KIN_CRS_MOCK !== '1') {
   syncLocalSlotRestartPolicies(listVms(cfg.paths.project))
 }
 await bootApiKernel(cfg)
+if (process.env.KIN_CRS_MOCK !== '1') await restoreHermitKernels(cfg.paths.project, listVms(cfg.paths.project))
 server.keepAliveTimeout = 120_000
 server.headersTimeout = 125_000
 server.timeout = 0
