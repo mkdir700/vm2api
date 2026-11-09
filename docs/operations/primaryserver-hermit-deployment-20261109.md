@@ -1,5 +1,8 @@
 # primaryserver 正式升级与 Hermit 交接
 
+更新：本文件记录上一轮 `b48e7468` / `7204d42` 部署。后续 `362c1607` / `9cdb646` 已上线，支持保留现有全局设置。当前操作以[本轮交接](hermit-vm2api-profile-20261109.md)为准。
+
+
 ## 结果
 
 primaryserver 已通过统一离线执行器升级。任务 `cbfde40110bd4f12a3cc01fa8edbf6ff` 返回 `PASS`，阶段为 `active`。
