@@ -72,6 +72,16 @@ export function mockCrsPayload(options = {}) {
       : 'tool_use'
   }
   const text = process.env.KIN_MOCK_TEXT || 'pong'
+  if (['native_preparation_failed', 'native_control_unavailable', 'native_generation_failed'].includes(scenario)) {
+    return {
+      ok: false,
+      status: 502,
+      via: 'go-worker',
+      transportError: false,
+      body: { type: 'error', error: { type: 'api_error', code: scenario, message: scenario, details: { retryable: false } } },
+      headers: {},
+    }
+  }
   if (scenario === 'error') {
     return {
       ok: false,

@@ -72,6 +72,9 @@ export const ErrorCode = {
   CLI_ERROR: 'cli_error',
   KERNEL_UNAVAILABLE: 'kernel_unavailable',
   KERNEL_ERROR: 'kernel_error',
+  NATIVE_PREPARATION_FAILED: 'native_preparation_failed',
+  NATIVE_CONTROL_UNAVAILABLE: 'native_control_unavailable',
+  NATIVE_GENERATION_FAILED: 'native_generation_failed',
   FABLE_REQUIRES_MAX: 'fable_requires_max',
 
   INCOMPLETE_RESPONSE: 'incomplete_response',
@@ -110,6 +113,9 @@ export const KERNEL_FAILURE_STATUS = Object.freeze({
   [ErrorCode.CLI_ERROR]: 502,
   [ErrorCode.KERNEL_ERROR]: 502,
   [ErrorCode.KERNEL_UNAVAILABLE]: 503,
+  [ErrorCode.NATIVE_PREPARATION_FAILED]: 502,
+  [ErrorCode.NATIVE_CONTROL_UNAVAILABLE]: 502,
+  [ErrorCode.NATIVE_GENERATION_FAILED]: 502,
 })
 
 export const CLIENT_POOL_BUSY_MESSAGE = '号池负载过高，稍后再试'

@@ -369,6 +369,19 @@ function classifyUpstreamResultRaw(
   const workerCode = resultErrorCode(result)
   const reset = resetFromHeaders(result.headers, now)
 
+  // The native session may already contain work. Returning its failure preserves
+  // the session; selecting another account could replay tools or rebuild history.
+  if ([ErrorCode.NATIVE_PREPARATION_FAILED, ErrorCode.NATIVE_CONTROL_UNAVAILABLE,
+    ErrorCode.NATIVE_GENERATION_FAILED].includes(workerCode)) {
+    return {
+      scope: 'worker',
+      action: 'stop',
+      reason: workerCode,
+      cooldownUntil: null,
+      retrySameAccount: false,
+    }
+  }
+
   const hay = `${code} ${message} ${workerCode}`
   if (
     [code, workerCode].some((value) =>

@@ -14,6 +14,7 @@ import {
   statusBadgeClass,
   statusBadgeTooltip,
   thinkingEffortBadgeClass,
+  isIncompleteCommitted,
 } from './log-display'
 
 export function StatusBadge({
@@ -33,6 +34,7 @@ export function StatusBadge({
       className={cn(statusBadgeClass(statusCode, finalState), className)}
     >
       {statusCode ?? '未知'}
+      {isIncompleteCommitted(statusCode, finalState) ? ' · 失败' : null}
     </Badge>
   )
   const title = statusBadgeTooltip(statusCode, finalState, errorCode)

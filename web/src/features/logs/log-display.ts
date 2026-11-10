@@ -34,7 +34,18 @@ export function isIncompleteCommitted(
     statusCode != null &&
     statusCode >= 200 &&
     statusCode < 300 &&
-    finalState === 'incomplete'
+    finalState != null &&
+    [
+      'incomplete',
+      'unknown',
+      'transport_error',
+      'error',
+      'rejected',
+      'exhausted',
+      'upstream_error',
+      'invalid_request',
+      'policy_block',
+    ].includes(finalState)
   )
 }
 
