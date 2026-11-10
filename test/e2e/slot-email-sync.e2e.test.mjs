@@ -35,7 +35,13 @@ test('slot profile repairs missing email through import and usage HTTP routes', 
   const pidFile = path.join(root, 'api-pids')
   fs.writeFileSync(launcher, `#!/bin/sh\nprintf '%s\\n' "$$" >> '${pidFile}'\nexec '${kernel}' "$@"\n`, { mode: 0o700 })
   const docker = path.join(root, 'docker')
-  fs.writeFileSync(docker, '#!/bin/sh\nexit 1\n', { mode: 0o700 })
+  fs.writeFileSync(
+    docker,
+    '#!/bin/sh\necho "Error response from daemon: No such object: email-fixture" >&2\nexit 1\n',
+    {
+      mode: 0o700,
+    },
+  )
   let gateway
   let completed = false
   let releaseProfile
@@ -166,7 +172,13 @@ test('slot profile repairs missing email through import and usage HTTP routes', 
     fs.writeFileSync(path.join(project, 'config/routing.json'), JSON.stringify(routing))
     gateway = await startGateway({
       project,
-      env: { KIN_CRS_MOCK: '0', KIN_DOCKER_BIN: docker, KIN_API_KERNEL_BIN: launcher, KIN_AUTO_SYNC_WRAP: '0' },
+      env: {
+        KIN_CRS_MOCK: '0',
+        KIN_DOCKER_BIN: docker,
+        KIN_API_KERNEL_BIN: launcher,
+        KIN_AUTO_SYNC_WRAP: '0',
+        PATH: root + path.delimiter + process.env.PATH,
+      },
     })
     const probe = (mode) => api(gateway, 'POST', `/api/panel/vms/vm-${mode}/probe`, { body: {} })
     const profiles = (mode) => calls.filter((call) => call.id === `vm-${mode}` && call.operation === 'profile').length
