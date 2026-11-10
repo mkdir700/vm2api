@@ -1,0 +1,715 @@
+{
+  "result": "PASS",
+  "acceptance_date": "2026-11-10",
+  "time_zone": "Asia/Shanghai",
+  "native_final": {
+    "qualification": {
+      "result": "PASS",
+      "version": "0.0.0-production.sessioncache4",
+      "commit": "3a1786b1394dd491be67bf819d2b32e057022d09",
+      "binary_sha256": "fc061fda8cb072608726d1b8db5d11f239dd1d21c3662f14045a648fb2a7eb2a",
+      "cases": [
+        {
+          "case": "images",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 15
+        },
+        {
+          "case": "result-images",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 17
+        },
+        {
+          "case": "session-cache",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 166
+        },
+        {
+          "case": "cache",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 21
+        },
+        {
+          "case": "quota-read",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 17
+        },
+        {
+          "case": "environment",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 17
+        },
+        {
+          "case": "helpers",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 54
+        },
+        {
+          "case": "assistant",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 11
+        },
+        {
+          "case": "catalog",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 16
+        },
+        {
+          "case": "shared-root",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 13
+        },
+        {
+          "case": "classifier",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 53
+        },
+        {
+          "case": "pool",
+          "result": "PASS",
+          "exit": 0,
+          "checks": 25
+        }
+      ]
+    },
+    "assertion_count": 425,
+    "package_archive": {
+      "bytes": 30833373,
+      "name": "hermit-0.0.0-production.sessioncache4-linux-amd64.tar.gz",
+      "sha256": "658b557db2914d72939902623139bfa1d76076dad9e750b4e19ce615b4fcd468"
+    },
+    "manifest_sha256": "83e0f197bfa68830c2365a79d721e56dfca3b4cdf67dff7384973c9aff50ddaa",
+    "deployment": {
+      "active_executables": {
+        "/opt/kin-kernel-packages/versions/hermit/linux-amd64/0.0.0-production.sessioncache4/payload/bin/hermit": "fc061fda8cb072608726d1b8db5d11f239dd1d21c3662f14045a648fb2a7eb2a"
+      },
+      "result": "PASS",
+      "version": "0.0.0-production.sessioncache4",
+      "source": "3a1786b1394dd491be67bf819d2b32e057022d09",
+      "binary_sha256": "fc061fda8cb072608726d1b8db5d11f239dd1d21c3662f14045a648fb2a7eb2a",
+      "archive_sha256": "658b557db2914d72939902623139bfa1d76076dad9e750b4e19ce615b4fcd468",
+      "control_image_unchanged": true,
+      "control_container_unchanged": true,
+      "unrelated_containers_unchanged": true,
+      "credentials_unchanged": true,
+      "credentials_baseline": "post-explicit-OAuth-refresh; final-kernel-stage baseline",
+      "configs_unchanged": true,
+      "original_config_and_unrelated_container_baseline_checked": true,
+      "control_baseline": "post-feature-control-activation; unchanged during final kernel update",
+      "health": {
+        "healthy": true,
+        "session_capacity": 20,
+        "active_requests": 0,
+        "pending_tool_results": 0,
+        "switch_ready": true,
+        "classifier_request_context": true
+      }
+    },
+    "transition": {
+      "result": "PASS",
+      "state": "finalized",
+      "transition_id": "kernel-7869b823-f5e8-4e3b-a310-c1727e022f1f",
+      "can_rollback": null,
+      "version": "0.0.0-production.sessioncache4",
+      "schedulable": true
+    }
+  },
+  "production_live": {
+    "result": "PASS",
+    "source_commit": "3a1786b1394dd491be67bf819d2b32e057022d09",
+    "version": "0.0.0-production.sessioncache4",
+    "client": {
+      "result": "PASS",
+      "session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+      "area": "/private/tmp/hermit-sessioncache-final-live4",
+      "cli_version": "2.1.319",
+      "cli_sha256": "1f53587e92dee8e089fa349188a4cda64fa34ace6e7b0ca2ee278ddaa3cc2ebd",
+      "driver_sha256": "96328fca169649da29e84990c66c087d524af000b2c0079558b49a5d120b1778",
+      "large_context": false,
+      "request_rewriting": false,
+      "permission_mode": "auto",
+      "safety_bypass_used": false,
+      "actual_bash_calls": 3,
+      "receipts_verified": true,
+      "quota_observer": "PASS",
+      "real_provider": true
+    },
+    "checks": {
+      "gateway_request_ids_match": true,
+      "cache_usage_exact": true,
+      "branch_totals_exact": true,
+      "main_owner_reused": true,
+      "main_prefix_append_only": true,
+      "classifier_owners_separate": true,
+      "classifier_cache_reads_observed": true,
+      "missing_parent_not_invented": true,
+      "no_prompt_or_image_content": true
+    },
+    "requests": [
+      {
+        "query_source": "repl_main_thread",
+        "gateway_request_id": "e8349b67-87c1-46f8-bf31-5875c9ae12cf",
+        "request_id": "d6790efb-d69d-41e3-a141-6ef929325e11",
+        "time_utc": "2026-11-10T01:55:16.252021539Z",
+        "external_session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "routing_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "branch_id": "f94df68856938952b7afe01b26de6e487880cf1ccae65454fce44e949877db1f",
+        "parent_branch_id": null,
+        "purpose": "conversation",
+        "native_owner": "s-1",
+        "native_session_id": "f6c55f65-caca-7a8f-7031-640eda544cee",
+        "generation": "b49a4322-8afa-4b75-9449-0c67f5136f4f",
+        "selection": "owner_created",
+        "status": 200,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2,
+          "output_tokens": 24,
+          "cache_read_input_tokens": 0,
+          "cache_creation_input_tokens": 4682
+        },
+        "prefix": {
+          "tools_sha256": "1aaac201d9ef536d51b33780dbdf14142baf8e4748d2b776080f13aab10a9d6e",
+          "system_sha256": "d051a4354f76220ba47d70779be4d8aaf9f1d15776188525e4636536b396fed2",
+          "profile_sha256": "6e7d2f61d4b6a8a83a494098f7bd7805b2f09d1b71ab389553e67938a6ecabd0",
+          "message_count": 2,
+          "retained_messages": 0,
+          "change": "first_observation",
+          "body_bytes": 15227,
+          "cache_ttls": [
+            "1h"
+          ]
+        },
+        "observation": "available"
+      },
+      {
+        "query_source": "auto_mode",
+        "gateway_request_id": "93c55f2d-9a20-4b5d-b185-5089f77a5729",
+        "request_id": "db6fdf6d-726e-40d0-a932-d666697b810b",
+        "time_utc": "2026-11-10T01:55:34.906245794Z",
+        "external_session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "routing_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "branch_id": "428f1244c961e78e933fe00f273e8cbcef4306966f8f9f5e436dbb0dfeaa9a3e",
+        "parent_branch_id": null,
+        "purpose": "classifier",
+        "native_owner": "s-2",
+        "native_session_id": "2ba9ea66-253d-4cf5-8986-df7978697d48",
+        "generation": "44c24612-7547-4160-835f-93f547321518",
+        "selection": "owner_created",
+        "retirement_reason": "classifier_complete",
+        "status": 200,
+        "complete": true,
+        "usage": {
+          "input_tokens": 160,
+          "output_tokens": 9,
+          "cache_read_input_tokens": 47093,
+          "cache_creation_input_tokens": 612
+        },
+        "prefix": {
+          "tools_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "system_sha256": "114938db5898614c9386b908a9a77f89e058adf03234fddea1a6087880e05648",
+          "profile_sha256": "873b6984f6b61d8c9b1dc8228c696588eb5ac22ed0675685f9b608a7fe9578df",
+          "message_count": 1,
+          "retained_messages": 0,
+          "change": "first_observation",
+          "body_bytes": 145664,
+          "cache_ttls": [
+            "1h"
+          ]
+        },
+        "observation": "available"
+      },
+      {
+        "query_source": "repl_main_thread",
+        "gateway_request_id": "d4a334aa-0ffa-46ce-bc7d-057a03becceb",
+        "request_id": "a6dd45be-184b-47b8-bd89-701f79835087",
+        "time_utc": "2026-11-10T01:55:47.355896322Z",
+        "external_session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "routing_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "branch_id": "f94df68856938952b7afe01b26de6e487880cf1ccae65454fce44e949877db1f",
+        "parent_branch_id": null,
+        "purpose": "conversation",
+        "native_owner": "s-1",
+        "native_session_id": "f6c55f65-caca-7a8f-7031-640eda544cee",
+        "generation": "b49a4322-8afa-4b75-9449-0c67f5136f4f",
+        "selection": "owner_reused",
+        "status": 200,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2,
+          "output_tokens": 24,
+          "cache_read_input_tokens": 4682,
+          "cache_creation_input_tokens": 543
+        },
+        "prefix": {
+          "tools_sha256": "1aaac201d9ef536d51b33780dbdf14142baf8e4748d2b776080f13aab10a9d6e",
+          "system_sha256": "d051a4354f76220ba47d70779be4d8aaf9f1d15776188525e4636536b396fed2",
+          "profile_sha256": "6e7d2f61d4b6a8a83a494098f7bd7805b2f09d1b71ab389553e67938a6ecabd0",
+          "message_count": 5,
+          "retained_messages": 2,
+          "change": "append_only",
+          "body_bytes": 16650,
+          "cache_ttls": [
+            "1h"
+          ]
+        },
+        "observation": "available"
+      },
+      {
+        "query_source": "auto_mode",
+        "gateway_request_id": "741fcfde-d9c7-4a81-956b-cdee41cdf479",
+        "request_id": "dfb860d6-8f8a-43ba-b145-804d00cf24e5",
+        "time_utc": "2026-11-10T01:56:04.990753875Z",
+        "external_session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "routing_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "branch_id": "428f1244c961e78e933fe00f273e8cbcef4306966f8f9f5e436dbb0dfeaa9a3e",
+        "parent_branch_id": null,
+        "purpose": "classifier",
+        "native_owner": "s-4",
+        "native_session_id": "b120bb6a-97e1-45d9-8b56-1b53ec39a732",
+        "generation": "4dfb1903-2f4b-40fd-9e3e-635693f26c4c",
+        "selection": "owner_created",
+        "retirement_reason": "classifier_complete",
+        "status": 200,
+        "complete": true,
+        "usage": {
+          "input_tokens": 160,
+          "output_tokens": 9,
+          "cache_read_input_tokens": 47705,
+          "cache_creation_input_tokens": 96
+        },
+        "prefix": {
+          "tools_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "system_sha256": "114938db5898614c9386b908a9a77f89e058adf03234fddea1a6087880e05648",
+          "profile_sha256": "873b6984f6b61d8c9b1dc8228c696588eb5ac22ed0675685f9b608a7fe9578df",
+          "message_count": 1,
+          "retained_messages": 0,
+          "change": "history_changed",
+          "body_bytes": 145762,
+          "cache_ttls": [
+            "1h"
+          ]
+        },
+        "observation": "available"
+      },
+      {
+        "query_source": "repl_main_thread",
+        "gateway_request_id": "2da5c6f5-f07f-4114-ab13-9f8d54628866",
+        "request_id": "ca333c64-fae0-478f-9199-afcaf31d0969",
+        "time_utc": "2026-11-10T01:56:07.7634922Z",
+        "external_session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "routing_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "branch_id": "f94df68856938952b7afe01b26de6e487880cf1ccae65454fce44e949877db1f",
+        "parent_branch_id": null,
+        "purpose": "conversation",
+        "native_owner": "s-1",
+        "native_session_id": "f6c55f65-caca-7a8f-7031-640eda544cee",
+        "generation": "b49a4322-8afa-4b75-9449-0c67f5136f4f",
+        "selection": "owner_reused",
+        "status": 200,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2,
+          "output_tokens": 24,
+          "cache_read_input_tokens": 5225,
+          "cache_creation_input_tokens": 232
+        },
+        "prefix": {
+          "tools_sha256": "1aaac201d9ef536d51b33780dbdf14142baf8e4748d2b776080f13aab10a9d6e",
+          "system_sha256": "d051a4354f76220ba47d70779be4d8aaf9f1d15776188525e4636536b396fed2",
+          "profile_sha256": "6e7d2f61d4b6a8a83a494098f7bd7805b2f09d1b71ab389553e67938a6ecabd0",
+          "message_count": 8,
+          "retained_messages": 5,
+          "change": "append_only",
+          "body_bytes": 17370,
+          "cache_ttls": [
+            "1h"
+          ]
+        },
+        "observation": "available"
+      },
+      {
+        "query_source": "auto_mode",
+        "gateway_request_id": "33ce96f2-67af-49ff-9ddb-213344a28ec9",
+        "request_id": "78942f84-f939-4a05-ad0e-64478ef88253",
+        "time_utc": "2026-11-10T01:56:24.489397092Z",
+        "external_session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "routing_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "branch_id": "428f1244c961e78e933fe00f273e8cbcef4306966f8f9f5e436dbb0dfeaa9a3e",
+        "parent_branch_id": null,
+        "purpose": "classifier",
+        "native_owner": "s-5",
+        "native_session_id": "7cb371bb-8059-44e4-a6ff-9ec8821418f0",
+        "generation": "bd3b370e-b3a4-47fd-a964-9b16e51c4c58",
+        "selection": "owner_created",
+        "retirement_reason": "classifier_complete",
+        "status": 200,
+        "complete": true,
+        "usage": {
+          "input_tokens": 160,
+          "output_tokens": 9,
+          "cache_read_input_tokens": 47801,
+          "cache_creation_input_tokens": 96
+        },
+        "prefix": {
+          "tools_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+          "system_sha256": "114938db5898614c9386b908a9a77f89e058adf03234fddea1a6087880e05648",
+          "profile_sha256": "873b6984f6b61d8c9b1dc8228c696588eb5ac22ed0675685f9b608a7fe9578df",
+          "message_count": 1,
+          "retained_messages": 0,
+          "change": "history_changed",
+          "body_bytes": 146061,
+          "cache_ttls": [
+            "1h"
+          ]
+        },
+        "observation": "available"
+      },
+      {
+        "query_source": "repl_main_thread",
+        "gateway_request_id": "ae50bc7e-c21a-4bf2-8f57-308dfcd58451",
+        "request_id": "b87de307-8349-4b17-9cc5-ede2f6ff0efc",
+        "time_utc": "2026-11-10T01:56:26.626883297Z",
+        "external_session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "routing_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "branch_id": "f94df68856938952b7afe01b26de6e487880cf1ccae65454fce44e949877db1f",
+        "parent_branch_id": null,
+        "purpose": "conversation",
+        "native_owner": "s-1",
+        "native_session_id": "f6c55f65-caca-7a8f-7031-640eda544cee",
+        "generation": "b49a4322-8afa-4b75-9449-0c67f5136f4f",
+        "selection": "owner_reused",
+        "status": 200,
+        "complete": true,
+        "usage": {
+          "input_tokens": 2,
+          "output_tokens": 20,
+          "cache_read_input_tokens": 5457,
+          "cache_creation_input_tokens": 232
+        },
+        "prefix": {
+          "tools_sha256": "1aaac201d9ef536d51b33780dbdf14142baf8e4748d2b776080f13aab10a9d6e",
+          "system_sha256": "d051a4354f76220ba47d70779be4d8aaf9f1d15776188525e4636536b396fed2",
+          "profile_sha256": "6e7d2f61d4b6a8a83a494098f7bd7805b2f09d1b71ab389553e67938a6ecabd0",
+          "message_count": 11,
+          "retained_messages": 8,
+          "change": "append_only",
+          "body_bytes": 17881,
+          "cache_ttls": [
+            "1h"
+          ]
+        },
+        "observation": "available"
+      }
+    ],
+    "branches": [
+      {
+        "branch_id": "f94df68856938952b7afe01b26de6e487880cf1ccae65454fce44e949877db1f",
+        "cache_read_tokens": 15364,
+        "cache_write_tokens": 5689,
+        "external_session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "measured_requests": 4,
+        "parent_branch_id": null,
+        "purpose": "conversation",
+        "requests": 4,
+        "routing_session_id": "251158e2-c8e3-463e-849e-075782b47cb7"
+      },
+      {
+        "branch_id": "428f1244c961e78e933fe00f273e8cbcef4306966f8f9f5e436dbb0dfeaa9a3e",
+        "cache_read_tokens": 142599,
+        "cache_write_tokens": 804,
+        "external_session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "measured_requests": 3,
+        "parent_branch_id": null,
+        "purpose": "classifier",
+        "requests": 3,
+        "routing_session_id": "251158e2-c8e3-463e-849e-075782b47cb7"
+      }
+    ],
+    "gateway_usage_rows": [
+      {
+        "request_id": "e8349b67-87c1-46f8-bf31-5875c9ae12cf",
+        "created_at": "2026-11-10T01:55:16.339Z",
+        "status": 200,
+        "error_code": null,
+        "attempt_count": 1,
+        "has_tools": 1,
+        "cache_read_tokens": 0,
+        "cache_creation_tokens": 4682,
+        "first_token_ms": 16193,
+        "session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "outbound_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "vm_id": "vm-01"
+      },
+      {
+        "request_id": "93c55f2d-9a20-4b5d-b185-5089f77a5729",
+        "created_at": "2026-11-10T01:55:35.176Z",
+        "status": 200,
+        "error_code": null,
+        "attempt_count": 1,
+        "has_tools": 0,
+        "cache_read_tokens": 47093,
+        "cache_creation_tokens": 612,
+        "first_token_ms": 18227,
+        "session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "outbound_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "vm_id": "vm-01"
+      },
+      {
+        "request_id": "d4a334aa-0ffa-46ce-bc7d-057a03becceb",
+        "created_at": "2026-11-10T01:55:47.443Z",
+        "status": 200,
+        "error_code": null,
+        "attempt_count": 1,
+        "has_tools": 1,
+        "cache_read_tokens": 4682,
+        "cache_creation_tokens": 543,
+        "first_token_ms": 2270,
+        "session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "outbound_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "vm_id": "vm-01"
+      },
+      {
+        "request_id": "741fcfde-d9c7-4a81-956b-cdee41cdf479",
+        "created_at": "2026-11-10T01:56:05.249Z",
+        "status": 200,
+        "error_code": null,
+        "attempt_count": 1,
+        "has_tools": 0,
+        "cache_read_tokens": 47705,
+        "cache_creation_tokens": 96,
+        "first_token_ms": 17392,
+        "session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "outbound_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "vm_id": "vm-01"
+      },
+      {
+        "request_id": "2da5c6f5-f07f-4114-ab13-9f8d54628866",
+        "created_at": "2026-11-10T01:56:07.805Z",
+        "status": 200,
+        "error_code": null,
+        "attempt_count": 1,
+        "has_tools": 1,
+        "cache_read_tokens": 5225,
+        "cache_creation_tokens": 232,
+        "first_token_ms": 1523,
+        "session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "outbound_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "vm_id": "vm-01"
+      },
+      {
+        "request_id": "33ce96f2-67af-49ff-9ddb-213344a28ec9",
+        "created_at": "2026-11-10T01:56:24.717Z",
+        "status": 200,
+        "error_code": null,
+        "attempt_count": 1,
+        "has_tools": 0,
+        "cache_read_tokens": 47801,
+        "cache_creation_tokens": 96,
+        "first_token_ms": 16524,
+        "session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "outbound_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "vm_id": "vm-01"
+      },
+      {
+        "request_id": "ae50bc7e-c21a-4bf2-8f57-308dfcd58451",
+        "created_at": "2026-11-10T01:56:26.767Z",
+        "status": 200,
+        "error_code": null,
+        "attempt_count": 1,
+        "has_tools": 1,
+        "cache_read_tokens": 5457,
+        "cache_creation_tokens": 232,
+        "first_token_ms": 1426,
+        "session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+        "outbound_session_id": "251158e2-c8e3-463e-849e-075782b47cb7",
+        "vm_id": "vm-01"
+      }
+    ],
+    "concurrent_quota": {
+      "result": "PASS",
+      "session_id": "96e8b558-d125-406a-964b-fcf2ef714054",
+      "time_utc": "2026-11-10T01:55:19.487378+00:00",
+      "http_status": 200,
+      "source": "official-cc-usage",
+      "via": "hermit",
+      "during_activity": {
+        "active_requests": 0,
+        "pending_tool_results": 1,
+        "resident_sessions": 1
+      },
+      "five_hour": {
+        "raw": 9,
+        "utilization": 0.09,
+        "utilization_pct": 9,
+        "used_pct": 9,
+        "remain_pct": 91,
+        "resets_at": "2026-11-10T04:40:00.475811+00:00",
+        "status": "allowed"
+      },
+      "seven_day": {
+        "raw": 55,
+        "utilization": 0.55,
+        "utilization_pct": 55,
+        "used_pct": 55,
+        "remain_pct": 45,
+        "resets_at": "2026-11-14T23:00:00.475828+00:00",
+        "status": "allowed"
+      },
+      "credentials_unchanged": true,
+      "automatic_probe_config_changed": false
+    }
+  },
+  "control_activation_phase": {
+    "phase": "feature control activation and sessioncache2 finalization; predates explicit OAuth refresh and final kernel update",
+    "image": {
+      "image": "sha256:8cc23698705147338b1b9eb85badf31f88b13684bf46cbdbd8e1d1136ce44428",
+      "source_commit": "da0f2d7056aa77409e13f9892890c42abf3396cb",
+      "base_image": "sha256:f6c026af9ecf4d8b85a8a575b630570aa2c007d4290bc9c575b31b0b759f2832"
+    },
+    "image_smoke": {
+      "result": "PASS",
+      "admin_route_status": 404,
+      "missing_vm_code": "vm_not_found",
+      "web_status": 200,
+      "web_index_sha256": "8019d03ea7df964bd8b5f79b7e431aca1d462a1d04e9fa2ff53725b2199d5d00"
+    },
+    "verification": {
+      "result": "PASS",
+      "control_source_commit": "da0f2d7056aa77409e13f9892890c42abf3396cb",
+      "control_image": "sha256:8cc23698705147338b1b9eb85badf31f88b13684bf46cbdbd8e1d1136ce44428",
+      "control_container": "e8cc0ca91a714db8d69cc3db05552e24abfc82e874ae764249395e8f50022eec",
+      "verified_files": 286,
+      "credentials_unchanged": true,
+      "configs_unchanged": true,
+      "other_containers_unchanged": true,
+      "expected_removed_rollback_containers": [
+        {
+          "name": "kin-01-rollback-c5504eb130",
+          "id": "d83368962b25d9fe1f3cb1fd6ff17167b3b9a9d61b64004517216abeecf8fdd5",
+          "transition_id": "kernel-e0b854f6-f80b-430e-8b47-eaef58fcd9e0",
+          "reason": "target_vm_kernel_transition_finalized"
+        }
+      ],
+      "mounts_unchanged": true,
+      "environment_unchanged_except_image_pins": true,
+      "health": {
+        "healthy": true,
+        "active_requests": 0,
+        "pending_tool_results": 0,
+        "switch_ready": true,
+        "session_capacity": 20
+      }
+    }
+  },
+  "panel_http": {
+    "result": "PASS",
+    "checks": [
+      {
+        "name": "unauthenticated_denied",
+        "result": "PASS"
+      },
+      {
+        "name": "create_tenant_fixture",
+        "result": "PASS"
+      },
+      {
+        "name": "tenant_login",
+        "result": "PASS"
+      },
+      {
+        "name": "tenant_denied_before_kernel",
+        "result": "PASS"
+      },
+      {
+        "name": "authenticated_snapshot",
+        "result": "PASS"
+      },
+      {
+        "name": "filter_reaches_kernel",
+        "result": "PASS"
+      },
+      {
+        "name": "missing_session_is_empty",
+        "result": "PASS"
+      },
+      {
+        "name": "old_kernel_is_explicitly_unavailable",
+        "result": "PASS"
+      },
+      {
+        "name": "unknown_vm",
+        "result": "PASS"
+      }
+    ],
+    "calls": [
+      "/internal/session-cache?session=visible-session",
+      "/internal/session-cache?session=missing",
+      "/internal/session-cache?session="
+    ]
+  },
+  "panel_browser": {
+    "result": "PASS",
+    "checks": [
+      {
+        "name": "branch_groups_visible",
+        "result": "PASS"
+      },
+      {
+        "name": "actual_usage_visible",
+        "result": "PASS"
+      },
+      {
+        "name": "prefix_append_and_unknown_parent",
+        "result": "PASS"
+      },
+      {
+        "name": "bounded_window_explained",
+        "result": "PASS"
+      },
+      {
+        "name": "request_correlation_opens_selected",
+        "result": "PASS"
+      },
+      {
+        "name": "missing_data_is_unknown",
+        "result": "PASS"
+      }
+    ],
+    "synthetic_only": true
+  },
+  "existing_account_refresh": {
+    "result": "PASS",
+    "operation": "authorized_existing_account_preflight_refresh",
+    "reason": "remaining real acceptance would cross the previous access-token expiry",
+    "time_utc": "2026-11-10T01:42:49.374220+00:00",
+    "before_sha256": "0a0c3b14c7b34315faf033ad499aa99b27012949c9c2e06938408e4005a97435",
+    "after_sha256": "4b65ba7384a8f781520fb0998f9e68838ebd9d5c02c09832411bfed561998824",
+    "before_expires_at": 1794275238669,
+    "after_expires_at": 1794303763910,
+    "http_status": 200,
+    "account_record_unchanged": true,
+    "credentials_contents_exported": false
+  },
+  "artifact_root": "/opt/vm2api-releases/hermit-sessioncache-3a1786b/qualification",
+  "limits": {
+    "recent_pool_requests": 128,
+    "branch_prefix_checkpoints": 64,
+    "ui_recent_details": 20,
+    "resets_on_kernel_restart": true,
+    "historical_backfill": false,
+    "provider_token_cache_key_observed": false,
+    "external_client_hook_required": false
+  }
+}
