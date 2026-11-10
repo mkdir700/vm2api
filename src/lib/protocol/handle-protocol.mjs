@@ -1831,7 +1831,11 @@ export function createHandleProtocol(deps) {
             return streamAndAssembleClaudeMessage({
               candidate,
               body,
-              reqHeaders: { ...req.headers, 'x-hermit-gateway-request-id': logCtx.request_id },
+              reqHeaders: {
+                ...req.headers,
+                'x-hermit-gateway-request-id': logCtx.request_id,
+                'x-hermit-client-session-id': callerSession || '',
+              },
               timeoutMs: cfg.limits.upstream_timeout_ms,
               idleTimeoutMs: streamIdleTimeoutMs,
               signal,
@@ -1885,7 +1889,11 @@ export function createHandleProtocol(deps) {
               repaired: attemptMeta?.repaired === true,
               requestContext: attemptMeta?.requestContext || requestContext,
               body,
-              reqHeaders: { ...req.headers, 'x-hermit-gateway-request-id': logCtx.request_id },
+              reqHeaders: {
+                ...req.headers,
+                'x-hermit-gateway-request-id': logCtx.request_id,
+                'x-hermit-client-session-id': callerSession || '',
+              },
               timeoutMs: cfg.limits.upstream_timeout_ms,
               idleTimeoutMs: streamIdleTimeoutMs,
               identity: loadVmIdentity(candidate.exec),

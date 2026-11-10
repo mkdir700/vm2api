@@ -507,14 +507,11 @@ async function workerEnvelope({
     cache_ttl: cacheTtl == null ? null : String(cacheTtl),
   }
   // Diagnostic correlation stays inside the slot envelope; older kernels
-  // ignore this header and native provider serialization remains unchanged.
-  if (
-    exec?.vm?.dataplane === 'hermit' &&
-    typeof redactionSession === 'string' &&
-    redactionSession.length <= 256 &&
-    !/[\u0000\r\n]/.test(redactionSession)
-  ) {
-    envelope.headers['x-hermit-client-session-id'] = redactionSession
+  // ignore these headers. Use the resolved caller identity, not redaction state.
+  if (exec?.vm?.dataplane === 'hermit') {
+    const clientSession = reqHeaders?.['x-hermit-client-session-id']
+    if (typeof clientSession === 'string' && clientSession.length <= 256 && !/[\u0000\r\n]/.test(clientSession))
+      envelope.headers['x-hermit-client-session-id'] = clientSession
     const correlation = reqHeaders?.['x-hermit-gateway-request-id']
     if (typeof correlation === 'string' && correlation.length <= 128 && !/[\u0000\r\n]/.test(correlation))
       envelope.headers['x-hermit-gateway-request-id'] = correlation
