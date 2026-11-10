@@ -289,7 +289,7 @@ import { restartRustKernel, syncClaudeKernelConfigs, writeKernelConfig } from '.
 
 import { countTokensViaWorker } from '../transport/go-worker-client.mjs'
 import { apiKeyBetaHeader, setupTokenBetaHeader } from '../protocol/claude-code-betas.mjs'
-import { rustKernelHealth, toPublicKernelHealth } from '../transport/rust-kernel-client.mjs'
+import { getRustKernelHelper, rustKernelHealth, toPublicKernelHealth } from '../transport/rust-kernel-client.mjs'
 import { activateCragLicense, checkCragLicense, CragLicenseError, getCragLicense } from '../vm/crag-license.mjs'
 import { applyNativeTelemetry } from '../vm/fleet-update.mjs'
 import { codexKernelHealth } from '../transport/codex-kernel-client.mjs'
@@ -2327,6 +2327,33 @@ export function createPanelHandler(ctx) {
         const rec = requestLog.getDebug(id, { owner_user_id })
         if (!rec) return json(res, 404, { ok: false, error: { message: 'debug log not found' } })
         return json(res, 200, { ok: true, item: rec })
+      }
+
+      if (req.method === 'GET' && /^\/api\/panel\/vms\/[^/]+\/session-cache$/.test(p)) {
+        if (panelIdentity(req).role !== 'admin')
+          return json(res, 403, { ok: false, error: { code: 'forbidden', message: '只有管理员可以查看会话缓存诊断' } })
+        const id = p.split('/')[4]
+        const exec = workerExecForVm(id)
+        if (!exec) return json(res, 404, { ok: false, error: { code: 'vm_not_found', message: '槽位不存在' } })
+        if (exec.vm?.dataplane !== 'hermit')
+          return json(res, 501, {
+            ok: false,
+            error: { code: 'native_operation_unsupported', message: '当前内核不支持会话缓存诊断' },
+          })
+        const session = new URL(req.url, 'http://x').searchParams.get('session') || ''
+        if (session.length > 256)
+          return json(res, 400, { ok: false, error: { code: 'invalid_session', message: '会话标识过长' } })
+        const result = await getRustKernelHelper(
+          exec,
+          `/internal/session-cache?session=${encodeURIComponent(session)}`,
+          { timeoutMs: 3000 },
+        )
+        if (!result.ok)
+          return json(res, result.status >= 400 ? result.status : 503, {
+            ok: false,
+            error: { code: result.body?.error?.code || 'session_cache_unavailable', message: '会话缓存诊断不可用' },
+          })
+        return json(res, 200, panel.ok(result.body))
       }
 
       // ---- Scrolling usage logs (keyset cursor, camelCase rows) ----

@@ -16,6 +16,7 @@ import type { DetailTab } from '../virtualized-logs-table'
 import { LogicTraceTab } from './logic-trace-tab'
 import { PerformanceTab } from './performance-tab'
 import { RawDataTab } from './raw-data-tab'
+import { SessionCacheTab } from './session-cache-tab'
 import { SummaryTab } from './summary-tab'
 
 export type DetailState = {
@@ -77,7 +78,7 @@ export function LogDetailDialog({
               className='flex min-h-0 flex-1 flex-col'
             >
               <div className='px-6 pt-3'>
-                <TabsList className='grid h-auto w-full grid-cols-4 p-1'>
+                <TabsList className='grid h-auto w-full grid-cols-5 p-1'>
                   <TabsTrigger value='summary' className={TAB_TRIGGER}>
                     <FileText className={TAB_ICON} />
                     <span>概览</span>
@@ -89,6 +90,10 @@ export function LogDetailDialog({
                   <TabsTrigger value='performance' className={TAB_TRIGGER}>
                     <Gauge className={TAB_ICON} />
                     <span>性能</span>
+                  </TabsTrigger>
+                  <TabsTrigger value='session-cache' className={TAB_TRIGGER}>
+                    <GitBranch className={TAB_ICON} />
+                    <span>会话缓存</span>
                   </TabsTrigger>
                   <TabsTrigger value='raw' className={TAB_TRIGGER}>
                     <FileCode2 className={TAB_ICON} />
@@ -111,6 +116,9 @@ export function LogDetailDialog({
                 </TabsContent>
                 <TabsContent value='performance' className='mt-0'>
                   <PerformanceTab row={row} />
+                </TabsContent>
+                <TabsContent value='session-cache' className='mt-0'>
+                  <SessionCacheTab row={row} />
                 </TabsContent>
                 <TabsContent value='raw' className='mt-0'>
                   <RawDataTab requestId={row.requestId} logMode={row.logMode} />

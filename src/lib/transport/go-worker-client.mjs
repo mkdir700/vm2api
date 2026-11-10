@@ -506,6 +506,19 @@ async function workerEnvelope({
     preserve_cache_breakpoints: preserveCacheBreakpoints == null ? cacheTtl == null : preserveCacheBreakpoints === true,
     cache_ttl: cacheTtl == null ? null : String(cacheTtl),
   }
+  // Diagnostic correlation stays inside the slot envelope; older kernels
+  // ignore this header and native provider serialization remains unchanged.
+  if (
+    exec?.vm?.dataplane === 'hermit' &&
+    typeof redactionSession === 'string' &&
+    redactionSession.length <= 256 &&
+    !/[\u0000\r\n]/.test(redactionSession)
+  ) {
+    envelope.headers['x-hermit-client-session-id'] = redactionSession
+    const correlation = reqHeaders?.['x-hermit-gateway-request-id']
+    if (typeof correlation === 'string' && correlation.length <= 128 && !/[\u0000\r\n]/.test(correlation))
+      envelope.headers['x-hermit-gateway-request-id'] = correlation
+  }
   dumpSessionEnvelope(envelope)
   return { envelope, thread: finalized.thread, redaction }
 }

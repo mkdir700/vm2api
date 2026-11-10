@@ -33,7 +33,8 @@ import { RelativeTime } from './relative-time'
 const ROW_HEIGHT = 52
 const SCROLL_TOP_THRESHOLD = 500
 
-export type DetailTab = 'summary' | 'logic-trace' | 'performance' | 'raw'
+export type DetailTab =
+  'summary' | 'logic-trace' | 'performance' | 'raw' | 'session-cache'
 
 export type OpenDetail = (
   row: UsageLogRow,
