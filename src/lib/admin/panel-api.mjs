@@ -34,6 +34,7 @@ import {
   resolveSlotPersonaPreset,
 } from '../vm/slot-engine.mjs'
 import { probeAccount } from '../oauth/usage-probe.mjs'
+import { syncMissingSlotEmail } from '../oauth/slot-email.mjs'
 import { queryOpenaiQuota, resetOpenaiQuota } from '../oauth/openai-quota.mjs'
 import { queryClaudeResetCredits, redeemClaudeResetCredit } from '../oauth/claude-reset-credits.mjs'
 import { canOfficialUsage, credentialModeOfVm, isSetupTokenMode } from '../oauth/credential-mode.mjs'
@@ -1118,7 +1119,7 @@ export async function buildProbeOne({
   fableProbe = probeFableEntitlement,
   routingConfig = {},
 } = {}) {
-  const vm = getVm(cfg.paths.project, id)
+  let vm = getVm(cfg.paths.project, id)
   if (!vm) {
     return fail(
       makeError({
@@ -1173,6 +1174,7 @@ export async function buildProbeOne({
   if (!canOfficialUsage(credentialModeOfVm(vm))) {
     hop = false
   }
+  if (hop) vm = await syncMissingSlotEmail(cfg.paths.project, vm)
   const exec = {
     vmId: vm.id,
     homeDir: path.join(cfg.paths.project, 'vms', vm.id, 'cli-home'),
@@ -1180,11 +1182,6 @@ export async function buildProbeOne({
     vm,
   }
   const accountId = vm.claude?.account_uuid || vm.id
-  if (vm.claude?.account_uuid) {
-    try {
-      accountQuota.rebindToVm(vm.claude.account_uuid, vm.id, { email: vm.claude?.email || null })
-    } catch {}
-  }
   accountQuota.ensure({
     account_id: accountId,
     vm_id: vm.id,
@@ -1192,6 +1189,9 @@ export async function buildProbeOne({
     max_concurrency: vm.policy?.maxConcurrency,
     max_rpm: vm.policy?.maxRpm ?? 0,
   })
+  try {
+    accountQuota.rebindToVm(accountId, vm.id, { email: vm.claude?.email || null })
+  } catch {}
   const acc = accountQuota.repo.get(accountId)
   const q = quotaFromAccount(acc)
   const storedTier = vm.claude?.account_tier || acc?.unified?.account_tier || q.account_tier || null

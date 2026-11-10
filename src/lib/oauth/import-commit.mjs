@@ -32,6 +32,7 @@ import {
 import { normalizeTiers } from '../pool/quota-tiers.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
 import { finishOAuthImport } from './guest-oauth-helper.mjs'
+import { syncMissingSlotEmail } from './slot-email.mjs'
 
 export function createImportCommit(ctx) {
   function routing() {
@@ -39,9 +40,9 @@ export function createImportCommit(ctx) {
   }
 
   function rebindOauthAccount(vm) {
-    const uuid = vm?.claude?.account_uuid
-    if (!uuid || !vm?.id) return
-    ctx.accountQuota.rebindToVm(uuid, vm.id, { email: vm.claude?.email || null })
+    if (!vm?.id) return
+    const accountId = vm.claude?.account_uuid || vm.id
+    ctx.accountQuota.rebindToVm(accountId, vm.id, { email: vm.claude?.email || null })
   }
 
   function requireSlotProxy(existing, body = {}) {
@@ -236,6 +237,10 @@ export function createImportCommit(ctx) {
         Object.assign(existing, refreshed)
       }
     })
+    Object.assign(existing, await syncMissingSlotEmail(ctx.cfg.paths.project, existing))
+    try {
+      rebindOauthAccount(existing)
+    } catch {}
     try {
       const ids = officialCcUidGid(vmId)
       materializeOfficialClaudeCredentials(workerExec.homeDir, ids)
