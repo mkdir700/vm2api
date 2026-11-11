@@ -44,7 +44,9 @@ test('Hermit rejects legacy helpers while a pending package preserves the active
     `#!/usr/bin/env python3
 import sys,json
 with open(${JSON.stringify(callsFile)},'a') as f:f.write(json.dumps(sys.argv[1:])+'\\n')
-if 'oauth' not in sys.argv:raise SystemExit(1)
+if 'oauth' not in sys.argv:
+ print('Error response from daemon: No such container: hermit-helper-fixture',file=sys.stderr)
+ raise SystemExit(1)
 op=sys.argv[sys.argv.index('oauth')+1]
 body={'data':[{'id':'legacy-fixture-model'}]} if op=='models' else {'refreshed':True,'has_access':True,'has_refresh':True}
 print(json.dumps({'ok':True,'status':200,'body':body,'headers':{}}))
@@ -104,7 +106,12 @@ print(json.dumps({'ok':True,'status':200,'body':body,'headers':{}}))
     gw = await startGateway({
       project,
       timeoutMs: 6000,
-      env: { KIN_CRS_MOCK: '0', KIN_DOCKER_BIN: docker, KIN_API_KERNEL_BIN: launcher },
+      env: {
+        KIN_CRS_MOCK: '0',
+        KIN_DOCKER_BIN: docker,
+        KIN_API_KERNEL_BIN: launcher,
+        PATH: root + path.delimiter + process.env.PATH,
+      },
     })
     const login = await api(gw, 'POST', '/api/panel/login', { body: { username: 'admin', password: 'testpass' } })
     check('admin_login', login.status === 200)
@@ -146,7 +153,12 @@ print(json.dumps({'ok':True,'status':200,'body':body,'headers':{}}))
     gw = await startGateway({
       project,
       timeoutMs: 6000,
-      env: { KIN_CRS_MOCK: '0', KIN_DOCKER_BIN: docker, KIN_API_KERNEL_BIN: launcher },
+      env: {
+        KIN_CRS_MOCK: '0',
+        KIN_DOCKER_BIN: docker,
+        KIN_API_KERNEL_BIN: launcher,
+        PATH: root + path.delimiter + process.env.PATH,
+      },
     })
     const loginAgain = await api(gw, 'POST', '/api/panel/login', { body: { username: 'admin', password: 'testpass' } })
     const legacy = await api(gw, 'POST', '/api/panel/model-policy/sync-worker', {
@@ -179,7 +191,12 @@ print(json.dumps({'ok':True,'status':200,'body':body,'headers':{}}))
     gw = await startGateway({
       project,
       timeoutMs: 6000,
-      env: { KIN_CRS_MOCK: '0', KIN_DOCKER_BIN: docker, KIN_API_KERNEL_BIN: launcher },
+      env: {
+        KIN_CRS_MOCK: '0',
+        KIN_DOCKER_BIN: docker,
+        KIN_API_KERNEL_BIN: launcher,
+        PATH: root + path.delimiter + process.env.PATH,
+      },
     })
     const count = await api(gw, 'POST', '/v1/messages/count_tokens', {
       body: { model: 'claude-sonnet-4-6', messages: [{ role: 'user', content: 'count synthetic text' }] },
