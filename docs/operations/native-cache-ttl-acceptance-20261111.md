@@ -1,6 +1,6 @@
 # Native cache TTL acceptance — 2026-11-11
 
-Status: Implemented, committed, qualified, and packed. **NOT DEPLOYED.**
+Status: Qualified and deployed. See [production deployment](native-cache-ttl-deployment-20261111.md). The JSON readiness receipt below records the state before deployment approval.
 
 ## Result
 
@@ -47,10 +47,14 @@ The Node HTTP suite also passed native failure ownership, native policy, legacy 
 
 The archive contains per-scenario commands, summaries, source/executable pins, provider captures, tool receipts, and cleanup receipts. Each `qualification/*-command.json` contains the complete Docker argument vector. To replay a case, choose a fresh results directory, replace its `/results` mount source, and run that vector with `subprocess.run(command, check=True)`. Do not reuse an existing scenario output directory.
 
-## Production boundary
+## Production boundary at qualification time
 
 Production still runs the previous controller and native package. The saved persona remains `native_server` and the selected cache TTL remains `1h`. No production scheduling hold, process restart, credential update, or kernel switch was performed.
 
 The native health report has `active_requests=0`, `pending_tool_results=1`, and `switch_ready=false`. The outstanding state belongs to request `655c0f2e-f055-4437-be73-e2805fa8ac9e`, owner `s-1`. Its owner receipt reports `phase=stopped` and `groups_gone=true`; the pending external tool-result state remains retained. The standard kernel-transition guard rejects this state with `kernel_tools_pending`.
 
 Do not bypass the guard. Obtain specific authorization before discarding that pending state. Revalidate its identity immediately before any action. After an authorized discard, capture a fresh credential and configuration baseline before deployment. Preserve current credentials; never restore an old token snapshot.
+
+## Closure
+
+The user subsequently authorized discarding the specific retained state. The supported slot recovery cleared it without changing credentials or protected configuration. The qualified controller and native package are now deployed, the transition is finalized, and scheduling is restored. See the separate production deployment receipt above.

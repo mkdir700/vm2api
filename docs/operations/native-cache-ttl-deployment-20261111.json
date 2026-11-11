@@ -1,0 +1,125 @@
+{
+  "result": "PASS",
+  "status": "DEPLOYED",
+  "time_utc": "2026-11-11T05:50:44.727001+00:00",
+  "vm2api_commit": "8126700761ea7ae0ebc18eb0a7cd2f82c4364495",
+  "hermit_commit": "1a2ea1a87ffd47d4528cd7306696054b95698891",
+  "image": "sha256:354270caa77793f5034cb43ccafe197edaf0a35b237bcc12d2a1ea8eb5f10a0d",
+  "native_version": "0.0.0-production.cache-ttl-1a2ea1a",
+  "native_binary_sha256": "aa9dd171a58da03743e3b5e8cfc5866a58cda09adadb45eb5c75922c6d78756a",
+  "native_manifest_sha256": "cb3516639f39f33157b0b221723c1de7613b4c24dc9dfabc6322e65b7977c5a2",
+  "native_archive_sha256": "0cc8e915c309f15280e1631f9e696eeb52a3d69366cccc0c9a1d655f7af30e29",
+  "upgrade_task": {
+    "task_id": "81f5d1a6a4064a8cbdf5deb5d416dee2",
+    "result": "PASS",
+    "phase": "active",
+    "previous_image": "sha256:c3740128cdf8dd2f053f679c27ea9f41581d2f775f584fd134e275ac14c1dbd2",
+    "source_revision": "8126700761ea7ae0ebc18eb0a7cd2f82c4364495"
+  },
+  "kernel_transition": {
+    "id": "kernel-2b2c09da-07b7-4602-8ab0-e35191db520d",
+    "state": "finalized"
+  },
+  "approved_discard": {
+    "result": "PASS",
+    "approved_request": "655c0f2e-f055-4437-be73-e2805fa8ac9e",
+    "method": "POST /api/panel/vms/vm-01/recover",
+    "active_requests": 0,
+    "pending_tool_results": 0,
+    "switch_ready": true,
+    "fresh_baseline": true,
+    "credentials_changed_during_recovery": false,
+    "native_auth_changed_during_recovery": false,
+    "protected_fields_preserved": true,
+    "unrelated_containers_preserved": true
+  },
+  "preservation": {
+    "credentials_unchanged_after_fresh_baseline": true,
+    "native_auth_preserved": true,
+    "protected_slot_fields_preserved": true,
+    "routing_preserved": true,
+    "unrelated_containers_preserved": true,
+    "scheduling_restored": true
+  },
+  "read_back": {
+    "persona": "native_server",
+    "cache_ttl": "1h",
+    "health": {
+      "healthy": true,
+      "native_cache_ttl": true,
+      "native_server_environment": true,
+      "active_requests": 0,
+      "pending_tool_results": 0,
+      "ready_slots": 20,
+      "available_session_slots": 20,
+      "resident_sessions": 0,
+      "switch_ready": true
+    },
+    "database_quick_check": "ok"
+  },
+  "qualification": [
+    {
+      "name": "full",
+      "result": "PASS",
+      "container_removed": true
+    },
+    {
+      "name": "legacy",
+      "result": "PASS",
+      "container_removed": true
+    },
+    {
+      "name": "cache-1h-stream",
+      "result": "PASS",
+      "container_removed": true
+    },
+    {
+      "name": "cache-5m-assembled",
+      "result": "PASS",
+      "container_removed": true
+    },
+    {
+      "name": "direct-cache-pin",
+      "result": "PASS",
+      "container_removed": true
+    },
+    {
+      "name": "gateway",
+      "result": "PASS",
+      "checks": 17
+    },
+    {
+      "name": "native-full-chain",
+      "result": "PASS",
+      "checks": 65
+    },
+    {
+      "name": "native-legacy",
+      "result": "PASS",
+      "checks": 48
+    },
+    {
+      "name": "cache-1h-stream-checks",
+      "result": "PASS",
+      "checks": 79
+    },
+    {
+      "name": "cache-5m-assembled-checks",
+      "result": "PASS",
+      "checks": 79
+    },
+    {
+      "name": "direct-cache-pin-checks",
+      "result": "PASS",
+      "checks": 78
+    }
+  ],
+  "evidence": {
+    "name": "qualification-evidence.tar.gz",
+    "sha256": "e6131b41e68025cccda842b4f3cb9982fd26cad6eded8918367bee77a5807098",
+    "bytes": 107902
+  },
+  "release_directory": "/opt/vm2api-releases/native-cache-ttl-1a2ea1a-8126700",
+  "real_provider_validation": "NOT RUN",
+  "production_model_requests_sent_by_agent": 0
+}
