@@ -1,0 +1,89 @@
+{
+  "result": "PASS",
+  "status": "READY_NOT_DEPLOYED",
+  "vm2api_commit": "8126700761ea7ae0ebc18eb0a7cd2f82c4364495",
+  "hermit_commit": "1a2ea1a87ffd47d4528cd7306696054b95698891",
+  "image": "sha256:354270caa77793f5034cb43ccafe197edaf0a35b237bcc12d2a1ea8eb5f10a0d",
+  "native_version": "0.0.0-production.cache-ttl-1a2ea1a",
+  "native_binary_sha256": "aa9dd171a58da03743e3b5e8cfc5866a58cda09adadb45eb5c75922c6d78756a",
+  "native_manifest_sha256": "cb3516639f39f33157b0b221723c1de7613b4c24dc9dfabc6322e65b7977c5a2",
+  "native_archive_sha256": "0cc8e915c309f15280e1631f9e696eeb52a3d69366cccc0c9a1d655f7af30e29",
+  "qualification": [
+    {
+      "name": "full",
+      "result": "PASS",
+      "container_removed": true
+    },
+    {
+      "name": "legacy",
+      "result": "PASS",
+      "container_removed": true
+    },
+    {
+      "name": "cache-1h-stream",
+      "result": "PASS",
+      "container_removed": true
+    },
+    {
+      "name": "cache-5m-assembled",
+      "result": "PASS",
+      "container_removed": true
+    },
+    {
+      "name": "direct-cache-pin",
+      "result": "PASS",
+      "container_removed": true
+    },
+    {
+      "name": "gateway",
+      "result": "PASS",
+      "checks": 17
+    },
+    {
+      "name": "native-full-chain",
+      "result": "PASS",
+      "checks": 65
+    },
+    {
+      "name": "native-legacy",
+      "result": "PASS",
+      "checks": 48
+    },
+    {
+      "name": "cache-1h-stream-checks",
+      "result": "PASS",
+      "checks": 79
+    },
+    {
+      "name": "cache-5m-assembled-checks",
+      "result": "PASS",
+      "checks": 79
+    },
+    {
+      "name": "direct-cache-pin-checks",
+      "result": "PASS",
+      "checks": 78
+    }
+  ],
+  "evidence": {
+    "name": "qualification-evidence.tar.gz",
+    "sha256": "e6131b41e68025cccda842b4f3cb9982fd26cad6eded8918367bee77a5807098",
+    "bytes": 107902
+  },
+  "production": {
+    "image_unchanged": true,
+    "persona": "native_server",
+    "health": {
+      "healthy": true,
+      "active_requests": 0,
+      "pending_tool_results": 1,
+      "switch_ready": false
+    },
+    "blocker_request_id": "655c0f2e-f055-4437-be73-e2805fa8ac9e",
+    "blocker_owner": "s-1",
+    "owner_phase": "stopped",
+    "owner_groups_gone": true
+  },
+  "real_provider": "NOT RUN",
+  "release_directory": "/opt/vm2api-releases/native-cache-ttl-1a2ea1a-8126700"
+}
