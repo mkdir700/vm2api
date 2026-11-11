@@ -257,7 +257,7 @@ export async function runSlotOauth(exec, op, options = {}) {
           )
           if (!response.body || typeof response.body.status !== 'number') return response
           const result = { ...response.body, via: 'hermit', transportError: false }
-          if (result.credential_changed) {
+          if (result.credential_changed && health.credential_refresh_isolated !== true) {
             const { reloadHermitCredential } = await import('./hermit-kernel-supervisor.mjs')
             const restarted = await reloadHermitCredential(exec)
             if (!restarted.ok) return failure('hermit_refresh_restart_failed', '新凭据已保存，但内核重建失败')

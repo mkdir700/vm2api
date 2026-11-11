@@ -62,6 +62,8 @@ print(json.dumps({'ok':True,'status':200,'body':body,'headers':{}}))
   let nativeFlavor = 'hermit'
   let nativeOperations = []
   let nativeModelStatus = 200
+  let nativeProtocol
+  let nativeIsolated
   const nativeCalls = []
   let completed = false
   const responses = []
@@ -212,9 +214,24 @@ print(json.dumps({'ok':True,'status':200,'body':body,'headers':{}}))
             runtime_flavor: nativeFlavor,
             healthy: nativeHealthy,
             helper_operations: nativeOperations,
+            helper_protocol: nativeProtocol,
+            credential_refresh_isolated: nativeIsolated,
           }),
         )
       nativeCalls.push({ path: req.url, internal_token_matches: req.headers['x-kin-internal-token'] === token })
+      if (req.url === '/internal/v1/helper') {
+        req.resume()
+        return res.end(
+          JSON.stringify({
+            ok: true,
+            status: 200,
+            credential_changed: true,
+            refresh_owner: 'hermit-native-slot',
+            body: { refreshed: true, has_access: true, has_refresh: true },
+            headers: {},
+          }),
+        )
+      }
       if (nativeModelStatus !== 200) {
         res.writeHead(nativeModelStatus)
         return res.end(JSON.stringify({ error: { code: 'native_models_upstream_rejected' } }))
@@ -260,6 +277,37 @@ print(json.dumps({'ok':True,'status':200,'body':body,'headers':{}}))
       nativeError.status === 502 &&
         nativeError.json.error?.code === 'native_models_upstream_rejected' &&
         helperCalls().length === callsBeforeCount,
+    )
+    vm.claude = { mode: 'oauth', has_access: true, has_refresh: true }
+    fs.writeFileSync(vmFile, JSON.stringify(vm))
+    writeWorkerCredentialFile(path.join(project, 'vms/vm-sim-01/cli-home'), {
+      type: 'oauth',
+      access_token: 'synthetic-isolated-access',
+      refresh_token: 'synthetic-isolated-refresh',
+      expires_at: 1,
+    })
+    nativeModelStatus = 200
+    nativeOperations = ['refresh']
+    nativeProtocol = 'hermit-helper-1'
+    nativeIsolated = true
+    const isolated = await api(gw, 'POST', '/api/panel/vms/vm-sim-01/oauth/refresh', {
+      headers: { cookie: keyLogin.headers.get('set-cookie') },
+      body: {},
+    })
+    responses.push({ endpoint: 'isolated-native-refresh', status: isolated.status, body: isolated.json })
+    check('isolated_refresh_succeeds_without_kernel_rebuild', isolated.status === 200 && isolated.json.data?.refreshed)
+    check('isolated_refresh_uses_native_helper', nativeCalls.at(-1).path === '/internal/v1/helper')
+    check('isolated_refresh_never_calls_legacy_worker', helperCalls().length === callsBeforeCount)
+    check('isolated_refresh_preserves_running_vm', JSON.parse(fs.readFileSync(vmFile)).status === 'running')
+    nativeIsolated = undefined
+    const legacyRefresh = await api(gw, 'POST', '/api/panel/vms/vm-sim-01/oauth/refresh', {
+      headers: { cookie: keyLogin.headers.get('set-cookie') },
+      body: {},
+    })
+    responses.push({ endpoint: 'legacy-native-refresh', status: legacyRefresh.status, body: legacyRefresh.json })
+    check(
+      'old_kernel_keeps_rebuild_contract',
+      legacyRefresh.status === 502 && legacyRefresh.json.error?.code === 'hermit_refresh_restart_failed',
     )
     fs.writeFileSync(path.join(out, 'native-helper-calls.json'), JSON.stringify(nativeCalls, null, 2))
     completed = true
