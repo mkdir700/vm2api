@@ -371,8 +371,14 @@ function classifyUpstreamResultRaw(
 
   // The native session may already contain work. Returning its failure preserves
   // the session; selecting another account could replay tools or rebuild history.
-  if ([ErrorCode.NATIVE_PREPARATION_FAILED, ErrorCode.NATIVE_CONTROL_UNAVAILABLE,
-    ErrorCode.NATIVE_GENERATION_FAILED].includes(workerCode)) {
+  if (
+    [
+      ErrorCode.NATIVE_PREPARATION_FAILED,
+      ErrorCode.NATIVE_CONTROL_UNAVAILABLE,
+      ErrorCode.NATIVE_GENERATION_FAILED,
+      ErrorCode.NATIVE_OPERATION_UNSUPPORTED,
+    ].includes(workerCode)
+  ) {
     return {
       scope: 'worker',
       action: 'stop',

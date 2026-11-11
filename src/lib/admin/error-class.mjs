@@ -76,6 +76,7 @@ const CODE_MAP = {
   native_preparation_failed: 'other',
   native_control_unavailable: 'other',
   native_generation_failed: 'other',
+  native_operation_unsupported: 'other',
   upstream_timeout: 'timeout',
   stream_incomplete: 'timeout',
   client_cancelled: 'timeout',

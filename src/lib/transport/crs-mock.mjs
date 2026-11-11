@@ -72,13 +72,29 @@ export function mockCrsPayload(options = {}) {
       : 'tool_use'
   }
   const text = process.env.KIN_MOCK_TEXT || 'pong'
+  if (scenario === 'native_operation_unsupported') {
+    return {
+      ok: false,
+      status: 501,
+      via: 'go-worker',
+      transportError: false,
+      headers: {},
+      body: {
+        type: 'error',
+        error: { type: 'worker_error', code: scenario, message: 'Cache override is not supported' },
+      },
+    }
+  }
   if (['native_preparation_failed', 'native_control_unavailable', 'native_generation_failed'].includes(scenario)) {
     return {
       ok: false,
       status: 502,
       via: 'go-worker',
       transportError: false,
-      body: { type: 'error', error: { type: 'api_error', code: scenario, message: scenario, details: { retryable: false } } },
+      body: {
+        type: 'error',
+        error: { type: 'api_error', code: scenario, message: scenario, details: { retryable: false } },
+      },
       headers: {},
     }
   }

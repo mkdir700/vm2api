@@ -12,7 +12,7 @@ test('native session failures stop without account hopping or provider blame', a
   const out = fs.mkdtempSync(path.join(os.tmpdir(), 'hermit-native-failure-policy-'))
   const checks = []
   try {
-    for (const code of ['native_preparation_failed', 'native_control_unavailable', 'native_generation_failed']) {
+    for (const [code, status] of [['native_preparation_failed', 502], ['native_control_unavailable', 502], ['native_generation_failed', 502], ['native_operation_unsupported', 501]]) {
       const project = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-native-failure-'))
       for (const id of ['vm-sim-01', 'vm-sim-02']) {
         const vm = seedVm({ project, id })
@@ -31,11 +31,11 @@ test('native session failures stop without account hopping or provider blame', a
         const logs = await api(gw, 'GET', '/api/panel/usage-logs?limit=20')
         assert.equal(logs.status, 200)
         fs.writeFileSync(path.join(out, code+'-logs.json'), JSON.stringify(logs.json, null, 2))
-        assert.equal(response.status, 502, 'preserve the native platform error')
+        assert.equal(response.status, status, 'preserve the native platform error')
         assert.equal(response.json.error.code, code)
         const row = logs.json.data.logs.find(row => row.requestId === response.headers.get('x-request-id'))
         assert.ok(row)
-        assert.equal(row.statusCode, 502)
+        assert.equal(row.statusCode, status)
         assert.equal(row.errorCode, code)
         assert.equal(row.errorOwner, 'platform')
         assert.equal(row.attemptCount, 1, 'do not switch units or repeat the native request')

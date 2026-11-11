@@ -75,6 +75,7 @@ export const ErrorCode = {
   NATIVE_PREPARATION_FAILED: 'native_preparation_failed',
   NATIVE_CONTROL_UNAVAILABLE: 'native_control_unavailable',
   NATIVE_GENERATION_FAILED: 'native_generation_failed',
+  NATIVE_OPERATION_UNSUPPORTED: 'native_operation_unsupported',
   FABLE_REQUIRES_MAX: 'fable_requires_max',
 
   INCOMPLETE_RESPONSE: 'incomplete_response',
@@ -116,6 +117,7 @@ export const KERNEL_FAILURE_STATUS = Object.freeze({
   [ErrorCode.NATIVE_PREPARATION_FAILED]: 502,
   [ErrorCode.NATIVE_CONTROL_UNAVAILABLE]: 502,
   [ErrorCode.NATIVE_GENERATION_FAILED]: 502,
+  [ErrorCode.NATIVE_OPERATION_UNSUPPORTED]: 501,
 })
 
 export const CLIENT_POOL_BUSY_MESSAGE = '号池负载过高，稍后再试'
