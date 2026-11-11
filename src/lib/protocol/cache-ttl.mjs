@@ -235,24 +235,22 @@ export function stripIllegalCacheControlFields(body) {
   }
   return out
 }
-/** Drop caller cache_control so Node can restamp last + penultimate user. */
+/** Remove Messages cache controls without entering tool arguments, schemas or document data. */
 export function removeCacheControlFields(body) {
   if (!body || typeof body !== 'object') return body
-  const out = { ...body }
-  delete out.cache_control
   const clearNode = (node) => {
     if (!node || typeof node !== 'object') return node
     const next = { ...node }
     delete next.cache_control
+    if (Array.isArray(next.content)) next.content = next.content.map(clearNode)
+    if (next.type === 'tool_addition' && next.tool?.type === 'tool_definition') {
+      next.tool = { ...clearNode(next.tool), definition: clearNode(next.tool.definition) }
+    }
     return next
   }
-  if (Array.isArray(out.tools)) out.tools = out.tools.map(clearNode)
-  if (Array.isArray(out.system)) out.system = out.system.map(clearNode)
-  if (Array.isArray(out.messages)) {
-    out.messages = out.messages.map((message) => {
-      if (!Array.isArray(message?.content)) return message
-      return { ...message, content: message.content.map(clearNode) }
-    })
+  const out = clearNode(body)
+  for (const section of ['tools', 'system', 'messages']) {
+    if (Array.isArray(out[section])) out[section] = out[section].map(clearNode)
   }
   return out
 }

@@ -62,6 +62,7 @@ import {
 import { resolveInferenceBackend, runApiInference, validateApiOpenAIRequest } from '../pool/api-protocol.mjs'
 import { classifyClaudeRequestPurpose, prepareClassifierBody, classifierRequestSummary } from './request-purpose.mjs'
 import { agentSummarySession } from './agent-summary.mjs'
+import { isClaudeCompaction } from './claude-compaction.mjs'
 import { summarizeBody, redactHeaders, presentedApiKeyForLog } from '../admin/request-log.mjs'
 import { loggedReasoningEffort } from './thinking.mjs'
 import { reasoningEffortOf, sessionIdForLog } from './log-fields.mjs'
@@ -153,6 +154,7 @@ import {
   pinConversationCacheTtl,
   resolveCacheTtl,
   fillMissingCacheTtl,
+  removeCacheControlFields,
   validateCacheBreakpoints,
 } from './cache-ttl.mjs'
 import {
@@ -542,6 +544,7 @@ export function createHandleProtocol(deps) {
     toolNames = {},
     want1m = false,
     preserveCacheBreakpoints = false,
+    noPromptCache = false,
     cliHop = false,
     repaired = false,
     requestContext = null,
@@ -565,6 +568,7 @@ export function createHandleProtocol(deps) {
       want1m,
       routing,
       preserveCacheBreakpoints,
+      noPromptCache,
       cliHop,
       repaired,
       requestContext,
@@ -1090,6 +1094,10 @@ export function createHandleProtocol(deps) {
     if (inferenceBackend !== 'api') ctx = applyIntercept(cfg.intercept.rules, 'before_upstream', ctx)
     const officialTraffic = officialInbound
     const requestContext = classifyClaudeRequestPurpose(inbound, { officialTraffic })
+    const noPromptCache =
+      protocol === 'anthropic.messages' &&
+      !requestContext &&
+      isClaudeCompaction(inbound, req.headers, { officialTraffic })
     if (requestContext) {
       logBag.classifier = classifierRequestSummary(inbound, ctx.body, requestContext)
       try {
@@ -1264,10 +1272,15 @@ export function createHandleProtocol(deps) {
       vmId: stickyBound?.vmId || '',
       epoch: 'pending',
     })
-    const requestedCacheTtl = pinConversationCacheTtl(
-      stickyKey || callerSession || outboundSessionId,
-      resolveCacheTtl({ headers: req.headers, body: inbound, routing: getRouting(), routingFile: routingConfigPath }),
-    )
+    const inboundCacheTtl = resolveCacheTtl({
+      headers: req.headers,
+      body: inbound,
+      routing: getRouting(),
+      routingFile: routingConfigPath,
+    })
+    const requestedCacheTtl = noPromptCache
+      ? inboundCacheTtl
+      : pinConversationCacheTtl(stickyKey || callerSession || outboundSessionId, inboundCacheTtl)
     let cacheTtl = requestedCacheTtl
     let preserveCacheBreakpoints = false
     const cacheBreakpoints = cacheBreakpointsFromRoutingFile(routingConfigPath)
@@ -1360,7 +1373,7 @@ export function createHandleProtocol(deps) {
           store: apiEndpointStore,
           protocol,
           inbound: apiInbound,
-          convertedBody: ctx.body,
+          convertedBody: noPromptCache ? removeCacheControlFields(ctx.body) : ctx.body,
           clientStream,
           deliveryMode,
           signal: clientAbort.signal,
@@ -1504,6 +1517,7 @@ export function createHandleProtocol(deps) {
     // Returns the body to send: the image floor and break anchor may rewrite it.
     const imageKey = callerSession ? `${req.apiKeyRecord?.id || req.apiKeyKind || ''}:${callerSession}` : null
     const noteCachePrefix = (selected, sessionId, body) => {
+      if (noPromptCache) return removeCacheControlFields(body)
       if (!sessionId) return body
       const key = `${selected.accountId}:${sessionId}`
       const { body: prepared, ...prefix } = prepareCachePrefix(key, body, Date.now(), {
@@ -1805,6 +1819,10 @@ export function createHandleProtocol(deps) {
             want1m,
           })
           const outbound = noteCachePrefix(selected, attemptSessionId, prepared.body)
+          if (noPromptCache) {
+            cacheTtl = null
+            preserveCacheBreakpoints = true
+          }
           logBag.outbound_summary = summarizeBody(outbound)
           logBag.cache_continuity = describeCacheContinuity({
             inbound,
@@ -1843,6 +1861,7 @@ export function createHandleProtocol(deps) {
               toolNames: attemptMeta?.toolNames || {},
               cacheTtl,
               preserveCacheBreakpoints,
+              noPromptCache,
               cliHop: attemptMeta?.cliHop === true,
               repaired: attemptMeta?.repaired === true,
               requestContext: attemptMeta?.requestContext || requestContext,
@@ -1885,6 +1904,7 @@ export function createHandleProtocol(deps) {
               exec: candidate.exec,
               cacheTtl,
               preserveCacheBreakpoints,
+              noPromptCache,
               cliHop: attemptMeta?.cliHop === true,
               repaired: attemptMeta?.repaired === true,
               requestContext: attemptMeta?.requestContext || requestContext,

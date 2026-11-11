@@ -137,6 +137,7 @@ jobs:
           cache-dependency-path: package-lock.json
       - run: npm ci
       - run: npm run test:unit
+      - run: node --test test/e2e/compaction-cache.e2e.test.mjs
 
   ci-go:
     needs: [changes, ci-prep]

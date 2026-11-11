@@ -478,6 +478,7 @@ async function workerEnvelope({
   want1m = false,
   cacheTtl = null,
   preserveCacheBreakpoints = null,
+  noPromptCache = false,
   cliHop = false,
   repaired = false,
   redactionPrincipal = '',
@@ -506,6 +507,7 @@ async function workerEnvelope({
     preserve_cache_breakpoints: preserveCacheBreakpoints == null ? cacheTtl == null : preserveCacheBreakpoints === true,
     cache_ttl: cacheTtl == null ? null : String(cacheTtl),
   }
+  if (noPromptCache) envelope.headers['x-hermit-no-prompt-cache'] = '1'
   // Diagnostic correlation stays inside the slot envelope; older kernels
   // ignore these headers. Use the resolved caller identity, not redaction state.
   if (exec?.vm?.dataplane === 'hermit') {
@@ -710,6 +712,7 @@ async function streamGoWorkerAdmitted({
   want1m = false,
   cacheTtl = null,
   preserveCacheBreakpoints = null,
+  noPromptCache = false,
   requestPath = '/internal/v1/messages',
   envelope = null,
   cliHop = false,
@@ -818,6 +821,7 @@ async function streamGoWorkerAdmitted({
           want1m,
           cacheTtl,
           preserveCacheBreakpoints,
+          noPromptCache,
           cliHop,
           requestContext,
           repaired,

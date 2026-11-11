@@ -260,6 +260,22 @@ async function runHop({ mode, opts }) {
           },
         }
       }
+      if (opts.noPromptCache && hermitRuntime && ready.health?.no_prompt_cache !== true) {
+        return {
+          ok: false,
+          status: 503,
+          terminalState: 'rejected',
+          upstreamExecutions: 0,
+          body: {
+            type: 'error',
+            error: {
+              type: 'worker_error',
+              code: 'compaction_cache_policy_unsupported',
+              message: 'The selected Hermit runtime cannot disable prompt caching for this request.',
+            },
+          },
+        }
+      }
       reason = ready.reason || 'configured_rust'
     } else {
       return {
