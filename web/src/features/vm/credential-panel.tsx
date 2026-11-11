@@ -457,8 +457,8 @@ function ClaudeCredentialPanel({
                 : '启动并打开官方登录终端'}
           </Button>
           <Dialog open={loginOpen} onOpenChange={setLoginOpen}>
-            <DialogContent className='flex h-[min(960px,calc(100svh-1rem))] w-[min(1500px,calc(100vw-1rem))] max-w-none flex-col gap-0 overflow-hidden border-border/70 bg-background p-0 sm:h-[min(960px,calc(100svh-2rem))] sm:w-[min(1500px,calc(100vw-2rem))]'>
-              <div className='shrink-0 border-b bg-muted/15 px-4 py-3 sm:px-6 sm:py-4'>
+            <DialogContent className='flex h-[min(960px,calc(100svh-1rem))] w-[min(1500px,calc(100vw-1rem))] max-w-none flex-col gap-0 overflow-hidden border-border/70 bg-background p-0 sm:h-[min(960px,calc(100svh-2rem))] sm:w-[min(1500px,calc(100vw-2rem))] sm:max-w-none'>
+              <div className='shrink-0 border-b bg-muted/15 px-4 py-3 pr-12 sm:px-6 sm:py-4 sm:pr-12'>
                 <DialogHeader className='gap-1'>
                   <div className='flex items-center gap-2.5'>
                     <span className='grid size-8 place-items-center rounded-md bg-foreground text-background'>
@@ -473,7 +473,7 @@ function ClaudeCredentialPanel({
                         OAuth。链接、回调码和终端保持在同一窗口。
                       </DialogDescription>
                     </div>
-                    <span className='ml-auto hidden items-center gap-1 rounded-full border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground sm:inline-flex'>
+                    <span className='ml-auto hidden shrink-0 items-center gap-1 rounded-full border bg-background px-2 py-1 font-mono text-[10px] text-muted-foreground sm:inline-flex'>
                       <span className='size-1.5 rounded-full bg-zinc-400' />
                       PTY / TUI
                     </span>
@@ -482,7 +482,7 @@ function ClaudeCredentialPanel({
               </div>
 
               <div className='grid min-h-0 flex-1 grid-rows-[minmax(400px,1fr)_auto] overflow-y-auto lg:grid-cols-[minmax(0,1fr)_380px] lg:grid-rows-1 lg:overflow-hidden'>
-                <section className='flex min-h-[400px] flex-col bg-[#080a0d] p-3 sm:p-5'>
+                <section className='flex min-h-[400px] min-w-0 flex-col bg-[#080a0d] p-3 sm:p-5'>
                   <div className='mb-3 flex shrink-0 items-center justify-between gap-3 px-1 text-xs text-zinc-400'>
                     <div className='flex min-w-0 items-center gap-2'>
                       <span className='font-mono text-sm text-zinc-100'>
@@ -524,7 +524,7 @@ function ClaudeCredentialPanel({
                   </p>
                 </section>
 
-                <aside className='min-h-0 border-t bg-muted/20 p-4 sm:p-6 lg:overflow-y-auto lg:border-t-0 lg:border-l'>
+                <aside className='min-h-0 min-w-0 border-t bg-muted/20 p-4 sm:p-6 lg:overflow-y-auto lg:border-t-0 lg:border-l'>
                   <div className='space-y-6'>
                     <div>
                       <div className='mb-2 flex items-center gap-2'>
