@@ -1540,6 +1540,7 @@ export function personaPresetFromHopMode(mode) {
   const raw = String(mode ?? '')
     .trim()
     .toLowerCase()
+  if (raw === 'native_server') return 'native_server'
   if (raw === 'official_full' || raw === 'full' || raw === 'agent_official') return 'official_full'
   if (
     raw === 'official' ||
@@ -2253,6 +2254,8 @@ export function applyCrsUnofficialPersona(
   // The 2.1.303 assembler only runs on the cli-hop lean path; template rendering here is official_full.
   const templateSettings =
     chosen.preset === OFFICIAL_303_PRESET ? { ...chosen, preset: templatePresetFor(chosen.preset) } : chosen
+  // The selected Hermit attempt applies this policy from the original input.
+  if (templateSettings.preset === 'native_server') return body
   const preserveEnvironment =
     personaUsesTemplate(templateSettings) &&
     !presetFlagEnabled(templateSettings.switches, 'persona_env_presets', templateSettings.preset)

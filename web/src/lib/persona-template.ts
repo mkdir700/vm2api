@@ -23,6 +23,7 @@ export const PERSONA_PRESETS: readonly PersonaPreset[] = [
   'zero',
   'custom',
   'official_303',
+  'native_server',
 ]
 export const DEFAULT_PERSONA_PRESET: PersonaPreset = 'official_full'
 export const OVERLAY_PRESETS: readonly OverlayPreset[] = [
@@ -47,6 +48,7 @@ export const PERSONA_PRESET_OPTIONS: [PersonaPreset, string][] = [
   ['zero', '0注入'],
   ['custom', '自定义'],
   ['official_303', '官方 2.1.303（按模型）'],
+  ['native_server', '原生 Claude Code（服务端环境）'],
 ]
 export const OVERLAY_PRESET_OPTIONS: [OverlayPreset, string][] = [
   ['off', '关闭'],
@@ -255,6 +257,7 @@ export const DEFAULT_PERSONA_TEMPLATES: Record<PersonaPreset, PersonaBlock[]> =
       },
     ],
     custom: [],
+    native_server: [],
     official_303: [
       {
         id: 'billing',
@@ -339,6 +342,7 @@ export function normalizePersonaPreset(value: unknown): PersonaPreset {
   const raw = String(value ?? '')
     .trim()
     .toLowerCase()
+  if (raw === 'native_server') return 'native_server'
   if (raw === 'official_full' || raw === 'full' || raw === 'agent_official')
     return 'official_full'
   if (
@@ -476,7 +480,7 @@ export function overlayPresetFromCompat(
  * 与 overlay_preset 取什么值无关。
  */
 export function overlayDisabledByPersona(preset: PersonaPreset): boolean {
-  return preset === 'zero'
+  return preset === 'zero' || preset === 'native_server'
 }
 
 /** routing.compatibility.persona_hides。null = 跟模板 hide 字段。 */

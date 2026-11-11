@@ -41,6 +41,7 @@ export function seedPersonaDrafts(compat: Compat): PersonaDrafts {
     official_full: seedText(stored, DEFAULT_PERSONA_TEMPLATES, 'official_full'),
     zero: seedText(stored, DEFAULT_PERSONA_TEMPLATES, 'zero'),
     custom: seedText(stored, DEFAULT_PERSONA_TEMPLATES, 'custom'),
+    native_server: '',
     official_303: seedText(stored, DEFAULT_PERSONA_TEMPLATES, 'official_303'),
   }
   const { blocks } = parsePersonaTemplateLines(drafts.official)
@@ -62,6 +63,7 @@ export function seedOverlayDrafts(compat: Compat): OverlayDrafts {
 export function personaTemplatesPayload(drafts: PersonaDrafts) {
   const out: Record<string, RawBlock[]> = {}
   for (const key of PERSONA_PRESETS) {
+    if (key === 'native_server') continue
     const { blocks } = parsePersonaTemplateLines(drafts[key])
     out[key] = templateOrFollowPreset(blocks, DEFAULT_PERSONA_TEMPLATES, key)
   }
@@ -89,6 +91,7 @@ export function personaDraftStoresEmpty(
 }
 
 export function personaSchemeSummary(text: string, key: PersonaPreset): string {
+  if (key === 'native_server') return 'Hermit · 服务端原生环境'
   const { blocks, errors } = parsePersonaTemplateLines(text)
   if (errors.length) return `${errors.length} 处错误`
   const stored = templateOrFollowPreset(blocks, DEFAULT_PERSONA_TEMPLATES, key)

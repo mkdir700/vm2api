@@ -63,7 +63,7 @@ function PresetBar({
     <div
       role='tablist'
       aria-label='system 提示词档位'
-      className='grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-5'
+      className='grid grid-cols-2 gap-2 md:grid-cols-3'
     >
       {PERSONA_PRESET_OPTIONS.map(([key, label]) => {
         const selected = key === viewing
@@ -81,9 +81,7 @@ function PresetBar({
                 : 'border-border/60 bg-card hover:border-border hover:bg-muted/40'
             )}
           >
-            <span className='w-full text-sm font-medium whitespace-nowrap'>
-              {label}
-            </span>
+            <span className='w-full text-sm font-medium'>{label}</span>
             <span className='flex w-full items-center gap-2 text-[11px] text-muted-foreground'>
               <span>{summaries[key]}</span>
               {key === active ? (
@@ -124,6 +122,7 @@ export function SystemPromptWorkspace({
     if (!drafts) return []
     const out: string[] = []
     for (const key of PERSONA_PRESETS) {
+      if (key === 'native_server') continue
       const at = key === active ? '' : `「${personaPresetLabel(key)}」`
       const parsed = parsePersonaTemplateLines(drafts[key])
       for (const err of parsed.errors)
@@ -167,7 +166,21 @@ export function SystemPromptWorkspace({
 
       <div className='grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_22rem]'>
         <section aria-label='出站预览' className='min-w-0 xl:sticky xl:top-20'>
-          <SystemPreview preset={viewing} blocks={blocks} compat={compat} />
+          {viewing === 'native_server' ? (
+            <Card className='p-5'>
+              <h3 className='font-semibold'>原生 Claude Code（服务端环境）</h3>
+              <p className='text-sm leading-relaxed text-muted-foreground'>
+                使用服务端 Claude Code
+                的原生提示词和运行环境。移除已识别的自动客户端环境信息。保留任务内容和应用指令。
+              </p>
+              <p className='text-sm leading-relaxed text-muted-foreground'>
+                外部工具仍在客户端执行。任务内容和工具数据中的路径会保留。此选项仅支持
+                Hermit。
+              </p>
+            </Card>
+          ) : (
+            <SystemPreview preset={viewing} blocks={blocks} compat={compat} />
+          )}
         </section>
         <aside aria-label='注入控制' className='min-w-0 space-y-4'>
           {viewing !== active ? (
@@ -193,87 +206,91 @@ export function SystemPromptWorkspace({
             </div>
           ) : null}
 
-          <Card className='gap-0 py-0'>
-            <div className='flex items-center justify-between gap-2 px-5 py-4 sm:px-6'>
-              <span className='text-base font-semibold'>注入控制</span>
-              <Button
-                type='button'
-                size='sm'
-                variant='ghost'
-                className='h-7 cursor-pointer text-xs'
-                onClick={() =>
-                  setDraft(
-                    stringifyPersonaTemplate(
-                      presetSeed(DEFAULT_PERSONA_TEMPLATES, viewing)
+          {viewing !== 'native_server' ? (
+            <Card className='gap-0 py-0'>
+              <div className='flex items-center justify-between gap-2 px-5 py-4 sm:px-6'>
+                <span className='text-base font-semibold'>注入控制</span>
+                <Button
+                  type='button'
+                  size='sm'
+                  variant='ghost'
+                  className='h-7 cursor-pointer text-xs'
+                  onClick={() =>
+                    setDraft(
+                      stringifyPersonaTemplate(
+                        presetSeed(DEFAULT_PERSONA_TEMPLATES, viewing)
+                      )
                     )
-                  )
-                }
-              >
-                <RotateCcw />
-                恢复预设
-              </Button>
-            </div>
-            <div className='space-y-3 border-t border-border/60 px-5 py-4 sm:px-6'>
-              {viewing === 'custom' &&
-              personaDraftStoresEmpty(text, 'custom') ? (
-                <Notice tone='caution'>空模板会回落官方提示词。</Notice>
-              ) : null}
-              {viewing === 'custom' || hasErrors ? (
-                <details className='group'>
-                  <summary className='cursor-pointer py-2 text-sm font-medium focus-visible:rounded-md'>
-                    详情编辑
-                  </summary>
-                  <div className='pt-3'>
-                    <PersonaTemplateEditor
-                      key={viewing}
-                      text={
-                        hasErrors
-                          ? promptDisplayText(text)
-                          : stringifyPersonaTemplate(
-                              promptEditorBlocks(parsed.blocks)
-                            )
-                      }
-                      blocks={promptEditorBlocks(blocks)}
-                      hasErrors={hasErrors}
-                      vars={PERSONA_TEMPLATE_VARS.map(([name, description]) => [
-                        promptDisplayText(`{{${name}}}`).slice(2, -2),
-                        description.replace(/2\.1\.303/g, '').trim(),
-                      ])}
-                      onTextChange={(next) => {
-                        const source = promptSourceText(next)
-                        const parsed = parsePersonaTemplateLines(source)
-                        setDraft(
-                          parsed.errors.length
-                            ? source
-                            : stringifyPersonaTemplate(
-                                promptSourceBlocks(parsed.blocks, blocks)
-                              )
-                        )
-                      }}
-                      onBlocksChange={(next) =>
-                        setDraft(
-                          stringifyPersonaTemplate(
-                            promptSourceBlocks(next, blocks)
-                          )
-                        )
-                      }
-                    />
-                  </div>
-                </details>
-              ) : (
-                <PromptFields
-                  preset={viewing}
-                  blocks={blocks}
-                  compat={compat}
-                  server={server}
-                  onBlocksChange={(next) =>
-                    setDraft(stringifyPersonaTemplate(next))
                   }
-                  onCompatChange={onChange}
-                />
-              )}
-            </div>
-          </Card>
+                >
+                  <RotateCcw />
+                  恢复预设
+                </Button>
+              </div>
+              <div className='space-y-3 border-t border-border/60 px-5 py-4 sm:px-6'>
+                {viewing === 'custom' &&
+                personaDraftStoresEmpty(text, 'custom') ? (
+                  <Notice tone='caution'>空模板会回落官方提示词。</Notice>
+                ) : null}
+                {viewing === 'custom' || hasErrors ? (
+                  <details className='group'>
+                    <summary className='cursor-pointer py-2 text-sm font-medium focus-visible:rounded-md'>
+                      详情编辑
+                    </summary>
+                    <div className='pt-3'>
+                      <PersonaTemplateEditor
+                        key={viewing}
+                        text={
+                          hasErrors
+                            ? promptDisplayText(text)
+                            : stringifyPersonaTemplate(
+                                promptEditorBlocks(parsed.blocks)
+                              )
+                        }
+                        blocks={promptEditorBlocks(blocks)}
+                        hasErrors={hasErrors}
+                        vars={PERSONA_TEMPLATE_VARS.map(
+                          ([name, description]) => [
+                            promptDisplayText(`{{${name}}}`).slice(2, -2),
+                            description.replace(/2\.1\.303/g, '').trim(),
+                          ]
+                        )}
+                        onTextChange={(next) => {
+                          const source = promptSourceText(next)
+                          const parsed = parsePersonaTemplateLines(source)
+                          setDraft(
+                            parsed.errors.length
+                              ? source
+                              : stringifyPersonaTemplate(
+                                  promptSourceBlocks(parsed.blocks, blocks)
+                                )
+                          )
+                        }}
+                        onBlocksChange={(next) =>
+                          setDraft(
+                            stringifyPersonaTemplate(
+                              promptSourceBlocks(next, blocks)
+                            )
+                          )
+                        }
+                      />
+                    </div>
+                  </details>
+                ) : (
+                  <PromptFields
+                    preset={viewing}
+                    blocks={blocks}
+                    compat={compat}
+                    server={server}
+                    onBlocksChange={(next) =>
+                      setDraft(stringifyPersonaTemplate(next))
+                    }
+                    onCompatChange={onChange}
+                  />
+                )}
+              </div>
+            </Card>
+          ) : null}
 
           <Problems items={problems} />
         </aside>

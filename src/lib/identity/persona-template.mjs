@@ -17,7 +17,7 @@
 
 import { isDeepStrictEqual } from 'node:util'
 
-export const PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero', 'custom'])
+export const PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero', 'custom', 'native_server'])
 export const DEFAULT_PERSONA_PRESET = 'official_full'
 /** Read-only compatibility alias; no longer a selectable preset. */
 export const OFFICIAL_303_PRESET = 'official_303'
@@ -88,6 +88,7 @@ export const AGENT_STANDING_MAX = 2000
 export const EMPTY_BLOCK_TEXT = '\u200b'
 
 export const DEFAULT_PERSONA_TEMPLATES = Object.freeze({
+  native_server: Object.freeze([]),
   official: Object.freeze([
     Object.freeze({
       id: 'billing',
@@ -284,6 +285,7 @@ export function normalizePersonaPreset(value) {
   const raw = String(value ?? '')
     .trim()
     .toLowerCase()
+  if (raw === 'native_server') return 'native_server'
   if (raw === 'official_full' || raw === 'full' || raw === 'agent_official') return 'official_full'
   if (
     raw === 'official' ||

@@ -1083,6 +1083,12 @@ export async function workerHealth(exec, { timeoutMs = 3000, signal } = {}) {
         needs_refresh: !hasAccessPresence(claude),
       },
       source: 'go-worker-mock',
+      ...(exec?.vm?.dataplane === 'hermit'
+        ? {
+            runtime_flavor: 'hermit',
+            native_server_environment: process.env.KIN_MOCK_SCENARIO !== 'native_server_unsupported',
+          }
+        : {}),
     }
   }
   try {

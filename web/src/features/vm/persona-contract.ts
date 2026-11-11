@@ -1,5 +1,10 @@
 export type SlotPersonaPreset =
-  'inherit' | 'official' | 'official_full' | 'zero' | 'official_303'
+  | 'inherit'
+  | 'official'
+  | 'official_full'
+  | 'zero'
+  | 'official_303'
+  | 'native_server'
 
 const SLOT_LABELS: Record<SlotPersonaPreset, string> = {
   inherit: '跟随全局',
@@ -7,6 +12,7 @@ const SLOT_LABELS: Record<SlotPersonaPreset, string> = {
   official_full: '官方完整提示词',
   zero: '0注入',
   official_303: '官方 2.1.303（按模型）',
+  native_server: '原生 Claude Code（服务端环境）',
 }
 
 export const SLOT_PERSONA_OPTIONS: {
@@ -27,6 +33,7 @@ export function normalizeSlotPersonaPreset(
   if (!raw || raw === 'inherit' || raw === 'global' || raw === 'default') {
     return 'inherit'
   }
+  if (raw === 'native_server') return 'native_server'
   if (raw === 'official_full' || raw === 'full' || raw === 'agent_official') {
     return 'official_full'
   }

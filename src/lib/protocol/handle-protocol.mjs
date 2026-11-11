@@ -1,3 +1,4 @@
+import { applyNativeServerPolicy } from '../identity/native-server-policy.mjs'
 /**
  * /v1 protocol handler. URLs, auth, and response envelopes stay with the
  * server wiring; this factory owns convert → pool → Go/Rust hop → client.
@@ -71,6 +72,7 @@ import { keyScopeFromRequest, vmPoolDenial } from '../admin/key-scope.mjs'
 import { keyModelError } from '../admin/key-models.mjs'
 import {
   resolveInferenceEngine,
+  resolveKernelDataplane,
   resolveOfficialCcInference,
   resolveSlotPersonaPreset,
   slotPersonaModeOverride,
@@ -1287,6 +1289,7 @@ export function createHandleProtocol(deps) {
     const openaiCompat = String(protocol || '').startsWith('openai.')
     syncClaudeKernelConfigsFromFile(cfg.paths?.project, routingConfigPath)
     const personaMode = personaModeFromRoutingFile(routingConfigPath)
+    const nativePolicyIn = ctx.body
     if (!apiOpenAI && !requestContext && !officialClient && !officialTraffic) {
       ctx.body = ensureClaudeWebSearch(ctx.body, {
         enabled: shouldInjectClaudeWebSearch({
@@ -1650,8 +1653,15 @@ export function createHandleProtocol(deps) {
           // cli-node receives the cleaned body after this boundary. Keep every
           // thinking block on the first hop and only let a repaired retry strip it.
           const preserveCliHopThinkingBlocks = !repaired
-          const cliHop = resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
           const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
+          const nativeServer = resolvedPersona === 'native_server'
+          const cliHop = !nativeServer && resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
+          if (nativeServer && resolveKernelDataplane(selected.vm, routingNow) !== 'hermit') {
+            const error = new Error('原生 Claude Code（服务端环境）仅支持 Hermit HTTP 推理路径')
+            error.code = 'native_server_requires_hermit'
+            error.status = 400
+            throw error
+          }
           const preserveCallerEnvironment = !presetFlagEnabled(
             routingNow?.compatibility,
             'persona_env_presets',
@@ -1818,7 +1828,18 @@ export function createHandleProtocol(deps) {
             authScheme: isApiKeyMode(credMode) ? 'apikey' : 'oauth',
             want1m,
           })
-          const outbound = noteCachePrefix(selected, attemptSessionId, prepared.body)
+          const outbound = noteCachePrefix(
+            selected,
+            attemptSessionId,
+            nativeServer
+              ? applyNativeServerPolicy({
+                  ...nativePolicyIn,
+                  model: hopBody.model,
+                  metadata: prepared.body.metadata,
+                  stream: upstreamStream,
+                })
+              : prepared.body,
+          )
           if (noPromptCache) {
             cacheTtl = null
             preserveCacheBreakpoints = true
@@ -1838,7 +1859,7 @@ export function createHandleProtocol(deps) {
           return {
             body: outbound,
             meta: {
-              toolNames: composeToolNames(inboundToolReverse, prepared.toolNames),
+              toolNames: composeToolNames(inboundToolReverse, nativeServer ? {} : prepared.toolNames),
               sessionId: attemptSessionId,
               repaired,
             },

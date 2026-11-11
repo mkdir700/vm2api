@@ -95,6 +95,7 @@ export function normalizeSlotPersonaPreset(value, { inherit = false } = {}) {
   if (!raw || raw === 'inherit' || raw === 'global' || raw === 'default') {
     return inherit ? '' : null
   }
+  if (raw === 'native_server') return 'native_server'
   if (raw === 'official_full' || raw === 'full' || raw === 'agent_official') return 'official_full'
   if (
     raw === 'official' ||
@@ -260,6 +261,7 @@ export function resolveSlotPersonaPreset(vm, routing = {}) {
 }
 
 export function personaModeFromPreset(preset) {
+  if (preset === 'native_server') return 'native_server'
   if (preset === 'zero') return 'zero'
   if (preset === 'official') return 'official_prompt'
   if (preset === 'official_full') return 'official_full'
@@ -306,7 +308,10 @@ export function parseSlotPersonaPresetPatch(value) {
   }
   const preset = normalizeSlotPersonaPreset(raw)
   if (preset) return { ok: true, value: preset }
-  return { ok: false, error: 'persona_preset must be official, official_full, zero, official_303, or empty' }
+  return {
+    ok: false,
+    error: 'persona_preset must be official, official_full, zero, official_303, native_server, or empty',
+  }
 }
 
 export function parseSlotEnginePolicyPatch(body = {}) {

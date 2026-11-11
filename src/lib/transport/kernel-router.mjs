@@ -244,6 +244,25 @@ async function runHop({ mode, opts }) {
     })
     if (ready?.ok) {
       hermitRuntime = ready.health?.runtime_flavor === 'hermit'
+      if (
+        opts.body?.hermit_environment_policy === 'native_server' &&
+        (!hermitRuntime || ready.health?.native_server_environment !== true)
+      ) {
+        return {
+          ok: false,
+          status: 400,
+          terminalState: 'rejected',
+          upstreamExecutions: 0,
+          body: {
+            type: 'error',
+            error: {
+              type: 'invalid_request_error',
+              code: 'native_server_environment_unsupported',
+              message: 'The selected Hermit runtime does not support the server environment policy.',
+            },
+          },
+        }
+      }
       if (opts.requestContext && opts.cliHop && ready.health?.classifier_request_context !== true) {
         return {
           ok: false,
