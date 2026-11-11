@@ -168,7 +168,10 @@ export function SettingsPage() {
         saved?.kernel_persona,
         saved?.telemetry_sync
       )
-      if (tab === 'telemetry' && saved?.telemetry_sync?.failed?.length) {
+      if (
+        saved?.kernel_persona?.unsupported_request_limit?.length ||
+        (tab === 'telemetry' && saved?.telemetry_sync?.failed?.length)
+      ) {
         toast.warning(message)
       } else {
         toast.success(message)
@@ -519,9 +522,12 @@ export function SettingsPage() {
 function settingsSaveToast(
   tab: SettingsTabId,
   inherited: number,
-  kernel?: { updated?: number } | null,
+  kernel?: RoutingSaveResult['kernel_persona'],
   telemetry?: RoutingSaveResult['telemetry_sync']
 ) {
+  if (kernel?.unsupported_request_limit?.length) {
+    return `已保存，${kernel.unsupported_request_limit.length} 个 Hermit 槽位未应用请求体上限。请先升级这些槽位的内核。`
+  }
   if (tab === 'protocol') {
     const hot =
       kernel && typeof kernel.updated === 'number'
@@ -550,7 +556,11 @@ function protocolFollowError(message: string) {
 }
 
 type RoutingSaveResult = {
-  kernel_persona?: { updated?: number; skipped?: number } | null
+  kernel_persona?: {
+    updated?: number
+    skipped?: number
+    unsupported_request_limit?: string[]
+  } | null
   telemetry_sync?: {
     updated?: number
     skipped?: number

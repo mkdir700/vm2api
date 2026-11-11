@@ -496,6 +496,16 @@ const kernelReloadPending = new Map()
 
 /** Jobs on the kernel (any caller): configured slots that are neither ready nor closed. */
 function kernelJobsRunning(exec, health) {
+  if (selectedHermit(exec)) {
+    return health?.runtime_flavor === 'hermit' &&
+      health.healthy === true &&
+      health.switch_ready === true &&
+      health.active_requests === 0 &&
+      health.pending_tool_results === 0 &&
+      health.recovering !== true
+      ? 0
+      : 1
+  }
   if (!rustKernelProcessUp(health)) return 0
   if (health.recovering === true) return 1
   if (health.runtime_variant === 'crag-v2') {
@@ -553,10 +563,15 @@ async function tryKernelReload(id) {
     return
   }
   kernelReloadPending.delete(id)
-  const result = await Promise.resolve()
+  const pending = Promise.resolve()
     .then(() => entry.restart(entry.exec))
     .catch((error) => ({ ok: false, error: String(error?.message || error) }))
-  entry.resolve(result)
+  wrapRecyclePending.set(id, pending)
+  try {
+    entry.resolve(await pending)
+  } finally {
+    if (wrapRecyclePending.get(id) === pending) wrapRecyclePending.delete(id)
+  }
 }
 
 /** Deliberate credential/config cutover; failure recovery belongs to the watchdog. */
@@ -1044,6 +1059,7 @@ export function syncClaudeKernelConfigs(projectRoot, routing) {
   if (!projectRoot) return { updated: 0, skipped: 0 }
   let updated = 0
   let skipped = 0
+  const unsupported_request_limit = []
   for (const { id } of listVms(projectRoot)) {
     const vm = getVm(projectRoot, id)
     if (!vm || isCodexVm(vm)) {
@@ -1052,6 +1068,9 @@ export function syncClaudeKernelConfigs(projectRoot, routing) {
     }
     try {
       const written = writeKernelConfig(projectRoot, vm, { routing })
+      if (written?.requestLimitSupported === false && written.desiredRequestBytes !== 32 * 1024 * 1024) {
+        unsupported_request_limit.push(id)
+      }
       if (written?.changed) updated += 1
     } catch (error) {
       skipped += 1
@@ -1064,7 +1083,7 @@ export function syncClaudeKernelConfigs(projectRoot, routing) {
       )
     }
   }
-  return { updated, skipped }
+  return { updated, skipped, unsupported_request_limit }
 }
 
 /**

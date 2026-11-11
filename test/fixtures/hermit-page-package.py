@@ -13,6 +13,7 @@ if len(sys.argv)>4 and sys.argv[4]=='production':
  m['entrypoints']['helper']={'transport':'internal-http','path':'/internal/v1/helper','protocol':'hermit-helper-1'}
  m['capabilities'].update(production=True, helper_integration=True, https_upstream=True, switch_readiness=True)
 if 'pool' in sys.argv[5:]: m['capabilities']['native_session_pool']=True
+if 'request-limit' in sys.argv[5:]: m['capabilities']['request_body_limit']=True
 raw=json.dumps(m,sort_keys=True).encode()
 with tarfile.open(root+'/package.tar.gz','w:gz') as t:
  for n,b in {'manifest.json':raw,**files}.items():

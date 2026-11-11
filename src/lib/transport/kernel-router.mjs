@@ -314,6 +314,8 @@ async function runHop({ mode, opts }) {
   beginWrapHop(opts.exec)
   let result
   try {
+    // Reserve the hop before waiting so the idle reload cannot race admission.
+    await awaitWrapRecycle(opts.exec)
     result = await send(opts)
     noteWrapHop(opts.exec)
     if (opts.signal?.aborted || isClientCancelledResult(result)) {

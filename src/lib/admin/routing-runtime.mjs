@@ -15,7 +15,13 @@ import {
   persistVmMaxSessions,
   markUnschedulable,
 } from '../vm/vm-registry.mjs'
-import { normalizeInferenceConfig, normalizeSessionSlots, resolveInferenceEngine } from '../vm/slot-engine.mjs'
+import {
+  normalizeInferenceConfig,
+  normalizeSessionSlots,
+  resolveInferenceEngine,
+  resolveKernelDataplane,
+} from '../vm/slot-engine.mjs'
+import { writeHermitKernelConfig } from '../vm/hermit-runtime.mjs'
 import { slotExec } from '../vm/slot-runtime.mjs'
 import { maxRequestBytes, streamIdleTimeoutMs } from '../core/config.mjs'
 
@@ -403,6 +409,13 @@ export function createRoutingRuntime(ctx) {
       const vm = getVm(project, id)
       if (!vm || isCodexVm(vm) || vm.status !== 'running') continue
       if (resolveInferenceEngine(vm, routingConfig) !== 'rust') continue
+      if (resolveKernelDataplane(vm, routingConfig) === 'hermit') {
+        try {
+          if (!writeHermitKernelConfig(project, vm, { routing: routingConfig }).requestLimitSupported) continue
+        } catch {
+          continue
+        }
+      }
       if (requestKernelReloadWhenIdle(slotExec(project, vm)).ok) queued += 1
     }
     return queued

@@ -1,5 +1,7 @@
 # Hermit 保留 vm2api 协议设置：实现、上线与交接
 
+更新：完整 main 构建现已上线。本文中的旧页面操作和“排除 `985bf204`”仅描述上一轮发布。请使用[统一内核页面正式发布与交接](hermit-unified-kernels-deployment-20261109.md)中的 select 与统一安装流程。
+
 ## 结果
 
 primaryserver 已完成本轮正式升级。

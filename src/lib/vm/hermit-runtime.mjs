@@ -6,7 +6,7 @@ import { runtimeKind } from './runtime-kind.mjs'
 import { isCodexVm } from './vm-kind.mjs'
 import { credentialModeOfVm, looksLikeConsoleApiKey } from '../oauth/credential-mode.mjs'
 import { readWorkerCredentialFile, slotWorkerCredentialPath, runtimeFileOwner } from '../oauth/oauth-credentials.mjs'
-import { readRoutingConfigFile } from '../core/config.mjs'
+import { readRoutingConfigFile, inboundBodyLimit } from '../core/config.mjs'
 import { resolveSessionSlots, normalizeSessionIdleTtlSeconds } from './slot-engine.mjs'
 
 export const HERMIT_GUEST_PACKAGES = '/opt/kin-kernel-packages'
@@ -185,12 +185,19 @@ export function writeHermitKernelConfig(project, vm, { force = false, routing } 
   } catch {}
   if (!token) token = crypto.randomBytes(32).toString('hex')
   privateFile(tokenPath, token + '\n', vm)
+  const desiredRequestBytes = inboundBodyLimit(
+    routing || readRoutingConfigFile(project),
+    Number(process.env.KIN_MAX_BODY || 128 * 1024 * 1024),
+  )
+  const requestLimitSupported = manifest.capabilities.request_body_limit === true
+  let changed = false
   if (force || !fs.existsSync(configPath)) {
     const root = `/run/kin/h-${crypto.randomBytes(5).toString('hex')}`
     const poolRouting =
       manifest.capabilities.native_session_pool === true ? routing || readRoutingConfigFile(project) : null
     if (ca) privateFile(path.join(runDir, 'native-ca.pem'), ca, vm)
     const body = {
+      ...(requestLimitSupported ? { max_request_bytes: desiredRequestBytes } : {}),
       ...(manifest.capabilities.native_session_pool === true
         ? {
             session_capacity: resolveSessionSlots(
@@ -229,8 +236,22 @@ export function writeHermitKernelConfig(project, vm, { force = false, routing } 
       internal_token: token,
     }
     privateFile(configPath, JSON.stringify(body, null, 2) + '\n', vm)
+    changed = true
+  } else if (requestLimitSupported) {
+    const previous = JSON.parse(fs.readFileSync(configPath, 'utf8'))
+    if (previous.max_request_bytes !== desiredRequestBytes) {
+      privateFile(
+        configPath,
+        JSON.stringify({ ...previous, max_request_bytes: desiredRequestBytes }, null, 2) + '\n',
+        vm,
+      )
+      changed = true
+    }
   }
   return {
+    changed,
+    requestLimitSupported,
+    desiredRequestBytes,
     runDir,
     configPath,
     tokenPath,

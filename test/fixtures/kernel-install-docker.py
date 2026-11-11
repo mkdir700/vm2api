@@ -89,7 +89,13 @@ elif args[0] == 'exec':
         class Health(socketserver.BaseRequestHandler):
             def handle(self):
                 self.request.recv(65536)
-                body = json.dumps({'ok': True, 'healthy': True, 'runtime_flavor': 'hermit', 'active_requests': 0, 'switch_ready': True, 'ready_slots': 1}).encode()
+                config = json.loads((run / 'native-slot.json').read_text())
+                health = {'ok': True, 'healthy': True, 'runtime_flavor': 'hermit', 'active_requests': 0,
+                          'pending_tool_results': 0, 'switch_ready': True, 'ready_slots': 1,
+                          'max_request_bytes': config.get('max_request_bytes', 32 * 1024 * 1024)}
+                control = root / 'fixture-health.json'
+                if control.exists(): health.update(json.loads(control.read_text()))
+                body = json.dumps(health).encode()
                 try:
                     self.request.sendall(b'HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: ' + str(len(body)).encode() + b'\r\nConnection: close\r\n\r\n' + body)
                 except BrokenPipeError:
