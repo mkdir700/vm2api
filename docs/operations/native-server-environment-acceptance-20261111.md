@@ -1,6 +1,6 @@
 # Native Claude Code (server environment) acceptance
 
-Status: isolated acceptance passed before production release. Deployment is recorded separately.
+Status: isolated acceptance passed. The later production rollout passed; see [the deployment record](native-server-environment-deployment-20261111.md). The results below retain the pre-deployment acceptance boundary.
 
 The console option is `原生 Claude Code（服务端环境）`. Its stable identifier is `native_server`. It uses the pinned CLI default core prompt and server context. Recognized automatic client environment sections and reminders are removed. Unknown custom prose, task paths, application instructions, images, external tool schemas, arguments, and results are retained. External tools still execute in the caller environment.
 

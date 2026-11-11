@@ -1,6 +1,6 @@
 # Native Claude Code (server environment)
 
-Status: implemented and validated with isolated synthetic providers; not deployed.
+Status: deployed on primaryserver. The selected preset remains official_full. See [the deployment record](native-server-environment-deployment-20261111.md).
 
 ## Ownership
 

@@ -1,0 +1,94 @@
+{
+  "result": "PASS",
+  "verified_at": "2026-11-11T03:32:26.943231+00:00",
+  "host": "primaryserver",
+  "vm_id": "vm-01",
+  "controller": {
+    "source_commit": "9dc97a07b7874f69fe29bba97ce65b1b87b1a190",
+    "image": "sha256:c3740128cdf8dd2f053f679c27ea9f41581d2f775f584fd134e275ac14c1dbd2",
+    "upgrade_task": "1eb09e5d6a3243d1b5f173f8714c4488",
+    "result": "PASS",
+    "phase": "active"
+  },
+  "hermit": {
+    "source_commit": "173c0ac72cf513004d62af43c6f52fe0e0830801",
+    "version": "0.0.0-production.native-server-173c0ac",
+    "manifest_sha256": "61f729128366cf695eabb79ad965664eb54bd55555b010c4b7e5f2cf085a75df",
+    "archive_sha256": "1bc4037dc3b6380d63cf31b68d4612f1282f39e25d888e3f05677a616c90f06b",
+    "binary_sha256": "1a50d0ab71194cb26d43b0f1feaf45c3e8a89934dfb04464435b68d5dad5723a",
+    "transition_id": "kernel-c7bc1a8a-1485-42bc-be60-6752dc20b74e",
+    "transition_state": "finalized",
+    "native_server_environment": true
+  },
+  "preservation": {
+    "global_persona": "official_full",
+    "persona_changed": false,
+    "account_proxy_identity_preserved": true,
+    "credentials_preserved": true,
+    "unrelated_containers_preserved": true,
+    "controller_environment_and_mounts_preserved_during_native_switch": true,
+    "scheduling_restored": true,
+    "active_request_interruption": false
+  },
+  "health": {
+    "healthy": true,
+    "admission": "accepting",
+    "active_requests": 0,
+    "pending_tool_results": 0,
+    "ready_slots": 20,
+    "resident_sessions": 0,
+    "switch_ready": true
+  },
+  "qualification": {
+    "result": "PASS",
+    "rows": [
+      {
+        "name": "full",
+        "result": "PASS",
+        "container_removed": true
+      },
+      {
+        "name": "legacy",
+        "result": "PASS",
+        "container_removed": true
+      },
+      {
+        "name": "gateway",
+        "result": "PASS",
+        "checks": 17
+      },
+      {
+        "name": "native-full-chain",
+        "result": "PASS",
+        "checks": 62
+      },
+      {
+        "name": "native-legacy",
+        "result": "PASS",
+        "checks": 48
+      }
+    ],
+    "image": "sha256:c3740128cdf8dd2f053f679c27ea9f41581d2f775f584fd134e275ac14c1dbd2",
+    "source_revision": "9dc97a07b7874f69fe29bba97ce65b1b87b1a190",
+    "manifest_sha256": "61f729128366cf695eabb79ad965664eb54bd55555b010c4b7e5f2cf085a75df",
+    "archive_sha256": "1bc4037dc3b6380d63cf31b68d4612f1282f39e25d888e3f05677a616c90f06b",
+    "source_fingerprints_verified": true,
+    "network": "none",
+    "production_credentials": "NOT USED",
+    "real_provider": "NOT RUN"
+  },
+  "ui": {
+    "result": "PASS",
+    "native_option_present": true,
+    "assets": {
+      "/assets/index-7c5z7kmT.js": "1d9026ec558ffe929a1ad2c9d933c6e2ebcfb3504b7eed1c5df7ae712ea884f4",
+      "/assets/button-dPw76hNS.js": "b61aa4d65fc886f6a03a01d7c7f4e6015173c82886ef957e446baf8d2f7c5c5d",
+      "/assets/with-selector-Cye38Opo.js": "a9f60d685fb1d7a1c27c44634ade48811fb2326160bf51e15b080d8fb053b050",
+      "/assets/link-BVFhl5On.js": "b758860c308cdb04ee3e02f899f59039953024fbc0a03b6dae2ad6f0f1b63a09",
+      "/assets/index-CyUtUI4A.css": "c602e1e37e40aa3ce8d0bb08e959d9b78d483f480447bcd1106c23e25932ce59"
+    }
+  },
+  "real_provider": "NOT RUN",
+  "interactive_visual_ui": "NOT RUN",
+  "evidence_directory": "/opt/vm2api-releases/native-server-env-173c0ac-9dc97a07"
+}
