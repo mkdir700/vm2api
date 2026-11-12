@@ -111,6 +111,42 @@ test('native server policy extracts automatic context and preserves task and too
       JSON.stringify(wire.messages.slice(1)) === JSON.stringify(body.messages.slice(1)),
     )
     envelopes.push({ name: 'initial', body: wire })
+    // A native serializer owns its beta profile. The gateway must not lift
+    // these system rows or insert a cache-only zero-width user placeholder.
+    const update = {
+      role: 'system',
+      content: [
+        {
+          type: 'text',
+          text: '# Environment update\n - Primary working directory: /external/next (was /external/AUTO_CWD)',
+          cache_control: { type: 'ephemeral' },
+        },
+      ],
+    }
+    const controlled = { ...body, messages: [...body.messages, update] }
+    const contextual = await api(gw, 'POST', '/v1/messages', { body: controlled })
+    check('native_context_request_completed', contextual.status === 200)
+    const contextualWire = readTrace(gw)?.body
+    envelopes.push({ name: 'contextual', body: contextualWire })
+    check(
+      'native_system_turn_preserved',
+      contextualWire.messages.at(-1).role === 'system' &&
+        JSON.stringify(contextualWire.messages.at(-1).content).includes('/external/next'),
+    )
+    check(
+      'native_context_does_not_change_fixed_system',
+      JSON.stringify(contextualWire.system) === JSON.stringify(wire.system),
+    )
+    check(
+      'native_no_zero_width_user_anchor',
+      !contextualWire.messages.some(
+        (message) =>
+          message.role === 'user' &&
+          Array.isArray(message.content) &&
+          message.content.some((block) => block.type === 'text' && block.text === '\u200b'),
+      ),
+    )
+
     const official = await api(gw, 'POST', '/v1/messages', {
       headers: claudeCodeInboundHeaders({ sessionId: 'official-native-server' }),
       body: { ...body, system: [{ type: 'text', text: CRS_OFFICIAL_SYSTEM }, ...body.system] },

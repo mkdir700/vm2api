@@ -368,7 +368,11 @@ export function anthropicBetaTokensContains(header, token) {
  * Haiku / hops without mid-conversation-system must lift messages[].role=system
  * or Anthropic 400s `role 'system' is not supported on this model`.
  */
-export function sanitizeAnthropicBodyForBetaTokens(body = {}, anthropicBetaHeader = '') {
+export function sanitizeAnthropicBodyForBetaTokens(
+  body = {},
+  anthropicBetaHeader = '',
+  { nativeSystemMessages = false } = {},
+) {
   if (!body || typeof body !== 'object') return body
   let out = body
   if (
@@ -391,7 +395,7 @@ export function sanitizeAnthropicBodyForBetaTokens(body = {}, anthropicBetaHeade
   }
   const allowMidSystem =
     modelSupportsMidConversationSystem(out.model) &&
-    anthropicBetaTokensContains(anthropicBetaHeader, MID_CONVERSATION_SYSTEM_BETA)
+    (nativeSystemMessages || anthropicBetaTokensContains(anthropicBetaHeader, MID_CONVERSATION_SYSTEM_BETA))
   if (
     !allowMidSystem &&
     Array.isArray(out.messages) &&

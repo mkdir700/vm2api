@@ -70,6 +70,7 @@ const purposes: Record<string, string> = {
   conversation: '会话分支',
   agent: '代理分支',
   classifier: '自动模式分类',
+  recap: '离开后摘要',
 }
 const changes: Record<string, string> = {
   first_observation: '首次观测',

@@ -442,7 +442,13 @@ export function prepareWorkerPayload({
   headers['anthropic-beta'] = betas.join(',')
   // Envelope headers are discarded; the existing MessageRequest.betas channel
   // carries request gates to the native CLI, which builds the actual HTTP wire.
-  const gated = cliHop ? { ...main, betas } : sanitizeAnthropicBodyForBetaTokens(main, headers['anthropic-beta'])
+  // Hermit serializes the native provider request and selects its own beta
+  // profile. Keep supported system rows at their original history boundary.
+  const gated = cliHop
+    ? { ...main, betas }
+    : sanitizeAnthropicBodyForBetaTokens(main, headers['anthropic-beta'], {
+        nativeSystemMessages: exec?.vm?.dataplane === 'hermit',
+      })
   return {
     headers,
     gated,
