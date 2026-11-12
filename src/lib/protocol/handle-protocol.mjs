@@ -1,3 +1,4 @@
+import { observeRequest } from '../observability/tracing.mjs'
 import { applyNativeServerPolicy } from '../identity/native-server-policy.mjs'
 /**
  * /v1 protocol handler. URLs, auth, and response envelopes stay with the
@@ -595,6 +596,13 @@ export function createHandleProtocol(deps) {
   }
 
   async function handleProtocol(req, res, protocol, pathName) {
+    const authenticated = requireAuth(req, res)
+    return observeRequest(req, res, authenticated, protocol, () =>
+      handleObservedProtocol(req, res, protocol, pathName, authenticated),
+    )
+  }
+
+  async function handleObservedProtocol(req, res, protocol, pathName, authenticated) {
     const logCtx = requestLog.start(req, { protocol, pathName })
     res._kinRequestId = logCtx.request_id
     // Registers its own 'finish' listener first so status/headers are final when finish() runs.
@@ -632,6 +640,7 @@ export function createHandleProtocol(deps) {
       reasoning_effort: null,
       outbound_session_id: null,
     }
+    res._observabilityResult = () => logBag
     let toolPruneAttempt = null
     let toolPruneClosed = false
     const discardToolPrune = () => {
@@ -664,7 +673,7 @@ export function createHandleProtocol(deps) {
         })
       } catch {}
     })
-    if (!requireAuth(req, res)) {
+    if (!authenticated) {
       logBag.error_code = req.authError?.code || ErrorCode.INVALID_API_KEY
       logBag.error_message = req.authError?.message || 'Invalid credentials'
       logBag.api_key_presented = presentedApiKeyForLog(req.presentedApiKey)

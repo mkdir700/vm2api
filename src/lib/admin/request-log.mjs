@@ -1,3 +1,4 @@
+import { traceFields } from '../observability/tracing.mjs'
 /**
  * Request logging — sub2api UsageLog + access-log inspired (SQLite-backed).
  *
@@ -202,7 +203,13 @@ function redactHeaders(headers = {}) {
   const out = {}
   for (const [k, v] of Object.entries(headers)) {
     const key = String(k).toLowerCase()
-    if (key === 'authorization' || key === 'x-api-key' || key === 'cookie' || key === 'set-cookie') {
+    if (
+      key === 'authorization' ||
+      key === 'x-api-key' ||
+      key === 'cookie' ||
+      key === 'set-cookie' ||
+      key === 'x-observability-token'
+    ) {
       out[key] = '***REDACTED***'
     } else if (key === 'x-panel-token') {
       out[key] = '***REDACTED***'
@@ -449,6 +456,7 @@ export class RequestLogStore {
     const mode = resolveLogMode(this.mode, req)
     return {
       request_id: requestId,
+      ...traceFields(),
       mode,
       t0: Date.now(),
       protocol,
@@ -541,6 +549,8 @@ export class RequestLogStore {
     const summary = {
       id: 'log_' + crypto.randomBytes(6).toString('hex'),
       request_id: ctx.request_id,
+      trace_id: ctx.trace_id || null,
+      span_id: ctx.span_id || null,
       ts: new Date().toISOString(),
       log_mode: ctx.mode,
       method: ctx.method,

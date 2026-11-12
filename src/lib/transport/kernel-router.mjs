@@ -321,12 +321,12 @@ async function runHop({ mode, opts }) {
   try {
     // Reserve the hop before waiting so the idle reload cannot race admission.
     await awaitWrapRecycle(opts.exec)
-    result = await send(opts)
+    result = await send({ ...opts, observabilityHermit: hermitRuntime })
     noteWrapHop(opts.exec)
     if (opts.signal?.aborted || isClientCancelledResult(result)) {
       result = clientCancelledResult(result)
     } else if (!hermitRuntime && result.transportError === true && result.committed !== true) {
-      result = await send(opts)
+      result = await send({ ...opts, observabilityHermit: hermitRuntime })
       result = { ...result, rust_transport_retried: true }
       noteWrapHop(opts.exec)
     }
@@ -346,7 +346,7 @@ async function runHop({ mode, opts }) {
       else {
         // The CLI invalidates its OAuth cache from the shared credential file
         // before creating each API client. Recycling here kills sibling hops.
-        result = await send(opts)
+        result = await send({ ...opts, observabilityHermit: hermitRuntime })
         result = { ...result, credential_retried: true }
         noteWrapHop(opts.exec)
       }

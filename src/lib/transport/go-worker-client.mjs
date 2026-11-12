@@ -1,3 +1,4 @@
+import { observeAttempt, injectSlot } from '../observability/tracing.mjs'
 import { withManagedEgressOperation } from '../vm/managed-egress-admission.mjs'
 import http from 'node:http'
 import { randomUUID } from 'node:crypto'
@@ -578,6 +579,8 @@ function mockScenario(exec) {
 }
 
 async function callGoWorkerAdmitted({
+  _observabilityRequestId = null,
+  observabilityHermit = false,
   requestContext = null,
   exec,
   body,
@@ -622,7 +625,7 @@ async function callGoWorkerAdmitted({
       stopReason: mock.body?.stop_reason || null,
     }
   }
-  const requestId = randomUUID()
+  const requestId = _observabilityRequestId || randomUUID()
   const stopCancel = cancelOnAbort(exec, signal, requestId)
   try {
     const redaction = await redactionContext({ routing, exec, redactionPrincipal, redactionSession })
@@ -648,7 +651,11 @@ async function callGoWorkerAdmitted({
     const response = await workerRequest(exec, {
       method: 'POST',
       requestPath,
-      body: { ...prepared.envelope, request_id: requestId },
+      body: {
+        ...prepared.envelope,
+        headers: injectSlot(prepared.envelope.headers, observabilityHermit, reqHeaders),
+        request_id: requestId,
+      },
       maxRequestBytes,
       signal,
       timeoutMs,
@@ -699,6 +706,8 @@ async function callGoWorkerAdmitted({
 }
 
 async function streamGoWorkerAdmitted({
+  _observabilityRequestId = null,
+  observabilityHermit = false,
   requestContext = null,
   exec,
   body,
@@ -807,7 +816,7 @@ async function streamGoWorkerAdmitted({
   }
   let committed = false
   const timing = createStreamTiming()
-  const requestId = randomUUID()
+  const requestId = _observabilityRequestId || randomUUID()
   const stopCancel = cancelOnAbort(exec, signal, requestId)
   try {
     const redaction = await redactionContext({ routing, exec, redactionPrincipal, redactionSession })
@@ -835,7 +844,11 @@ async function streamGoWorkerAdmitted({
     const response = await workerRequest(exec, {
       method: 'POST',
       requestPath,
-      body: { ...prepared.envelope, request_id: requestId },
+      body: {
+        ...prepared.envelope,
+        headers: injectSlot(prepared.envelope.headers, observabilityHermit, reqHeaders),
+        request_id: requestId,
+      },
       maxRequestBytes,
       signal,
       timeoutMs,
@@ -1402,10 +1415,28 @@ async function countTokensViaWorkerAdmitted(exec, { body, headers = {}, timeoutM
 }
 
 export function callGoWorker(options = {}) {
-  return withManagedEgressOperation(options.exec?.vm?.proxy, () => callGoWorkerAdmitted(options))
+  const requestId = randomUUID()
+  return observeAttempt(
+    options.exec,
+    requestId,
+    () =>
+      withManagedEgressOperation(options.exec?.vm?.proxy, () =>
+        callGoWorkerAdmitted({ ...options, _observabilityRequestId: requestId }),
+      ),
+    options.signal,
+  )
 }
 export function streamGoWorker(options = {}) {
-  return withManagedEgressOperation(options.exec?.vm?.proxy, () => streamGoWorkerAdmitted(options))
+  const requestId = randomUUID()
+  return observeAttempt(
+    options.exec,
+    requestId,
+    () =>
+      withManagedEgressOperation(options.exec?.vm?.proxy, () =>
+        streamGoWorkerAdmitted({ ...options, _observabilityRequestId: requestId }),
+      ),
+    options.signal,
+  )
 }
 export function callWorkerPost(exec, ...args) {
   return withManagedEgressOperation(exec?.vm?.proxy, () => callWorkerPostAdmitted(exec, ...args))

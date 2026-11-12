@@ -1,3 +1,4 @@
+import { setupObservability } from './lib/observability/tracing.mjs'
 import { restoreHermitKernels, stopAllHermitKernels } from './lib/transport/hermit-kernel-supervisor.mjs'
 import { EgressDrainClient, acquireManagedDrain } from './lib/vm/managed-egress-drain.mjs'
 import { egressRunDir, egressPidsForProxyConfig } from './lib/vm/egress.mjs'
@@ -142,6 +143,7 @@ const LIMITATIONS = {
 }
 
 const cfg = loadConfig()
+const shutdownTelemetry = setupObservability(process.env.TRUEROUTER_SERVICE_VERSION || 'source')
 if (!getPanelAdmin().password) {
   throw new Error('VM2API_ADMIN_PASSWORD must be set; insecure default panel credentials are disabled')
 }
@@ -1184,6 +1186,7 @@ const gracefulShutdown = createGracefulShutdown({
     try {
       closeDatabase()
     } catch {}
+    await shutdownTelemetry()
   },
 })
 

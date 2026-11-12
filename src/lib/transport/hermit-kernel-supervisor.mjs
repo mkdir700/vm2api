@@ -159,6 +159,7 @@ async function start(exec, { timeoutMs = 15000 } = {}) {
       process.env.KIN_DOCKER_BIN || 'docker',
       slotExecArgv(vm, [config.guestBinary, '--mode', 'vm2api-slot', '--config', '/run/kin/native-slot.json'], {
         interactive: true,
+        env: hermitTelemetryEnvironment(),
         user: slotHost(vm).execUser(vm),
       }),
       {
@@ -197,5 +198,22 @@ async function start(exec, { timeoutMs = 15000 } = {}) {
       reason: typeof error.code === 'string' ? error.code : 'hermit_start_failed',
       error: error.message,
     }
+  }
+}
+
+// Pass only Collector configuration to the Hermit process, never PostHog credentials.
+function hermitTelemetryEnvironment() {
+  const value = process.env.KIN_HERMIT_OTLP_ENDPOINT
+  if (!value) return {}
+  try {
+    const url = new URL(value)
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) return {}
+    return {
+      OTEL_EXPORTER_OTLP_ENDPOINT: value,
+      OTEL_EXPORTER_OTLP_PROTOCOL: 'http/protobuf',
+      TRUEROUTER_ENVIRONMENT: process.env.TRUEROUTER_ENVIRONMENT || 'unspecified',
+    }
+  } catch {
+    return {}
   }
 }

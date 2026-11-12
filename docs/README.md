@@ -1,5 +1,6 @@
 # 文档
 
+- [PostHog 全链路观测](posthog-observability.md) — 已采纳的调度、槽位传播与日志契约，已实现核心接入，生产部署待验收
 - [DEPLOY.md](DEPLOY.md) — 安装与升级（含 `deploy/install.sh` 一键安装 / 更新）
 - [nginx-shell.md](nginx-shell.md) — 集群 / 槽运维终端 WebSocket 连不上时查 nginx Upgrade
 - [FORMAT.md](FORMAT.md) — 本地与 CI 同一套格式（Biome / gofmt / Prettier，LF）

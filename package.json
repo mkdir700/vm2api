@@ -22,6 +22,12 @@
     "format:check": "biome format && node scripts/check-gofmt.mjs && pnpm -C web format:check"
   },
   "dependencies": {
+    "@opentelemetry/api": "1.10.0",
+    "@opentelemetry/context-async-hooks": "3.1.1",
+    "@opentelemetry/core": "3.1.1",
+    "@opentelemetry/exporter-trace-otlp-proto": "0.301.1",
+    "@opentelemetry/resources": "3.1.1",
+    "@opentelemetry/sdk-trace": "3.1.1",
     "croner": "^10.0.1",
     "https-proxy-agent": "^9.1.0",
     "node-fetch": "^2.7.0",
@@ -31,5 +37,8 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.11"
+  },
+  "engines": {
+    "node": ">=22.15.0"
   }
 }
