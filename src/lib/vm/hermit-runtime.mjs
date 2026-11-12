@@ -197,6 +197,7 @@ export function writeHermitKernelConfig(project, vm, { force = false, routing } 
       manifest.capabilities.native_session_pool === true ? routing || readRoutingConfigFile(project) : null
     if (ca) privateFile(path.join(runDir, 'native-ca.pem'), ca, vm)
     const body = {
+      ...(manifest.capabilities.native_session_prewarm === true ? { session_prewarm: true } : {}),
       ...(requestLimitSupported ? { max_request_bytes: desiredRequestBytes } : {}),
       ...(manifest.capabilities.native_session_pool === true
         ? {

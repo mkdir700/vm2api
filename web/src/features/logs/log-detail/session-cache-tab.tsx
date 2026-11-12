@@ -25,6 +25,13 @@ type Observation = {
   native_session_id?: string
   generation?: string
   selection: string
+  timings_ms?: Record<string, number>
+  upstream_timing?: {
+    attempt: number
+    headers_ms: number | null
+    first_protocol_ms: number | null
+    first_content_ms: number | null
+  }
   retirement_reason?: string
   status: number
   complete: boolean
@@ -35,6 +42,13 @@ type Observation = {
   } | null
 }
 type Snapshot = {
+  pool?: {
+    native_session_prewarm?: boolean
+    prewarm_target?: number
+    prewarm_starting?: number
+    prewarm_ready?: number
+    prewarm_stage?: string
+  }
   generation: string
   scope: string
   retention: {
@@ -69,9 +83,25 @@ const changes: Record<string, string> = {
 const selections: Record<string, string> = {
   owner_created: '创建',
   owner_reused: '复用',
+  prewarm_claimed: '领取预热会话',
+  checkpoint_restore: '检查点恢复检查',
+  context_replacement: '契约变化后重建',
+  credential_rotation: '凭据更新后恢复',
   contract_replacement: '契约变化后重建',
 }
 const short = (id?: string | null) => (id ? id.slice(0, 12) : '未知')
+const duration = (ms?: number | null) =>
+  ms != null && Number.isFinite(ms) && ms >= 0
+    ? `${ms.toFixed(1)} 毫秒`
+    : '未测量'
+const timingLabels: Record<string, string> = {
+  pool_wait: '池内取得会话',
+  context_check: '契约检查与恢复',
+  managed_prepare: '受管装配',
+  runtime_ready: '运行时启动与就绪',
+  history_confirm: '历史准备确认',
+  delivery: '内核处理与响应交付',
+}
 
 export function SessionCacheTab({ row }: { row: UsageLogRow }) {
   const session = row.clientSessionId || row.sessionId
@@ -125,6 +155,18 @@ export function SessionCacheTab({ row }: { row: UsageLogRow }) {
         仅统计当前运行代次最近 {data.retention.request_limit}{' '}
         条已分配原生会话的请求。重启后清空。以下计数属于该窗口，不是会话累计用量。
       </p>
+      <p className='text-muted-foreground'>
+        各阶段存在包含关系，不能相加。上游计时来自 CLI
+        实际读取响应的时刻，包含读取前的本地等待。
+      </p>
+      {data.pool?.native_session_prewarm && (
+        <p className='text-muted-foreground'>
+          基础预热：就绪 {data.pool.prewarm_ready ?? 0}，启动中{' '}
+          {data.pool.prewarm_starting ?? 0}，目标{' '}
+          {data.pool.prewarm_target ?? 0}。 当前仅提前准备协调进程，尚未启动
+          Claude Code。
+        </p>
+      )}
       {!data.requests.length ? (
         <p>该会话没有近期记录。旧请求可能早于功能启用、内核重启或保留窗口。</p>
       ) : (
@@ -199,6 +241,35 @@ export function SessionCacheTab({ row }: { row: UsageLogRow }) {
                     </dd>
                     <dt>原生请求用途</dt>
                     <dd>{item.query_source || '未知'}</dd>
+                    {item.timings_ms &&
+                      Object.entries(timingLabels).map(
+                        ([key, label]) =>
+                          item.timings_ms?.[key] != null && (
+                            <div key={key} className='contents'>
+                              <dt>{label}</dt>
+                              <dd>{duration(item.timings_ms[key])}</dd>
+                            </div>
+                          )
+                      )}
+                    {item.upstream_timing && (
+                      <>
+                        <dt>上游尝试</dt>
+                        <dd>
+                          第 {item.upstream_timing.attempt}{' '}
+                          次；以下从实际发送请求开始计时
+                        </dd>
+                        <dt>收到上游响应头</dt>
+                        <dd>{duration(item.upstream_timing.headers_ms)}</dd>
+                        <dt>读到上游首个协议事件</dt>
+                        <dd>
+                          {duration(item.upstream_timing.first_protocol_ms)}
+                        </dd>
+                        <dt>读到上游首个生成内容</dt>
+                        <dd>
+                          {duration(item.upstream_timing.first_content_ms)}
+                        </dd>
+                      </>
+                    )}
                     <dt>父分支</dt>
                     <dd>{item.parent_branch_id || '未知；请求未提供'}</dd>
                     <dt>前缀</dt>

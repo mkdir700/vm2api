@@ -695,6 +695,10 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     completed = true
   } else {
     check('manager_starts_hermit', res.status === 200 && result.data.activated === true)
+    if (manifest.capabilities.native_session_prewarm === true) {
+      const config = JSON.parse(fs.readFileSync(path.join(run, 'native-slot.json')))
+      check('real_kernel_prewarm_enabled_by_capability', config.session_prewarm === true)
+    }
     if (factory) {
       const original = JSON.parse(fs.readFileSync(path.join(out, 'before-switch-container.json')))
       const beforeCredential = fs.readFileSync(credentialFile)

@@ -13,12 +13,12 @@ import { startGateway, seedVm, api, REPO_ROOT } from '../harness.mjs'
 
 // 失败方式：控制平面重启后没有恢复内核；调度暂停阻止恢复；恢复重建容器；恢复修改凭据。
 // 真实 HTTP 控制平面与进程租约。Docker 和内核由独立进程夹具模拟。
-test('controller startup restores a running Hermit owner before reporting readiness', {
+for (const prewarm of [false, true]) test(`controller startup restores a running Hermit owner (prewarm=${prewarm})`, {
   skip: process.platform !== 'linux',
   timeout: 90000,
 }, async () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), 'hermit-restart-'))
-  const out = path.resolve(process.env.HERMIT_RESTART_E2E_OUT || `.tmp/hermit-restart-${Date.now()}`)
+  const out = path.resolve(process.env.HERMIT_RESTART_E2E_OUT || `.tmp/hermit-restart-${prewarm}-${Date.now()}`)
   fs.mkdirSync(out, { recursive: true })
   const checks = []
   const save = (name, value) => fs.writeFileSync(path.join(out, name), JSON.stringify(value, null, 2))
@@ -44,6 +44,7 @@ test('controller startup restores a running Hermit owner before reporting readin
     createHash('sha256').update(cli).digest('hex'),
     'production',
     'pool',
+    ...(prewarm ? ['prewarm'] : []),
   ])
   const receipt = JSON.parse(fs.readFileSync(path.join(fixture, 'release.json')))
   const previous = process.env.KIN_KERNEL_TEST_ENDPOINTS
@@ -130,6 +131,7 @@ test('controller startup restores a running Hermit owner before reporting readin
       check(`boot_${boot}_kernel_ready_before_first_request`, fs.existsSync(socket))
       const config = JSON.parse(fs.readFileSync(path.join(run, 'native-slot.json')))
       check(`boot_${boot}_capacity`, config.session_capacity === 20)
+      check(`boot_${boot}_prewarm_capability_gated`, prewarm ? config.session_prewarm === true : !Object.hasOwn(config, 'session_prewarm'))
       check(`boot_${boot}_fresh_owner`, config.session.root !== previousRoot)
       previousRoot = config.session.root
       const login = await api(gw, 'POST', '/api/panel/login', { body: { username: 'admin', password: 'testpass' } })

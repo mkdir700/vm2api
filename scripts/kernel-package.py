@@ -69,9 +69,11 @@ def load_manifest(raw):
     require(re.fullmatch(r'\d+\.\d+\.\d+', cli['version']), 'invalid_cli_version')
     require(cli['platform'] == ('linux-x64' if m['target'] == 'linux-amd64' else 'darwin-arm64'), 'cli_target_mismatch')
     require(type(m['capabilities']['production']) is bool and type(m['capabilities']['helper_integration']) is bool, 'invalid_capabilities')
-    for capability in ['system_prompt', 'eager_tool_streaming', 'native_session_pool', 'request_body_limit']:
+    for capability in ['system_prompt', 'eager_tool_streaming', 'native_session_pool', 'native_session_prewarm', 'request_body_limit']:
         if capability in m['capabilities']:
             require(type(m['capabilities'][capability]) is bool, 'invalid_capabilities')
+    if m['capabilities'].get('native_session_prewarm'):
+        require(m['capabilities'].get('native_session_pool') is True, 'prewarm_requires_native_pool')
     if 'switch_readiness' in m['capabilities']:
         require(type(m['capabilities']['switch_readiness']) is bool, 'invalid_capabilities')
     if 'https_upstream' in m['capabilities']:
