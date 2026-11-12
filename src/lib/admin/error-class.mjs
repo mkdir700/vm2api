@@ -46,6 +46,7 @@ const CODE_MAP = {
   convert_failed: 'request',
   vm_workspace_removed: 'request',
   upstream_invalid_request: 'request',
+  completed_request_duplicate: 'request',
   gateway_rate_limit: 'rate_limit',
   api_key_rate_limit: 'rate_limit',
   upstream_rate_limit: 'rate_limit',

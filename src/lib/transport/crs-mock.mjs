@@ -72,6 +72,25 @@ export function mockCrsPayload(options = {}) {
       : 'tool_use'
   }
   const text = process.env.KIN_MOCK_TEXT || 'pong'
+  if (scenario === 'completed_request_duplicate') {
+    return {
+      ok: false,
+      status: 409,
+      via: 'go-worker',
+      transportError: false,
+      headers: {},
+      body: {
+        type: 'error',
+        error: {
+          type: 'invalid_request_error',
+          code: scenario,
+          message:
+            '请求与已完成请求重复。当前请求与本会话上一条已完成请求的内容相同。系统已拒绝重复执行。继续对话时，请提交包含上一轮回复和新消息的完整历史。重新生成时，请发起新会话。',
+          details: { retryable: false },
+        },
+      },
+    }
+  }
   if (scenario === 'native_operation_unsupported') {
     return {
       ok: false,

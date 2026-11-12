@@ -76,6 +76,7 @@ export const ErrorCode = {
   NATIVE_CONTROL_UNAVAILABLE: 'native_control_unavailable',
   NATIVE_GENERATION_FAILED: 'native_generation_failed',
   NATIVE_OPERATION_UNSUPPORTED: 'native_operation_unsupported',
+  COMPLETED_REQUEST_DUPLICATE: 'completed_request_duplicate',
   FABLE_REQUIRES_MAX: 'fable_requires_max',
 
   INCOMPLETE_RESPONSE: 'incomplete_response',
@@ -425,6 +426,15 @@ export function incompleteAssistantClientError(result = {}) {
 export function mapUpstreamError(status, body, headers = {}) {
   const upType = upstreamErrorType(body)
   const inboundCode = body?.error?.code || null
+  if (inboundCode === ErrorCode.COMPLETED_REQUEST_DUPLICATE) {
+    return makeError({
+      type: ErrorType.INVALID_REQUEST,
+      code: inboundCode,
+      message: body.error.message,
+      status: 400,
+      details: { upstream_status: status, retryable: false },
+    })
+  }
   if (
     [
       'classifier_model_incompatible',
