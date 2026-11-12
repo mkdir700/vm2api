@@ -7,6 +7,7 @@ import { once } from 'node:events'
 import { createHash } from 'node:crypto'
 import { execFileSync, spawn } from 'node:child_process'
 import { startGateway, REPO_ROOT } from '../harness.mjs'
+import { startHermitReleaseOrigin } from '../fixtures/hermit-release-origin.mjs'
 
 // Failure inventory: docs/operations/hermit-kernel-page-results-20261109.md.
 // Requires: pnpm -C web build and an available ego-browser installation.
@@ -15,7 +16,8 @@ test('Hermit uploads packages and uses the shared VM installer through the brows
 }, async () => {
   const artifact = path.resolve(process.env.HERMIT_PAGE_E2E_OUT || `.tmp/hermit-kernel-page-${Date.now()}`)
   fs.mkdirSync(artifact, { recursive: true })
-  const gw = await startGateway({ env: { KIN_KERNEL_TEST_ENDPOINTS: '1' } })
+  const remote = await startHermitReleaseOrigin(path.join(artifact, 'remote-origin'))
+  const gw = await startGateway({ env: { KIN_KERNEL_TEST_ENDPOINTS: '1', KIN_HERMIT_RELEASES_URL: remote.url } })
   const cli = Buffer.alloc(4096)
   Buffer.from([0x7f, 0x45, 0x4c, 0x46, 2, 1]).copy(cli)
   cli.writeUInt16LE(2, 16)
@@ -55,6 +57,7 @@ test('Hermit uploads packages and uses the shared VM installer through the brows
       receipt: path.join(fixture, 'release.json'),
       productionArchive: path.join(production, 'production.tar.gz'),
       productionReceipt: path.join(production, 'production-release.json'),
+      releaseOrigin: remote.url,
     }
     const browser = spawn('ego-browser', ['nodejs'], { stdio: ['pipe', 'pipe', 'pipe'] })
     let output = ''
@@ -87,6 +90,7 @@ test('Hermit uploads packages and uses the shared VM installer through the brows
     console.log(`Hermit kernel page evidence: ${artifact}`)
   } finally {
     await gw.stop()
+    await remote.close()
     upstream.close()
     fs.rmSync(gw.project, { recursive: true, force: true })
   }

@@ -257,7 +257,7 @@ export function WrapSamplePage() {
   return (
     <PageHeader
       title='内核'
-      description='默认内核使用 cli-node，Hermit 支持上传内核包。'
+      description='默认内核使用 cli-node，Hermit 支持上传内核包或拉取最新版本。'
       extra={
         <Button
           variant='ghost'

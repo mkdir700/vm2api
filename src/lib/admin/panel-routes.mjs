@@ -1,6 +1,7 @@
 import { runKernelTransition, publicKernelTransition } from '../vm/kernel-transition.mjs'
 import { resolveHermitPackage } from '../vm/hermit-runtime.mjs'
 import { installKernelPackage, getKernelPackage, MAX_KERNEL_PACKAGE_BYTES } from '../vm/kernel-packages.mjs'
+import { pullHermitPackage } from '../vm/hermit-release.mjs'
 /**
  * /admin and /api/panel routes. Login / logout / me and { ok, data }
  * envelopes are unchanged; slot start/reload go through startSlotReady.
@@ -2582,6 +2583,27 @@ export function createPanelHandler(ctx) {
           routing: ctx.routingConfig,
         })
         return json(res, 200, panel.ok(report))
+      }
+      if (req.method === 'POST' && p === '/api/panel/kernel-packages/pull') {
+        if (panelIdentity(req).role !== 'admin')
+          return json(res, 403, { ok: false, error: { code: 'admin_required', message: '只有管理员可以安装内核包' } })
+        try {
+          const body = await readBody(req, 8 * 1024)
+          if (!body || typeof body !== 'object' || Array.isArray(body) || Object.keys(body).length)
+            return json(res, 400, {
+              ok: false,
+              error: { code: 'hermit_pull_arguments_invalid', message: '拉取最新内核包不接受额外参数' },
+            })
+          const installed = await serializeKernelChange(() =>
+            pullHermitPackage(cfg.paths.project, { fetchImpl: ctx.fetchImpl }),
+          )
+          return json(res, 200, panel.ok(installed))
+        } catch (error) {
+          return json(res, error.status || (error.code === 'package_version_conflict' ? 409 : 400), {
+            ok: false,
+            error: { code: error.code || 'hermit_pull_failed', message: error.message },
+          })
+        }
       }
       if (p === '/api/panel/kernel-packages' && ['GET', 'POST'].includes(req.method)) {
         if (panelIdentity(req).role !== 'admin')

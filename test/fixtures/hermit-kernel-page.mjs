@@ -1,5 +1,5 @@
 // Run through ego-browser nodejs. The E2E runner injects an isolated URL and output directory.
-const { url, artifact, archive, receipt, productionArchive, productionReceipt } = globalThis.hermitKernelPage;
+const { url, artifact, archive, receipt, productionArchive, productionReceipt, releaseOrigin } = globalThis.hermitKernelPage;
 const fs = await import('node:fs/promises');
 const assert = (await import('node:assert/strict')).default;
 const task = await taskSpace('Hermit 内核行验收');
@@ -22,7 +22,21 @@ try {
   await page.waitForSelector('section[aria-label="可用内核"]');
   check('three_peer_kernel_rows', await page.evaluate(() =>
     [...document.querySelectorAll('section[aria-label="可用内核"] h3')].map(n => n.textContent).join(',') === 'cli-node,Hermit'));
-  check('hermit_pull_disabled', await page.evaluate(() => document.querySelector('button[aria-label="拉取 Hermit 最新内核包"]').disabled));
+  check('hermit_pull_enabled', await page.evaluate(() => !document.querySelector('button[aria-label="拉取 Hermit 最新内核包"]').disabled));
+  await fetch(releaseOrigin + '/fixture/mode', { method: 'POST', body: JSON.stringify({ mode: 'unavailable' }) });
+  await page.click('button[aria-label="拉取 Hermit 最新内核包"]');
+  await page.waitForFunction(() => document.body.textContent.includes('无法获取 Hermit 发布文件'));
+  check('remote_error_visible', true);
+  await page.waitForFunction(() => !document.querySelector('button[aria-label="拉取 Hermit 最新内核包"]').disabled);
+  await fetch(releaseOrigin + '/fixture/mode', { method: 'POST', body: JSON.stringify({ mode: 'delay' }) });
+  await page.click('button[aria-label="拉取 Hermit 最新内核包"]');
+  await page.waitForFunction(() => document.querySelector('button[aria-label="拉取 Hermit 最新内核包"]').disabled);
+  check('remote_pull_busy', await page.evaluate(() => document.querySelector('button[aria-label="拉取 Hermit 最新内核包"]').textContent.includes('拉取中')));
+  check('upload_disabled_during_pull', await page.evaluate(() => [...document.querySelectorAll('button')].find(n => n.textContent.trim() === '上传内核包').disabled));
+  await page.waitForFunction(() => document.querySelector('section[aria-label="可用内核"]').textContent.includes('0.2.0-ui-e2e'));
+  await page.waitForFunction(() => !document.querySelector('button[aria-label="拉取 Hermit 最新内核包"]').disabled);
+  check('remote_package_visible', true);
+  await page.screenshot({ path: artifact + '/remote-pull-complete.png' });
   check('no_standalone_upload_form', await page.evaluate(() => !document.querySelector('input[type="file"]')));
   await page.screenshot({ path: artifact + '/kernels-desktop.png' });
   await page.evaluate(() => {

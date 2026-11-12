@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
   CheckCircle2,
   Download,
+  Loader2,
   Terminal,
   TriangleAlert,
   Upload,
@@ -49,11 +50,24 @@ export function HermitPackageUpload({ disabled }: { disabled: boolean }) {
       })
     },
     onSuccess: async () => {
-      toast.success('当前内核包已更新，槽位保持不变')
+      toast.success('当前内核包已更新，现有 VM 保持不变')
       await qc.invalidateQueries({ queryKey: ['kernel-packages'] })
     },
     onError: (error: Error) => toast.error(error.message),
   })
+  const pull = useMutation({
+    mutationFn: () =>
+      api('/api/panel/kernel-packages/pull', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    onSuccess: async () => {
+      toast.success('已拉取 Hermit 内核包，可在下方安装到 VM')
+      await qc.invalidateQueries({ queryKey: ['kernel-packages'] })
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+  const busy = disabled || install.isPending || pull.isPending
   return (
     <div className='grid gap-3 p-4 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center sm:px-5'>
       <div className='min-w-0'>
@@ -63,7 +77,7 @@ export function HermitPackageUpload({ disabled }: { disabled: boolean }) {
             className='size-5 text-muted-foreground'
           />
           <h3 className='text-lg font-semibold'>Hermit</h3>
-          <Badge variant='secondary'>上传内核包</Badge>
+          <Badge variant='secondary'>内核包</Badge>
         </div>
         <div className='mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-base sm:text-sm'>
           <span
@@ -77,13 +91,13 @@ export function HermitPackageUpload({ disabled }: { disabled: boolean }) {
             {packages.isPending
               ? '加载中'
               : packages.data?.item
-                ? '已上传'
+                ? '已就绪'
                 : '未就绪'}
           </span>
           <span className='text-muted-foreground'>
             {packages.data?.item
               ? `${packages.data.item.version} · ${packages.data.item.target}`
-              : '请上传内核包和 release.json'}
+              : '上传内核包或拉取最新版本'}
           </span>
         </div>
         {packages.error && (
@@ -95,7 +109,7 @@ export function HermitPackageUpload({ disabled }: { disabled: boolean }) {
       <div className='flex flex-wrap gap-2'>
         <Dialog>
           <DialogTrigger asChild>
-            <Button variant='outline' className='h-11' disabled={disabled}>
+            <Button variant='outline' className='h-11' disabled={busy}>
               <Upload aria-hidden='true' />
               上传内核包
             </Button>
@@ -108,7 +122,7 @@ export function HermitPackageUpload({ disabled }: { disabled: boolean }) {
                 在重装后更新。
               </DialogDescription>
             </DialogHeader>
-            <fieldset disabled={disabled} className='min-w-0 space-y-3'>
+            <fieldset disabled={busy} className='min-w-0 space-y-3'>
               <div className='flex flex-wrap items-center gap-3'>
                 <label className='text-sm'>
                   版本归档{' '}
@@ -171,11 +185,16 @@ export function HermitPackageUpload({ disabled }: { disabled: boolean }) {
           variant='outline'
           className='h-11'
           aria-label='拉取 Hermit 最新内核包'
-          disabled
-          title='暂不支持拉取最新 Hermit 内核包'
+          disabled={busy}
+          aria-busy={pull.isPending}
+          onClick={() => pull.mutate()}
         >
-          <Download aria-hidden='true' />
-          拉取最新
+          {pull.isPending ? (
+            <Loader2 aria-hidden='true' className='animate-spin' />
+          ) : (
+            <Download aria-hidden='true' />
+          )}
+          {pull.isPending ? '拉取中…' : '拉取最新'}
         </Button>
       </div>
     </div>
