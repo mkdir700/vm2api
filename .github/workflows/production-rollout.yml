@@ -48,22 +48,16 @@ jobs:
           mkdir -p rollout-evidence
           docker run --rm --network none --entrypoint node \
             -v "$PWD/test:/opt/vm2api/test:ro" \
-            -v "$PWD/deploy:/opt/vm2api/deploy:ro" \
-            -v "$PWD/.github/scripts:/opt/vm2api/.github/scripts:ro" \
             -v "$PWD/rollout-evidence:/receipt" \
             -e ROLLOUT_E2E_OUT=/receipt/gateway \
             -e ROLLOUT_GROUP_OUT=/receipt/group \
-            -e ROLLOUT_PUBLISHER_OUT=/receipt/publisher \
-            -e ROLLOUT_APPLICATION_OUT=/receipt/application \
-            -e ROLLOUT_AGENT_OUT=/receipt/agent \
             -e ROLLOUT_HANDOFF_OUT=/receipt/handoff \
-            -e ROLLOUT_NOTIFICATION_OUT=/receipt/notification \
             -e ROLLOUT_AUTHORITY_OUT=/receipt/authority \
+            -e ROLLOUT_PACKAGE_OUT=/receipt/package \
             -w /opt/vm2api "$ROLLOUT_IMAGE" --test \
             test/e2e/session-rollout.e2e.test.mjs test/e2e/rollout-group.e2e.test.mjs \
-            test/e2e/rollout-publisher.e2e.test.mjs test/e2e/rollout-application.e2e.test.mjs \
-            test/e2e/rollout-agent.e2e.test.mjs test/e2e/rollout-gateway-handoff.e2e.test.mjs \
-            test/e2e/rollout-notification.e2e.test.mjs test/e2e/rollout-authority.e2e.test.mjs
+            test/e2e/rollout-gateway-handoff.e2e.test.mjs test/e2e/rollout-authority.e2e.test.mjs \
+            test/e2e/rollout-package.e2e.test.mjs
       - name: Bind qualification and queue deployment
         env:
           ROLLOUT_COMPONENT: vm2api

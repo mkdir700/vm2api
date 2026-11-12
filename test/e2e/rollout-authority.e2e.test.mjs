@@ -39,7 +39,7 @@ test('冻结身份迁移后原 API Key 通过真实网关鉴权', async () => {
   let result = 'FAIL'
   try {
     const args = [
-      'deploy/rollout-authority.mjs',
+      'scripts/rollout-authority.mjs',
       '--source',
       path.join(source, 'kin.db'),
       '--target',

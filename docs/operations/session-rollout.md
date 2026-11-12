@@ -39,4 +39,4 @@
 
 ## 操作入口
 
-固定部署模板、初次迁移、网关交接与恢复步骤见 [tag 发布操作说明](tag-rollout.md)。
+部署器迁入独立的 true-router/deployer 仓库。业务接口、初次迁移与跨仓库操作入口见 [tag 发布说明](tag-rollout.md)。

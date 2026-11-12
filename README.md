@@ -500,4 +500,4 @@ Telegram 群组 **[t.me/vm2api](https://t.me/vm2api)**（`@VM2API`）：部署�
 
 ## tag 自动发布
 
-会话部署组、宿主机配置和恢复步骤见 [tag 发布操作说明](docs/operations/tag-rollout.md)。生产默认关闭。
+业务接口与独立部署器入口见 [tag 发布说明](docs/operations/tag-rollout.md)。部署器源码位于 true-router/deployer，生产默认关闭。
