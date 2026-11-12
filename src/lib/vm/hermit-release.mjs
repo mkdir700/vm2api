@@ -73,10 +73,12 @@ function validArchive(archive, name) {
   )
 }
 
-export async function pullHermitPackage(project, { fetchImpl = globalThis.fetch } = {}) {
+export async function pullHermitPackage(project, { fetchImpl = globalThis.fetch, version = null, commit = null } = {}) {
   try {
     const origin = releaseOrigin()
-    const latest = parse(await download(origin + '/v1/releases/latest', 65536, 15000, fetchImpl))
+    if (version !== null && (!VERSION.test(version) || !/^[a-f0-9]{40}$/.test(commit || ''))) throw invalid()
+    const latest = parse(await download(origin + '/v1/releases/' + (version || 'latest'), 65536, 15000, fetchImpl))
+    if (version !== null && (latest.version !== version || latest.commit !== commit)) throw invalid()
     if (
       !latest ||
       latest.schema_version !== 1 ||

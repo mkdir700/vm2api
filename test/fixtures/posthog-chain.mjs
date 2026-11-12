@@ -84,6 +84,18 @@ try {
   const res = await fetch(`${gateway.baseUrl}/v1/messages`, { method: 'POST', headers: { authorization: 'Bearer INVALID_SYNTHETIC_KEY', 'content-type': 'application/json', traceparent: '00-11111111111111111111111111111111-2222222222222222-01' }, body: '{}' })
   await res.text()
   check('public_auth_still_required', res.status === 401)
+  if (process.env.KIN_E2E_ROLLOUT_PROOF === '1') {
+    const proof = await new Promise((resolve, reject) => {
+      http.get({ socketPath: config.socket, path: '/internal/health', headers: { 'x-kin-internal-token': config.token } }, response => {
+        let raw = ''; response.on('data', chunk => { raw += chunk }); response.on('end', () => { try { resolve(JSON.parse(raw)) } catch (error) { reject(error) } })
+      }).on('error', reject)
+    })
+    check('native_rollout_proof_schema', proof.rollout_drain_schema === 1)
+    check('native_rollout_no_active', proof.active_requests === 0 && proof.queued_requests === 0)
+    check('native_rollout_no_pending_tools', proof.pending_tool_results === 0 && proof.helper_active === false && proof.recovering === false)
+    check('native_rollout_restore_protocol', proof.switch_ready === true && proof.session_restore_protocol === 'anthropic-full-history-v1')
+    fs.writeFileSync(path.join(config.out, 'native-rollout-proof.json'), JSON.stringify(proof, null, 2))
+  }
 } finally {
   if (ingress && ingress.exitCode === null) {
     ingress.kill('SIGTERM')

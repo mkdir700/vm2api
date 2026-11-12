@@ -1,0 +1,30 @@
+services:
+  vm2api:
+    image: ${ROLLOUT_IMAGE:?fixed image digest required}
+    container_name: ${ROLLOUT_CONTAINER:?container required}
+    init: true
+    restart: unless-stopped
+    network_mode: host
+    pid: host
+    cap_add: [NET_ADMIN, NET_RAW]
+    env_file: ["${ROLLOUT_SERVICE_ENV:?private service env required}"]
+    environment:
+      KIN_PROJECT_ROOT: /opt/vm2api
+      KIN_DATA_DIR: /opt/vm2api/data
+      VM2API_CONTAINER_NAME: ${ROLLOUT_CONTAINER}
+      VM2API_HOST_ROOT: ${ROLLOUT_ROOT}
+      HOST: 127.0.0.1
+      PORT: ${ROLLOUT_PORT}
+      KIN_ROLLOUT_GROUP: ${ROLLOUT_GROUP}
+      KIN_ROLLOUT_INSTANCE: ${ROLLOUT_INSTANCE}
+      KIN_ROLLOUT_SECRET_FILE: /run/rollout-token
+      KIN_ROLLOUT_AUTHORITY_DB: /authority/kin.db
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${ROLLOUT_ROOT}/vms:/opt/vm2api/vms
+      - ${ROLLOUT_ROOT}/data:/opt/vm2api/data
+      - ${ROLLOUT_ROOT}/bin:/opt/vm2api/bin
+      - ${ROLLOUT_ROOT}/share:/opt/vm2api/share
+      - ${ROLLOUT_ROOT}/src/config:/opt/vm2api/src/config
+      - ${ROLLOUT_AUTHORITY}:/authority:ro
+      - ${ROLLOUT_SECRET_FILE}:/run/rollout-token:ro

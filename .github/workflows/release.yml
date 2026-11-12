@@ -114,6 +114,7 @@ jobs:
           provenance: false
           push: true
           tags: ${{ steps.meta.outputs.image }}
+          labels: org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha,scope=vm2api
           cache-to: type=gha,scope=vm2api,mode=max
 
@@ -140,7 +141,7 @@ jobs:
           if [ "${{ github.ref_type }}" = "tag" ]; then ref="${GITHUB_REF_NAME}"; fi
           echo "image=ghcr.io/${owner}/vm2api:${ref}-arm64" >> "$GITHUB_OUTPUT"
       - name: build native control plane
-        run: docker build --progress=plain --platform linux/arm64 -f deploy/Dockerfile.arm64-control -t "${{ steps.meta.outputs.image }}" .
+        run: docker build --progress=plain --platform linux/arm64 --label "org.opencontainers.image.revision=${{ github.sha }}" -f deploy/Dockerfile.arm64-control -t "${{ steps.meta.outputs.image }}" .
       - name: verify native runtime and emulated payloads
         run: python3 test/deploy/smoke_arm64_image.py "${{ steps.meta.outputs.image }}"
       - name: extract native helpers as release assets
