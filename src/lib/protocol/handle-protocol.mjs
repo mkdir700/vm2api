@@ -708,13 +708,13 @@ export function createHandleProtocol(deps) {
     const routingNow = getRouting()
     const panelDiagnostics = req.apiKeyKind === 'master' && isValidVmId(String(req.headers['x-kin-vm'] || '').trim())
     if (
-      claudeCodeOnlyFromRouting(routingNow) &&
       !panelDiagnostics &&
       protocol === 'anthropic.messages' &&
       isClaudeDesktopConnectionProbe(req.headers, inbound)
     ) {
       // Claude Desktop's gateway sign-in check: acknowledge the authenticated connection
-      // locally. No account is picked and no model runs, so the fixed body spends nothing.
+      // locally regardless of Claude Code-only admission. No account is picked and no
+      // model runs, so repeated checks cannot reuse a completed native exchange.
       stats.requests++
       stats.by_route[protocol] = (stats.by_route[protocol] || 0) + 1
       logBag.via = 'desktop-connection-probe'

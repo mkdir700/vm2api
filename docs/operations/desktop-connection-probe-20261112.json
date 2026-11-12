@@ -1,0 +1,226 @@
+{
+  "result": "PASS",
+  "base_commit": "ac49f288e219e76179c58fd7a077c7dc01cf0d03",
+  "scope": "Exact authenticated Desktop sign-in probes; no production deployment",
+  "node_version": "22.23.4",
+  "command": "node --test test/e2e/desktop-connection-probe.e2e.test.mjs test/e2e/completed-request-duplicate.e2e.test.mjs test/e2e/hermit-native-failure-policy.e2e.test.mjs",
+  "source_sha256": {
+    "src/lib/protocol/handle-protocol.mjs": "b1e28a8783ae97040a41066ea95b14ec6fefb097e036c71769c6abc9b5c3fe40",
+    "src/lib/identity/claude-code-only.mjs": "55a915c4f6d78090ddc395e7d229af26b5ba15379689586b9e35134391b8c51b",
+    "test/e2e/desktop-connection-probe.e2e.test.mjs": "0bf835d5508e4ffa5aab9d3e8028bb26932f79c4fc06de158fd056c1dcd06577",
+    "test/unit/claude-code-only.test.mjs": "5f306b2ad5f7a80f8fa0491daf9a8c3b4687c3937ac62203108fd682c952aa5f"
+  },
+  "original_head_red": {
+    "exit": 1,
+    "evidence": "/var/folders/qg/rry799n942993tzkb97j637w0000gn/T/desktop-probe-e2e-q3SNLv",
+    "symptom": "503 pool_unavailable instead of local HTTP 200"
+  },
+  "desktop_probe": {
+    "result": "PASS",
+    "checks": [
+      {
+        "setting": "absent",
+        "result": "PASS",
+        "repeatedProbes": 8,
+        "attempts": 0,
+        "modelCalls": 0,
+        "invalidAuthStatus": 401
+      },
+      {
+        "setting": false,
+        "result": "PASS",
+        "repeatedProbes": 8,
+        "attempts": 0,
+        "modelCalls": 0,
+        "invalidAuthStatus": 401
+      },
+      {
+        "setting": true,
+        "result": "PASS",
+        "repeatedProbes": 8,
+        "attempts": 0,
+        "modelCalls": 0,
+        "invalidAuthStatus": 401
+      },
+      {
+        "name": "ordinary",
+        "result": "PASS",
+        "preservedUpstreamCode": "completed_request_duplicate"
+      },
+      {
+        "name": "tokens",
+        "result": "PASS",
+        "preservedUpstreamCode": "completed_request_duplicate"
+      },
+      {
+        "name": "stream",
+        "result": "PASS",
+        "preservedUpstreamCode": "completed_request_duplicate"
+      },
+      {
+        "name": "system",
+        "result": "PASS",
+        "preservedUpstreamCode": "completed_request_duplicate"
+      },
+      {
+        "name": "metadata",
+        "result": "PASS",
+        "preservedUpstreamCode": "completed_request_duplicate"
+      },
+      {
+        "name": "browser",
+        "result": "PASS",
+        "preservedUpstreamCode": "completed_request_duplicate"
+      },
+      {
+        "name": "pinned",
+        "result": "PASS",
+        "preservedUpstreamCode": "completed_request_duplicate"
+      },
+      {
+        "name": "strict-admission",
+        "result": "PASS",
+        "status": 403
+      }
+    ],
+    "command": "node --test test/e2e/desktop-connection-probe.e2e.test.mjs",
+    "realProvider": "NOT RUN"
+  },
+  "completed_duplicate": {
+    "result": "PASS",
+    "checks": [
+      {
+        "stream": false,
+        "result": "PASS",
+        "status": 400,
+        "code": "completed_request_duplicate",
+        "attempts": 1
+      },
+      {
+        "stream": true,
+        "result": "PASS",
+        "status": 400,
+        "code": "completed_request_duplicate",
+        "attempts": 1
+      }
+    ]
+  },
+  "native_failure_policy": {
+    "result": "PASS",
+    "checks": [
+      {
+        "code": "native_preparation_failed",
+        "result": "PASS",
+        "status": 502,
+        "owner": "platform",
+        "attempts": 1
+      },
+      {
+        "code": "native_control_unavailable",
+        "result": "PASS",
+        "status": 502,
+        "owner": "platform",
+        "attempts": 1
+      },
+      {
+        "code": "native_generation_failed",
+        "result": "PASS",
+        "status": 502,
+        "owner": "platform",
+        "attempts": 1
+      },
+      {
+        "code": "native_operation_unsupported",
+        "result": "PASS",
+        "status": 501,
+        "owner": "platform",
+        "attempts": 1
+      }
+    ]
+  },
+  "not_run": [
+    "real model request",
+    "production deployment",
+    "browser or desktop UI"
+  ],
+  "shared_checkout_verification": {
+    "summary": {
+      "result": "PASS",
+      "checks": [
+        {
+          "setting": "absent",
+          "result": "PASS",
+          "repeatedProbes": 8,
+          "attempts": 0,
+          "modelCalls": 0,
+          "invalidAuthStatus": 401
+        },
+        {
+          "setting": false,
+          "result": "PASS",
+          "repeatedProbes": 8,
+          "attempts": 0,
+          "modelCalls": 0,
+          "invalidAuthStatus": 401
+        },
+        {
+          "setting": true,
+          "result": "PASS",
+          "repeatedProbes": 8,
+          "attempts": 0,
+          "modelCalls": 0,
+          "invalidAuthStatus": 401
+        },
+        {
+          "name": "ordinary",
+          "result": "PASS",
+          "preservedUpstreamCode": "completed_request_duplicate"
+        },
+        {
+          "name": "tokens",
+          "result": "PASS",
+          "preservedUpstreamCode": "completed_request_duplicate"
+        },
+        {
+          "name": "stream",
+          "result": "PASS",
+          "preservedUpstreamCode": "completed_request_duplicate"
+        },
+        {
+          "name": "system",
+          "result": "PASS",
+          "preservedUpstreamCode": "completed_request_duplicate"
+        },
+        {
+          "name": "metadata",
+          "result": "PASS",
+          "preservedUpstreamCode": "completed_request_duplicate"
+        },
+        {
+          "name": "browser",
+          "result": "PASS",
+          "preservedUpstreamCode": "completed_request_duplicate"
+        },
+        {
+          "name": "pinned",
+          "result": "PASS",
+          "preservedUpstreamCode": "completed_request_duplicate"
+        },
+        {
+          "name": "strict-admission",
+          "result": "PASS",
+          "status": 403
+        }
+      ],
+      "command": "node --test test/e2e/desktop-connection-probe.e2e.test.mjs",
+      "realProvider": "NOT RUN"
+    },
+    "evidence": "/var/folders/qg/rry799n942993tzkb97j637w0000gn/T/desktop-probe-e2e-LUGxf4",
+    "source_sha256": {
+      "src/lib/protocol/handle-protocol.mjs": "5c1a31260bee62bbcf724907e8586f903d4c0ef6b107d30b9c645b971e3c3ab0",
+      "src/lib/identity/claude-code-only.mjs": "55a915c4f6d78090ddc395e7d229af26b5ba15379689586b9e35134391b8c51b",
+      "test/e2e/desktop-connection-probe.e2e.test.mjs": "0bf835d5508e4ffa5aab9d3e8028bb26932f79c4fc06de158fd056c1dcd06577"
+    },
+    "unrelated_changes_preserved": true
+  }
+}

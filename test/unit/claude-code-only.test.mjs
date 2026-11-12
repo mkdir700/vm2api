@@ -514,11 +514,6 @@ test('switch on: anything but the exact sign-in probe is still refused', async (
   assert.deepEqual(await runProtocol({ routing: ON, body: SIGN_IN_PROBE, headers: browser }), BLOCKED)
 })
 
-test('switch off: the sign-in probe is an ordinary request', async () => {
-  const result = await runAnswered({ routing: {}, body: SIGN_IN_PROBE, headers: SIGN_IN_HEADERS })
-  assert.equal(result.reached, true)
-})
-
 test('switch on: a pasted billing line is not relayed Claude Code', async () => {
   const pasted = {
     model: 'claude-sonnet-5',
