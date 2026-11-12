@@ -93,8 +93,17 @@ try {
       scope: 'user:profile user:inference user:sessions:claude_code',
     })
   const routing = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'src/config/routing.json')))
-  routing.compatibility = { ...routing.compatibility, official_cc_passthrough: !vm2apiProfile, cache_ttl: '1h',
-    ...(vm2apiProfile ? { persona_preset: 'official_full', persona_templates: { official_full: [{ id: 'harness', type: 'text', text: systemMarker }] } } : {}) }
+  routing.compatibility = {
+    ...routing.compatibility,
+    official_cc_passthrough: !vm2apiProfile,
+    cache_ttl: '1h',
+    ...(vm2apiProfile
+      ? {
+          persona_preset: 'official_full',
+          persona_templates: { official_full: [{ id: 'harness', type: 'text', text: systemMarker }] },
+        }
+      : {}),
+  }
   routing.kernel_watchdog = { enabled: false }
   routing.credential_refresh = { enabled: false }
   routing.pool = { ...routing.pool, worker_health_ttl_ms: 5000 }
@@ -182,9 +191,12 @@ try {
         if (event.delta?.type !== 'input_json_delta') continue
         const value = event.delta.partial_json
         const middle = Math.max(1, Math.floor(value.length / 2))
-        events.splice(i, 1,
+        events.splice(
+          i,
+          1,
           { ...event, delta: { type: 'input_json_delta', partial_json: value.slice(0, middle) } },
-          { ...event, delta: { type: 'input_json_delta', partial_json: value.slice(middle) } })
+          { ...event, delta: { type: 'input_json_delta', partial_json: value.slice(middle) } },
+        )
       }
     }
     events.push(
@@ -1071,40 +1083,75 @@ raw=open(dest,'rb').read();print(json.dumps({'archive':{'sha256':hashlib.sha256(
     }
     ownerRoot = realDocker ? config.session.root.replace('/run/kin', run) : config.session.root
     if (vm2apiProfile) {
-      const internalCall = (body, id) => new Promise((resolve, reject) => {
-        const request = http.request({ socketPath: path.join(run, 'kernel.sock'),
-          path: '/internal/v1/messages', method: 'POST',
-          headers: { 'content-type': 'application/json', 'x-kin-internal-token': config.internal_token } }, (response) => {
-          const chunks = []
-          response.on('data', (chunk) => chunks.push(chunk))
-          response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(Buffer.concat(chunks)) }))
+      const internalCall = (body, id) =>
+        new Promise((resolve, reject) => {
+          const request = http.request(
+            {
+              socketPath: path.join(run, 'kernel.sock'),
+              path: '/internal/v1/messages',
+              method: 'POST',
+              headers: { 'content-type': 'application/json', 'x-kin-internal-token': config.internal_token },
+            },
+            (response) => {
+              const chunks = []
+              response.on('data', (chunk) => chunks.push(chunk))
+              response.on('end', () =>
+                resolve({ status: response.statusCode, body: JSON.parse(Buffer.concat(chunks)) }),
+              )
+            },
+          )
+          request.on('error', reject)
+          request.end(
+            JSON.stringify({
+              request_id: id,
+              stream: false,
+              headers: { 'x-claude-code-session-id': 'profile-negative' },
+              body,
+            }),
+          )
         })
-        request.on('error', reject)
-        request.end(JSON.stringify({ request_id: id, stream: false,
-          headers: { 'x-claude-code-session-id': 'profile-negative' }, body }))
-      })
-      const base = { model: 'claude-sonnet-4-6', stream: true,
+      const base = {
+        model: 'claude-sonnet-4-6',
+        stream: true,
         messages: [{ role: 'user', content: 'PROFILE_INVALID' }],
-        tools: [{ name: 'Read', input_schema: { type: 'object' } }] }
+        tools: [{ name: 'Read', input_schema: { type: 'object' } }],
+      }
       const cases = [
-        ['cache-scope-invalid', { ...base, system: [{ type: 'text', text: 'invalid', cache_control: { type: 'ephemeral', scope: 'invalid' } }] }],
+        [
+          'cache-scope-invalid',
+          {
+            ...base,
+            system: [{ type: 'text', text: 'invalid', cache_control: { type: 'ephemeral', scope: 'invalid' } }],
+          },
+        ],
         ['system-text-missing', { ...base, system: [{ type: 'text' }] }],
         ['system-number', { ...base, system: 5 }],
         ['system-image', { ...base, system: [{ type: 'image', text: 'invalid' }] }],
         ['system-oversize', { ...base, system: 'x'.repeat(1024 * 1024) }],
-        ...[null, 'true', 1].map((value, index) => ['stream-type-' + index,
-          { ...base, tools: [{ ...base.tools[0], eager_input_streaming: value }] }]),
-        ['mixed-streaming', { ...base, tools: [
-          { ...base.tools[0], eager_input_streaming: true },
-          { name: 'Edit', input_schema: { type: 'object' }, eager_input_streaming: false } ] }],
+        ...[null, 'true', 1].map((value, index) => [
+          'stream-type-' + index,
+          { ...base, tools: [{ ...base.tools[0], eager_input_streaming: value }] },
+        ]),
+        [
+          'mixed-streaming',
+          {
+            ...base,
+            tools: [
+              { ...base.tools[0], eager_input_streaming: true },
+              { name: 'Edit', input_schema: { type: 'object' }, eager_input_streaming: false },
+            ],
+          },
+        ],
       ]
       for (const [name, body] of cases) {
         const response = await internalCall(body, 'invalid-' + name)
         save('profile-rejected-' + name + '.json', response)
         check('profile_rejects_' + name, response.status === 400)
       }
-      check('invalid_profile_creates_no_native_runtime',
-        !JSON.parse(fs.readFileSync(path.join(ownerRoot, 'owner.json'))).runtime_launch_attempted)
+      check(
+        'invalid_profile_creates_no_native_runtime',
+        !JSON.parse(fs.readFileSync(path.join(ownerRoot, 'owner.json'))).runtime_launch_attempted,
+      )
       check('invalid_profile_sends_no_upstream_request', requests.length === 0)
     }
     check(
@@ -1330,19 +1377,25 @@ raw=open(dest,'rb').read();print(json.dumps({'archive':{'sha256':hashlib.sha256(
       if (turn === 1) {
         const nativeMcp = JSON.parse(fs.readFileSync(path.join(ownerRoot, 'mcp.json')))
         const nativeSettings = JSON.parse(fs.readFileSync(path.join(ownerRoot, 'config/settings.json')))
-        const events = fs.readFileSync(path.join(ownerRoot, 'observations/native-input-events.jsonl'), 'utf8')
-          .trim().split('\n').map((line) => JSON.parse(line))
+        const events = fs
+          .readFileSync(path.join(ownerRoot, 'observations/native-input-events.jsonl'), 'utf8')
+          .trim()
+          .split('\n')
+          .map((line) => JSON.parse(line))
         const evidence = {
           report_ready: nativeMcp.mcpServers.outer.args.includes('--report-ready'),
           wait_ready: nativeSettings.hooks.SessionStart.some((group) =>
-            group.hooks.some((hook) => hook.command.includes('--wait-ready'))),
+            group.hooks.some((hook) => hook.command.includes('--wait-ready')),
+          ),
           catalog_verified: events.filter((event) => event.event === 'dispatch_catalog_verified'),
           catalog_rejected: events.filter((event) => event.event === 'dispatch_catalog_rejected'),
         }
         save('initial-mcp-ready-barrier.json', evidence)
         check('new_session_waits_for_mcp_catalog', evidence.report_ready && evidence.wait_ready)
-        check('new_session_dispatch_catalog_verified',
-          evidence.catalog_verified.length > 0 && evidence.catalog_rejected.length === 0)
+        check(
+          'new_session_dispatch_catalog_verified',
+          evidence.catalog_verified.length > 0 && evidence.catalog_rejected.length === 0,
+        )
       }
     }
     fs.writeFileSync(path.join(out, 'outer-stdout.jsonl'), Buffer.concat(raw))
@@ -1352,9 +1405,18 @@ raw=open(dest,'rb').read();print(json.dumps({'archive':{'sha256':hashlib.sha256(
       requests.length === 3 && requests[1].body.messages.some((m) => JSON.stringify(m).includes('tool_result')),
     )
     if (vm2apiProfile) {
-      save('vm2api-profile-wire.json', requests.map((row) => ({ system: row.body.system, tools: row.body.tools })))
-      check('vm2api_system_reaches_native_upstream', requests.every((row) => JSON.stringify(row.body.system).includes(systemMarker)))
-      check('native_eager_streaming_enabled', requests.every((row) => row.body.tools.every((tool) => tool.eager_input_streaming === true)))
+      save(
+        'vm2api-profile-wire.json',
+        requests.map((row) => ({ system: row.body.system, tools: row.body.tools })),
+      )
+      check(
+        'vm2api_system_reaches_native_upstream',
+        requests.every((row) => JSON.stringify(row.body.system).includes(systemMarker)),
+      )
+      check(
+        'native_eager_streaming_enabled',
+        requests.every((row) => row.body.tools.every((tool) => tool.eager_input_streaming === true)),
+      )
     }
     check(
       'only_proxy_tools',
@@ -1596,9 +1658,18 @@ raw=open(dest,'rb').read();print(json.dumps({'archive':{'sha256':hashlib.sha256(
       await sendTurn(4)
     }
     if (vm2apiProfile) {
-      check('vm2api_system_survives_all_restorations', requests.every((row) => JSON.stringify(row.body.system).includes(systemMarker)))
-      check('eager_streaming_survives_all_restorations', requests.every((row) => row.body.tools.every((tool) => tool.eager_input_streaming === true)))
-      save('vm2api-profile-final-wire.json', requests.map((row) => ({ system: row.body.system, tools: row.body.tools })))
+      check(
+        'vm2api_system_survives_all_restorations',
+        requests.every((row) => JSON.stringify(row.body.system).includes(systemMarker)),
+      )
+      check(
+        'eager_streaming_survives_all_restorations',
+        requests.every((row) => row.body.tools.every((tool) => tool.eager_input_streaming === true)),
+      )
+      save(
+        'vm2api-profile-final-wire.json',
+        requests.map((row) => ({ system: row.body.system, tools: row.body.tools })),
+      )
     }
     const log = JSON.parse(fs.readFileSync(path.join(ownerRoot, 'owner.json')))
     save('owner-before-stop.json', log)

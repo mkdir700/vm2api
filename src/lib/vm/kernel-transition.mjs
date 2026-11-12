@@ -166,7 +166,8 @@ async function prepare(project, vm, target, routing) {
     desired.kernel_package = { ...binding, manifest_sha256: installed.manifest_sha256 }
     if (installed.manifest.capabilities.native_session_pool === true) desired.kernel_package.native_session_pool = true
     else delete desired.kernel_package.native_session_pool
-    if (installed.manifest.capabilities.native_session_prewarm === true) desired.kernel_package.native_session_prewarm = true
+    if (installed.manifest.capabilities.native_session_prewarm === true)
+      desired.kernel_package.native_session_prewarm = true
     else delete desired.kernel_package.native_session_prewarm
     delete desired.crag_kernel_version
   } else {

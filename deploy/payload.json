@@ -1,6 +1,6 @@
 {
-  "repo": "dofastted/vm2api",
-  "release": "payload-2026.11.01-codex-image-kernel",
+  "repo": "true-router/vm2api",
+  "release": "payload-2026.11.13-rollout",
   "files": [
     {
       "path": "bin/kin-kernel",

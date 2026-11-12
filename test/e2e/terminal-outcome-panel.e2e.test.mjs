@@ -20,37 +20,63 @@ test('committed HTTP 200 with failed terminal state is visibly failed in the pan
   const React = requireWeb('react')
   const { renderToStaticMarkup } = requireWeb('react-dom/server')
   const vite = await createServer({
-    root: web, configFile: false, plugins: [react()],
+    root: web,
+    configFile: false,
+    plugins: [react()],
     resolve: { alias: { '@': path.join(web, 'src') } },
-    server: { middlewareMode: true }, appType: 'custom',
+    server: { middlewareMode: true },
+    appType: 'custom',
     ssr: { noExternal: ['@lobehub/icons', '@lobehub/ui'] },
   })
-  const gw = await startGateway({ scenario: 'incomplete_stream', env: { KIN_REQUEST_LOG_MODE: 'normal', KIN_KERNEL_BIN: process.execPath, KIN_MOCK_ACCOUNT_SCENARIOS: JSON.stringify({'vm-sim-01':'incomplete_stream'}) } })
+  const gw = await startGateway({
+    scenario: 'incomplete_stream',
+    env: {
+      KIN_REQUEST_LOG_MODE: 'normal',
+      KIN_KERNEL_BIN: process.execPath,
+      KIN_MOCK_ACCOUNT_SCENARIOS: JSON.stringify({ 'vm-sim-01': 'incomplete_stream' }),
+    },
+  })
   const checks = []
   try {
     const { StatusBadge } = await vite.ssrLoadModule('/src/features/logs/log-cells.tsx')
     const { TooltipProvider } = await vite.ssrLoadModule('/src/components/ui/tooltip.tsx')
     const response = await fetch(gw.baseUrl + '/v1/messages', {
-      method: 'POST', headers: { authorization: `Bearer ${gw.apiKey}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ model: 'claude-haiku-4-5-20251001', stream: true, max_tokens: 16,
-        messages: [{ role: 'user', content: 'SYNTHETIC_INCOMPLETE_STREAM' }] }),
+      method: 'POST',
+      headers: { authorization: `Bearer ${gw.apiKey}`, 'content-type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        stream: true,
+        max_tokens: 16,
+        messages: [{ role: 'user', content: 'SYNTHETIC_INCOMPLETE_STREAM' }],
+      }),
     })
-    if(response.status!==200) {
-      const body=await response.text();fs.writeFileSync(path.join(out,'unexpected-response.txt'),body);throw new Error('unexpected HTTP '+response.status+': '+body)
+    if (response.status !== 200) {
+      const body = await response.text()
+      fs.writeFileSync(path.join(out, 'unexpected-response.txt'), body)
+      throw new Error('unexpected HTTP ' + response.status + ': ' + body)
     }
     const requestId = response.headers.get('x-request-id')
     fs.writeFileSync(path.join(out, 'stream.txt'), await response.text())
-    await new Promise(r => setTimeout(r, 100))
+    await new Promise((r) => setTimeout(r, 100))
     const render = async (name) => {
       const result = await api(gw, 'GET', '/api/panel/usage-logs?limit=20')
       assert.equal(result.status, 200, result.text)
       fs.writeFileSync(path.join(out, name + '-api.json'), JSON.stringify(result.json, null, 2))
-      const row = result.json.data.logs.find(r => r.requestId === requestId)
+      const row = result.json.data.logs.find((r) => r.requestId === requestId)
       assert.ok(row, 'the actual panel row must exist')
       assert.equal(row.statusCode, 200, 'HTTP transport status must be preserved')
-      assert.equal(row.finalState,name==='incomplete'?'incomplete':'unknown')
-      const html = renderToStaticMarkup(React.createElement(TooltipProvider, null,
-        React.createElement(StatusBadge, { statusCode: row.statusCode, finalState: row.finalState, errorCode: row.errorCode })))
+      assert.equal(row.finalState, name === 'incomplete' ? 'incomplete' : 'unknown')
+      const html = renderToStaticMarkup(
+        React.createElement(
+          TooltipProvider,
+          null,
+          React.createElement(StatusBadge, {
+            statusCode: row.statusCode,
+            finalState: row.finalState,
+            errorCode: row.errorCode,
+          }),
+        ),
+      )
       fs.writeFileSync(path.join(out, name + '.html'), html)
       assert.match(html, /200/)
       assert.match(html, /失败/, 'a failed committed response must not display only a successful 200')
@@ -60,23 +86,38 @@ test('committed HTTP 200 with failed terminal state is visibly failed in the pan
     await render('incomplete')
     // Reproduce the exact persisted production combination without contacting production.
     const db = new DatabaseSync(path.join(gw.project, 'data', 'kin.db'))
-    db.prepare('UPDATE usage_logs SET final_state=?, error_code=? WHERE request_id=?')
-      .run('unknown', 'worker_timeout', requestId)
+    db.prepare('UPDATE usage_logs SET final_state=?, error_code=? WHERE request_id=?').run(
+      'unknown',
+      'worker_timeout',
+      requestId,
+    )
     db.close()
     await render('unknown-timeout')
     const control = await startGateway({ env: { KIN_REQUEST_LOG_MODE: 'normal', KIN_KERNEL_BIN: process.execPath } })
     try {
-      const success = await api(control, 'POST', '/v1/messages', { body: {
-        model: 'claude-haiku-4-5-20251001', max_tokens: 16,
-        messages: [{ role: 'user', content: 'SYNTHETIC_VERIFIED_CONTROL' }],
-      } })
+      const success = await api(control, 'POST', '/v1/messages', {
+        body: {
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 16,
+          messages: [{ role: 'user', content: 'SYNTHETIC_VERIFIED_CONTROL' }],
+        },
+      })
       assert.equal(success.status, 200, success.text)
-      await new Promise(r => setTimeout(r, 100))
+      await new Promise((r) => setTimeout(r, 100))
       const result = await api(control, 'GET', '/api/panel/usage-logs?limit=20')
-      const row = result.json.data.logs.find(r => r.requestId === success.headers.get('x-request-id'))
+      const row = result.json.data.logs.find((r) => r.requestId === success.headers.get('x-request-id'))
       assert.equal(row.finalState, 'verified')
-      const html = renderToStaticMarkup(React.createElement(TooltipProvider, null,
-        React.createElement(StatusBadge, { statusCode: row.statusCode, finalState: row.finalState, errorCode: row.errorCode })))
+      const html = renderToStaticMarkup(
+        React.createElement(
+          TooltipProvider,
+          null,
+          React.createElement(StatusBadge, {
+            statusCode: row.statusCode,
+            finalState: row.finalState,
+            errorCode: row.errorCode,
+          }),
+        ),
+      )
       fs.writeFileSync(path.join(out, 'verified.html'), html)
       assert.match(html, /bg-green-100/)
       assert.doesNotMatch(html, /失败/)
@@ -86,7 +127,10 @@ test('committed HTTP 200 with failed terminal state is visibly failed in the pan
     }
     fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify({ result: 'PASS', checks }, null, 2))
   } catch (error) {
-    fs.writeFileSync(path.join(out, 'summary.json'), JSON.stringify({ result: 'FAIL', checks, error: error.message }, null, 2))
+    fs.writeFileSync(
+      path.join(out, 'summary.json'),
+      JSON.stringify({ result: 'FAIL', checks, error: error.message }, null, 2),
+    )
     throw error
   } finally {
     await gw.stop()
