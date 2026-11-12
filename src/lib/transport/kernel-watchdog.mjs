@@ -22,13 +22,11 @@ import {
   WRAP_SLOT_MAX,
   slotContainerName,
 } from './rust-kernel-supervisor.mjs'
-import { resolveInferenceEngine } from '../vm/slot-engine.mjs'
+import { resolveInferenceEngine, kernelDataplaneStatus } from '../vm/slot-engine.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
 import { dockerRequest } from '../cluster/docker-remote.mjs'
 import { clusterManager, vmNodeId } from '../cluster/placement.mjs'
 import { vmTimeoutTracker } from '../pool/failover-runner.mjs'
-import path from 'node:path'
-import { checkCragLicense } from '../vm/crag-license.mjs'
 
 /** A failed observation is not evidence of a dead container. Use the slot's own host, including KVM runners. */
 export async function observeWatchdogContainer(
@@ -233,9 +231,8 @@ export function createKernelWatchdog({
   }
 
   async function checkVm(vm, routing) {
-    const home = typeof homeDirFor === 'function' ? homeDirFor(vm) : null
-    const licensed = checkCragLicense(home ? path.resolve(home, '../../..') : '', vm, routing)
-    if (!licensed.ok) return // Activation, not container recovery, repairs licensing failures.
+    const supported = kernelDataplaneStatus(vm, routing)
+    if (!supported.ok) return // An explicit supported-kernel installation is required.
     const probed = probeVm(vm)
     if (!probed) {
       // The kernel cannot be probed without its relay; only a container that is really down is revived.
@@ -261,7 +258,7 @@ export function createKernelWatchdog({
     } else {
       nodeProbeFailures.delete(vm.id)
     }
-    // cc-node is the crag worker. Restarting a live kernel SIGKILLs it.
+    // Restarting a live cc-node kernel terminates its worker.
     if (dataplaneUsesCcNode(exec) && rustKernelProcessUp(current)) return
     if (!rustKernelNeedsRestart(current)) {
       // Healthy again after a fault means someone fixed it: start a fresh budget.

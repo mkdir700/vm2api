@@ -550,7 +550,7 @@ function settingsSaveToast(
 
 function protocolFollowError(message: string) {
   if (/config_missing|kernel_start_failed|wrap_cli_missing/i.test(message)) {
-    return '内核文件缺失，先到内核页拉取 wrap/crag 二进制再同步'
+    return '内核文件缺失，先到内核页拉取 默认内核 二进制再同步'
   }
   return message
 }

@@ -10,7 +10,7 @@
 
 首版支持本机 Docker、Linux AMD64、host 网络和标准绑定目录。
 标准绑定目录包括 `data`、`vms`、`bin`、`share` 和 `src/config`。
-执行器拒绝源码安装和 wrap/crag 载荷变化。
+执行器拒绝源码安装和 默认内核 载荷变化。
 执行器拒绝已有数据库迁移被修改或删除。
 执行器只接受代码中登记了文件名和 SHA-256 的新增迁移。
 当前只登记 `054_api_keys_allowed_models.sql`。
@@ -69,7 +69,7 @@ Hermit 包目录包含归档和 `release.json`。
 如果不安装 Hermit，省略 `--hermit-package` 和 `--cli`。
 
 `--compatible-from` 声明允许的来源镜像。
-安装端仍会检查数据库迁移文件和 wrap/crag 载荷。
+安装端仍会检查数据库迁移文件和 默认内核 载荷。
 发布验收还应覆盖 helper 与原槽位的兼容关系。
 该声明不能跳过安装端检查。
 

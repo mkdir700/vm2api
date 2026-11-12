@@ -30,7 +30,6 @@ jobs:
           set -euo pipefail
           gh release upload v1.3.226 --repo dofastted/vm2api --clobber \
             dist/kin-kernel \
-            dist/kin-kernel-crag \
             dist/kin-codex-kernel \
             dist/kin-worker \
             dist/kin-egress \

@@ -19,7 +19,7 @@ import {
 } from '../transport/codex-kernel-supervisor.mjs'
 import { runtimeKind, isKvmRuntime } from './runtime-kind.mjs'
 import { getVm, listVms, isCodexVm, persistVmRuntime } from './vm-registry.mjs'
-import { resolveInferenceEngine, resolveKernelDataplane } from './slot-engine.mjs'
+import { resolveInferenceEngine, resolveKernelDataplane, kernelDataplaneStatus } from './slot-engine.mjs'
 import {
   containerHasKernelMount,
   containerName,
@@ -27,11 +27,10 @@ import {
   startVmRuntime,
   reloadSlotWorker,
 } from './vm-runtime.mjs'
-import { inspectWrapCliDir, materializeSlotDataplane, materializeWrapCli, wrapCliHomeDir } from './wrap-cli-runtime.mjs'
+import { inspectWrapCliDir, materializeWrapCli, wrapCliHomeDir } from './wrap-cli-runtime.mjs'
 import { isLocalEgressProxy } from './egress.mjs'
 import { vmNodeId } from '../cluster/placement.mjs'
 import { hostProxyUrlForVm, slotHost } from './slot-host.mjs'
-import { checkCragLicense } from './crag-license.mjs'
 
 export { runtimeKind }
 
@@ -40,6 +39,8 @@ function unsupportedOnHost(action) {
 }
 
 export function startSlot(vm, projectRoot, opts = {}) {
+  const supported = kernelDataplaneStatus(vm, opts.routing)
+  if (!supported.ok) return supported
   return slotHost(vm).start(vm, projectRoot, opts)
 }
 
@@ -132,8 +133,8 @@ function wrapUsesSlotKernel(wrap) {
 
 export async function ensureSlotInferenceRuntime(vm, projectRoot, opts = {}) {
   const routing = opts.routing || {}
-  const licensed = checkCragLicense(projectRoot, vm, routing)
-  if (!licensed.ok) return licensed
+  const supported = kernelDataplaneStatus(vm, routing)
+  if (!supported.ok) return supported
   const eager = routing?.inference?.eager_start !== false
   if (isCodexVm(vm)) {
     if (!eager) return { ok: true, skipped: true, reason: 'eager_start_off', engine: 'codex' }
@@ -173,13 +174,10 @@ export async function ensureSlotInferenceRuntime(vm, projectRoot, opts = {}) {
   // KVM bind-mounts payload at /opt/kin-guest, not /usr/local/bin/kin-kernel.
   if (!slotHost(vm).bakedKernel) {
     const dest = wrapCliHomeDir(projectRoot, vm.id)
-    const dataplane = resolveKernelDataplane(vm, routing) || 'wrap'
-    let wrap = dataplane === 'crag' ? null : inspectWrapCliDir(dest)
+
+    let wrap = inspectWrapCliDir(dest)
     if (!wrap?.ok) {
-      wrap =
-        dataplane === 'crag'
-          ? materializeSlotDataplane(projectRoot, vm, dataplane, { routing })
-          : (opts.ops?.materializeWrapCli || materializeWrapCli)(projectRoot, vm)
+      wrap = (opts.ops?.materializeWrapCli || materializeWrapCli)(projectRoot, vm)
     }
     if (!wrap?.ok) {
       return {
@@ -266,6 +264,8 @@ function kernelBinaryError(bin) {
  */
 export async function switchSlotInferenceEngine(vm, projectRoot, engine, { timeoutMs = 8000, ops = {} } = {}) {
   if (!vm?.id || !projectRoot) return { ok: false, code: 'vm_required', error: 'vm required' }
+  const supported = kernelDataplaneStatus(vm, ops.routing)
+  if (!supported.ok) return supported
   if (!slotHost(vm).supports('engine_switch')) return unsupportedOnHost('engine_switch')
   if (isCodexVm(vm)) {
     return { ok: false, code: 'gpt_engine_forbidden', error: 'GPT slots do not use rust inference engines' }
@@ -285,11 +285,7 @@ export async function switchSlotInferenceEngine(vm, projectRoot, engine, { timeo
   const kernelBin = (ops.kernelBinPath || kernelBinPath)()
   let wrap = null
   if (engine === 'rust') {
-    const dataplane = resolveKernelDataplane(vm, ops.routing) || 'wrap'
-    wrap =
-      dataplane === 'crag'
-        ? materializeSlotDataplane(projectRoot, vm, dataplane, { routing: ops.routing })
-        : (ops.materializeWrapCli || materializeWrapCli)(projectRoot, vm)
+    wrap = (ops.materializeWrapCli || materializeWrapCli)(projectRoot, vm)
     if (!wrap?.ok) {
       return {
         ok: false,

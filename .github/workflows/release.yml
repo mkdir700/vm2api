@@ -73,7 +73,6 @@ jobs:
             升级见 [CHANGELOG.md](https://github.com/dofastted/vm2api/blob/main/CHANGELOG.md)、[docs/DEPLOY.md](https://github.com/dofastted/vm2api/blob/main/docs/DEPLOY.md) 与 [docs/ARM64.md](https://github.com/dofastted/vm2api/blob/main/docs/ARM64.md)。
           files: |
             dist/kin-kernel
-            dist/kin-kernel-crag
             dist/kin-codex-kernel
             dist/kin-worker
             dist/kin-egress

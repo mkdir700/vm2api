@@ -55,7 +55,6 @@ import {
 import {
   canOfficialCc,
   isApiKeyMode,
-  isAnySetupTokenMode,
   isOfficialSetupTokenMode,
   isSetupTokenMode,
   looksLikeConsoleApiKey,
@@ -184,11 +183,11 @@ import {
   parseSlotEnginePolicyPatch,
   parseSlotPolicyTargets,
   resolveInferenceEngine,
-  resolveCragKernelVersion,
   resolveKernelDataplane,
   SESSION_SLOT_MAX,
   SESSION_SLOT_MIN,
   validateInferenceRoutingPatch,
+  kernelDataplaneStatus,
 } from '../vm/slot-engine.mjs'
 import { validateTelemetryRoutingPatch } from '../vm/native-telemetry.mjs'
 import { makeError, ErrorType, ErrorCode } from '../core/errors.mjs'
@@ -206,20 +205,13 @@ import {
   readHostUpgradeStatus,
   startHostUpgrade,
 } from './release.mjs'
-import { downloadReleaseKernel, kernelReleaseHttpStatus } from './release-kernel.mjs'
+import { kernelReleaseHttpStatus } from './release-kernel.mjs'
 import { describeKernelCatalog, pullKernelRelease } from './kernel-catalog.mjs'
 import { installKernelTargets, releaseKernelInstallSafetyHold, validateKernelTargets } from '../vm/kernel-install.mjs'
 import { clearActiveVmFromDb, removeVmFromDb } from '../vm/vm-db-sync.mjs'
 import { normalizeCredentialMode } from '../oauth/credential-mode.mjs'
 import { reloadActiveVm } from '../core/config.mjs'
-import {
-  OS_CATALOG,
-  kernelForIndex,
-  normalizeTimezone,
-  nextNumericIndex,
-  padVm,
-  STANDARD_LOCALE,
-} from '../vm/vm-runtime.mjs'
+import { OS_CATALOG, kernelForIndex, nextNumericIndex, padVm, STANDARD_LOCALE } from '../vm/vm-runtime.mjs'
 import {
   startSlotReady,
   reloadSlotReady,
@@ -239,7 +231,7 @@ import { preflightNode } from '../cluster/placement.mjs'
 import { probeLocalKvm } from '../vm/kvm-host.mjs'
 import { normalizeVmConfig, resolveMachineSpec, validateVmConfigPatch } from '../vm/machine-spec.mjs'
 import { raiseDockerSlotMemory } from '../vm/docker-slot-memory.mjs'
-import { isKvmRuntime, RUNTIME_KVM } from '../vm/runtime-kind.mjs'
+import { RUNTIME_KVM } from '../vm/runtime-kind.mjs'
 import { hostProxyUrlForVm, slotHost } from '../vm/slot-host.mjs'
 import { syncIpv6ProxyEgress } from '../vm/proxy-policy-runtime.mjs'
 import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
@@ -274,10 +266,7 @@ import {
   makeWrapSample,
   materializeResolvedKernel,
   materializeSlotDataplane,
-  replaceCragKernelBinary,
   replaceKernelBinary,
-  replaceCliNodeBinary,
-  replaceCcNodeBinary,
   inspectKernelChanges,
   syncWrapSample,
   wrapCliHomeDir,
@@ -287,14 +276,9 @@ import { readRawBody as defaultReadRawBody } from '../http/respond.mjs'
 import { corsHeadersForRequest } from '../http/cors.mjs'
 import { restartRustKernel, syncClaudeKernelConfigs, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 
-import { countTokensViaWorker } from '../transport/go-worker-client.mjs'
-import { apiKeyBetaHeader, setupTokenBetaHeader } from '../protocol/claude-code-betas.mjs'
 import { getRustKernelHelper, rustKernelHealth, toPublicKernelHealth } from '../transport/rust-kernel-client.mjs'
-import { activateCragLicense, checkCragLicense, CragLicenseError, getCragLicense } from '../vm/crag-license.mjs'
 import { applyNativeTelemetry } from '../vm/fleet-update.mjs'
 import { codexKernelHealth } from '../transport/codex-kernel-client.mjs'
-import { normalizeHealthProbeConfig } from './health-probe.mjs'
-import { normalizeUsageProbeConfig } from '../oauth/usage-probe-monitor.mjs'
 import { mergeNotifyConfig, publicNotifyConfig, publicRoutingNotify, sendNotifyTest } from './notify.mjs'
 import { UsageLogsView } from '../db/repos/usage-logs-view.mjs'
 import {
@@ -1147,10 +1131,6 @@ export function createPanelHandler(ctx) {
       if (patch.dataplane) desired.dataplane = patch.dataplane
       else delete desired.dataplane
     }
-    if (Object.prototype.hasOwnProperty.call(patch, 'crag_kernel_version')) {
-      if (patch.crag_kernel_version) desired.crag_kernel_version = patch.crag_kernel_version
-      else delete desired.crag_kernel_version
-    }
     return desired
   }
 
@@ -1164,6 +1144,13 @@ export function createPanelHandler(ctx) {
   async function applySlotPolicyWithRuntimeLocked(id, patch) {
     const current = getVm(cfg.paths.project, id)
     if (!current) return { ok: false, id, code: 'vm_not_found', error: 'vm not found' }
+    if (!kernelDataplaneStatus(current, ctx.routingConfig).ok)
+      return {
+        ok: false,
+        id,
+        code: 'kernel_install_required',
+        error: '旧内核已移除，请通过内核页安装默认内核或 Hermit',
+      }
     if (current.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(current.kernel_transition.state))
       return { ok: false, id, code: 'kernel_transition_pending', error: '内核切换尚未完成，请先回滚' }
     const desired = vmWithSlotPolicyPatch(current, patch)
@@ -1171,8 +1158,6 @@ export function createPanelHandler(ctx) {
     const targetEngine = resolveInferenceEngine(desired, ctx.routingConfig)
     const previousDataplane = resolveKernelDataplane(current, ctx.routingConfig)
     const targetDataplane = resolveKernelDataplane(desired, ctx.routingConfig)
-    const previousVersion = resolveCragKernelVersion(current, ctx.routingConfig)
-    const targetVersion = resolveCragKernelVersion(desired, ctx.routingConfig)
     if (
       (previousDataplane === 'hermit' || targetDataplane === 'hermit') &&
       (previousDataplane !== targetDataplane || Object.prototype.hasOwnProperty.call(patch, 'dataplane'))
@@ -1191,12 +1176,10 @@ export function createPanelHandler(ctx) {
       })
       return { ...result, id, vm: getVm(cfg.paths.project, id) }
     }
-    const licensed = checkCragLicense(cfg.paths.project, desired, ctx.routingConfig)
-    if (!licensed.ok) return { ...licensed, id }
+    const supported = kernelDataplaneStatus(desired, ctx.routingConfig)
+    if (!supported.ok) return { ...supported, id }
     const dataplaneChanged = previousDataplane !== targetDataplane
-    const versionChanged =
-      previousVersion !== targetVersion && (previousDataplane === 'crag' || targetDataplane === 'crag')
-    const kernelSwitch = dataplaneChanged || versionChanged
+    const kernelSwitch = dataplaneChanged
     let switched = null
     if (Object.prototype.hasOwnProperty.call(patch, 'inference_engine') && previousEngine !== targetEngine) {
       switched = await switchSlotInferenceEngine(desired, cfg.paths.project, targetEngine)
@@ -1215,7 +1198,6 @@ export function createPanelHandler(ctx) {
           if (!laid.ok) {
             persistSlotEnginePolicy(cfg.paths.project, id, {
               dataplane: current.dataplane || '',
-              crag_kernel_version: current.crag_kernel_version || '',
             })
             return { ok: false, id, code: laid.code || 'dataplane_materialize_failed', error: laid.error }
           }
@@ -2630,28 +2612,20 @@ export function createPanelHandler(ctx) {
       }
       if (req.method === 'GET' && p === '/api/panel/kernels') {
         const vms = keyScopeVms(req).filter((vm) => !isCodexVm(vm))
-        const licenses = Object.create(null)
         const installations = Object.create(null)
         for (const summary of vms) {
           const vm = getVm(cfg.paths.project, summary.id)
           if (!vm) continue
-          // Inventory is read-only: only the explicit activation endpoint creates identities.
-          const { license } = getCragLicense(cfg.paths.project, vm, { initialize: false })
-          licenses[vm.id] = license
           if (summary.kernel_installation) installations[vm.id] = summary.kernel_installation
         }
-        return json(res, 200, panel.ok({ kernels: describeKernelCatalog(cfg.paths.project), licenses, installations }))
+        return json(res, 200, panel.ok({ kernels: describeKernelCatalog(cfg.paths.project), installations }))
       }
       if (req.method === 'POST' && p === '/api/panel/kernels/pull') {
         const body = await readBody(req, 8 * 1024)
-        if (
-          !body ||
-          !['cli-node', 'crag'].includes(body.kernel) ||
-          (body.tag != null && typeof body.tag !== 'string')
-        ) {
+        if (!body || body.kernel !== 'cli-node' || (body.tag != null && typeof body.tag !== 'string')) {
           return json(res, 400, {
             ok: false,
-            error: { code: 'kernel_target_invalid', message: '请选择 cli-node 或 CRAG' },
+            error: { code: 'kernel_target_invalid', message: '请选择默认内核 cli-node' },
           })
         }
         const result = await pullKernelRelease(
@@ -2755,7 +2729,7 @@ export function createPanelHandler(ctx) {
         if (!parsed.ok || !parsed.value) {
           return json(res, 400, {
             ok: false,
-            error: { code: 'invalid_dataplane', message: parsed.error || 'dataplane must be wrap, cc, or crag' },
+            error: { code: 'invalid_dataplane', message: parsed.error || 'dataplane 必须是 wrap 或 cc' },
           })
         }
         const targets = parseSlotPolicyTargets({
@@ -2946,14 +2920,6 @@ export function createPanelHandler(ctx) {
           },
         )
       }
-      if (req.method === 'POST' && p === '/api/panel/wrap-cli/crag-kernel') {
-        const raw = await readRawBody(req, 32 * 1024 * 1024)
-        const written = replaceCragKernelBinary(cfg.paths.project, raw)
-        if (!written.ok) {
-          return json(res, 400, { ok: false, error: { code: written.code, message: written.error } })
-        }
-        return json(res, 200, panel.ok(written))
-      }
       if (req.method === 'POST' && p === '/api/panel/wrap-cli/make') {
         const body = await readBody(req, 8 * 1024).catch(() => ({}))
         const glibcVm = String(body.glibc_vm || body.glibcVm || '').trim()
@@ -2970,69 +2936,36 @@ export function createPanelHandler(ctx) {
       }
       if (req.method === 'POST' && p === '/api/panel/wrap-cli/kernel/release') {
         const body = await readBody(req, 8 * 1024).catch(() => ({}))
-        const requestedIds = kernelSyncIds(cfg.paths.project, body)
-        const downloaded = await downloadReleaseKernel({
-          tag: body.tag,
-          fetchImpl: ctx.fetchImpl,
-        })
-        if (!downloaded.ok) {
-          return json(res, kernelReleaseHttpStatus(downloaded.code), {
-            ok: false,
-            error: { code: downloaded.code, message: downloaded.error },
-          })
-        }
-        return await syncInstalledKernels(
+        return syncInstalledKernels(
           {
             project: cfg.paths.project,
             routingConfig: ctx.routingConfig,
-            body: { ...body, ids: requestedIds },
+            body,
             restartKernel: ctx.kernelPolicyOps?.restartRustKernel,
           },
           async (syncArgs) => {
-            const replaced = replaceKernelBinary(cfg.paths.project, downloaded.bytes, {
-              source: 'github',
-              release_tag: downloaded.tag,
-            })
-            if (!replaced.ok) {
-              return json(res, 400, { ok: false, error: { code: replaced.code, message: replaced.error } })
-            }
-            const cliNode = replaceCliNodeBinary(cfg.paths.project, downloaded.cliNode?.bytes)
-            if (!cliNode.ok) {
-              return json(res, 400, { ok: false, error: { code: cliNode.code, message: cliNode.error } })
-            }
-            const ccNode = replaceCcNodeBinary(cfg.paths.project, downloaded.ccNode?.bytes)
-            if (!ccNode.ok) {
-              return json(res, 400, { ok: false, error: { code: ccNode.code, message: ccNode.error } })
-            }
-            const cragWritten = replaceCragKernelBinary(cfg.paths.project, downloaded.crag?.bytes)
-            if (!cragWritten.ok) {
-              return json(res, 400, { ok: false, error: { code: cragWritten.code, message: cragWritten.error } })
-            }
+            // Use the same immutable pair publication as the current kernel page.
+            const pulled = await pullKernelRelease(
+              cfg.paths.project,
+              { kernel: 'cli-node', tag: body.tag },
+              { fetchImpl: ctx.fetchImpl },
+            )
+            if (!pulled.ok)
+              return json(res, kernelReleaseHttpStatus(pulled.code), {
+                ok: false,
+                error: { code: pulled.code, message: pulled.error },
+              })
             const report = await runKernelSync(syncArgs)
-            const release = {
-              tag: downloaded.tag,
-              version: downloaded.version,
-              asset: downloaded.asset,
-              size: downloaded.size,
-              cli_node: downloaded.cliNode?.asset,
-              cli_node_size: cliNode.size,
-              cc_node: downloaded.ccNode?.asset,
-              cc_node_size: ccNode.size,
-              crag: downloaded.crag?.asset || null,
-              crag_size: cragWritten.size || 0,
-              crag_skipped: false,
-            }
-            if (!report.ok) {
+            if (!report.ok)
               return json(res, 400, {
                 ok: false,
                 error: {
                   code: 'kernel_sync_failed',
-                  message: `已写入 ${downloaded.tag}，槽同步 ${report.ok_count}/${report.total} 失败`,
+                  message: `安装包已更新，槽同步 ${report.ok_count}/${report.total} 失败`,
                 },
-                data: { release, kernel: replaced, sync: report },
+                data: { release: pulled.release, sync: report },
               })
-            }
-            return json(res, 200, panel.ok({ release, kernel: replaced, sync: report }))
+            return json(res, 200, panel.ok({ release: pulled.release, kernel: pulled.kernel, sync: report }))
           },
         )
       }
@@ -3267,39 +3200,6 @@ export function createPanelHandler(ctx) {
         return json(res, 200, panel.ok({ vm: summarizeVm(saved, cfg.paths.project, ctx.routingConfig) }))
       }
 
-      if (['GET', 'POST'].includes(req.method) && /^\/api\/panel\/vms\/[^/]+\/crag-license$/.test(p)) {
-        if (panelIdentity(req).role !== 'admin')
-          return json(res, 403, {
-            ok: false,
-            error: { code: 'forbidden', message: 'CRAG activation requires an administrator.' },
-          })
-        const vm = getVm(cfg.paths.project, p.split('/')[4])
-        if (!vm) return json(res, 404, { ok: false, error: { code: 'vm_not_found', message: 'vm not found' } })
-        if (isCodexVm(vm) || vm.node_id || isKvmRuntime(vm))
-          return json(res, 400, {
-            ok: false,
-            error: {
-              code: 'crag_v2_unsupported_placement',
-              message: 'CRAG activation requires a local Linux Docker Claude slot.',
-            },
-          })
-        try {
-          if (req.method === 'GET')
-            return json(res, 200, panel.ok(getCragLicense(cfg.paths.project, vm, { initialize: true })))
-          const body = await readBody(req, 32768)
-          return json(res, 200, panel.ok(activateCragLicense(cfg.paths.project, vm, body?.registration_code)))
-        } catch (error) {
-          const typed = error instanceof CragLicenseError
-          return json(res, typed ? 403 : 400, {
-            ok: false,
-            error: {
-              code: typed ? error.code : 'license_invalid',
-              message: typed ? error.message : 'The CRAG activation request is invalid.',
-            },
-          })
-        }
-      }
-
       // GET /api/panel/vms/:id
       if (req.method === 'GET' && /^\/api\/panel\/vms\/[^/]+$/.test(p)) {
         const id = p.split('/').pop()
@@ -3483,13 +3383,9 @@ export function createPanelHandler(ctx) {
           if (hasSlotPolicy) {
             const parsed = parseSlotEnginePolicyPatch(body)
             if (!parsed.ok) return json(res, 400, { ok: false, error: { message: parsed.error } })
-            const licensed = checkCragLicense(
-              cfg.paths.project,
-              vmWithSlotPolicyPatch(currentVm, parsed.patch),
-              ctx.routingConfig,
-            )
-            if (!licensed.ok)
-              return json(res, 403, { ok: false, error: { code: licensed.code, message: licensed.error } })
+            const supported = kernelDataplaneStatus(vmWithSlotPolicyPatch(currentVm, parsed.patch), ctx.routingConfig)
+            if (!supported.ok)
+              return json(res, 403, { ok: false, error: { code: supported.code, message: supported.error } })
           }
           let timezoneSync = null
           if (hasTimezone) {
@@ -4526,6 +4422,9 @@ export function createPanelHandler(ctx) {
       }
       if (req.method === 'PUT' && /^\/api\/panel\/vms\/[^/]+\/package$/.test(p)) {
         const id = p.split('/')[4]
+        const supported = kernelDataplaneStatus(getVm(cfg.paths.project, id), ctx.routingConfig)
+        if (!supported.ok)
+          return json(res, 409, { ok: false, error: { code: 'kernel_install_required', message: supported.error } })
         const body = await readBody(req, 256 * 1024).catch(() => null)
         const result = await commitVmPackage({
           projectRoot: cfg.paths.project,
@@ -4901,7 +4800,7 @@ export function createPanelHandler(ctx) {
         writeGuestMachineIdFile(cfg.paths.project, id, generated.guest_machine_id)
         try {
           seedFreshCliHome(cfg.paths.project, vm)
-        } catch (e) {}
+        } catch (_e) {}
         let allocated = null
         let proxyError = null
         const wantProxy = body.auto_allocate_proxy === true || startNow || !!pickedProxyId
@@ -4919,7 +4818,7 @@ export function createPanelHandler(ctx) {
                 ownerUserId: vm.owner_user_id || null,
                 role: ident.role,
               })
-            } catch (e) {}
+            } catch (_e) {}
           }
           if (!pickedProxyId && allocated?.managed) {
             const initialized = await bindManagedExit(allocated.id, id)
@@ -4944,7 +4843,7 @@ export function createPanelHandler(ctx) {
         if (body.activate === true) {
           try {
             activateVmSlot(id)
-          } catch (e) {}
+          } catch (_e) {}
         }
         let startError = null
         if (startNow && hasExit(vm)) {

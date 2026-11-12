@@ -3,22 +3,16 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { gzipSync } from 'node:zlib'
 import { describeKernelCatalog, pullKernelRelease } from '../../src/lib/admin/kernel-catalog.mjs'
-import { CRAG_V2_RELEASE_ASSET } from '../../src/lib/admin/release-kernel.mjs'
 import {
-  cragV2Arch,
-  cragV2PackageRoot,
   describeCcNodePayload,
   describeKernelPayload,
   describeWrapSample,
-  materializeCragV2,
   materializeWrapCli,
   wrapCliTemplateDir,
 } from '../../src/lib/vm/wrap-cli-runtime.mjs'
-import { seedEncryptedPackage } from '../fixtures/crag-license.mjs'
 
-const envNames = ['KIN_CRAG_V2_ROOT', 'KIN_WRAP_CLI_ROOT', 'KIN_KERNEL_BIN']
+const envNames = ['KIN_WRAP_CLI_ROOT', 'KIN_KERNEL_BIN']
 const env = Object.fromEntries(envNames.map((name) => [name, process.env[name]]))
 before(() => {
   for (const name of envNames) delete process.env[name]
@@ -75,42 +69,6 @@ function transport(files, { tag = 'v1.2.3', size, redirect } = {}) {
   }
   return { fetchImpl, seen }
 }
-function tarRecord(name, body = Buffer.alloc(0), { type = '0', link = '', size = body.length, mode = 0o644 } = {}) {
-  const header = Buffer.alloc(512)
-  header.write(name, 0, 100)
-  const octal = (offset, count, value) => header.write(value.toString(8).padStart(count - 1, '0') + '\0', offset, count)
-  octal(100, 8, mode)
-  octal(108, 8, 0)
-  octal(116, 8, 0)
-  octal(124, 12, size)
-  octal(136, 12, 0)
-  header.fill(32, 148, 156)
-  header.write(type, 156, 1)
-  header.write(link, 157, 100)
-  header.write('ustar\0', 257, 6)
-  header.write('00', 263, 2)
-  const sum = header.reduce((total, value) => total + value, 0)
-  header.write(sum.toString(8).padStart(6, '0') + '\0 ', 148, 8)
-  return Buffer.concat([header, body, Buffer.alloc((512 - (body.length % 512)) % 512)])
-}
-function archive(root, mutate = (rows) => rows) {
-  const rows = []
-  function visit(dir, prefix = '') {
-    for (const name of fs.readdirSync(dir).sort()) {
-      const abs = path.join(dir, name)
-      const rel = prefix ? `${prefix}/${name}` : name
-      if (fs.statSync(abs).isDirectory()) visit(abs, rel)
-      else rows.push({ name: rel, body: fs.readFileSync(abs), mode: fs.statSync(abs).mode & 0o777 })
-    }
-  }
-  visit(root)
-  return gzipSync(
-    Buffer.concat([
-      ...mutate(rows).map(({ name, body, ...options }) => tarRecord(name, body, options)),
-      Buffer.alloc(1024),
-    ]),
-  )
-}
 function snapshot(root) {
   const rows = {}
   function visit(dir, prefix = '') {
@@ -127,29 +85,6 @@ function snapshot(root) {
   visit(root)
   return rows
 }
-
-test('catalog exposes exactly two products with honest versions and no paths or license initialization', (t) => {
-  const root = fixture(t)
-  const pkg = seedEncryptedPackage(root)
-  const template = path.join(root, 'share/wrap-cli')
-  fs.mkdirSync(template, { recursive: true })
-  fs.writeFileSync(path.join(template, 'kin-kernel.bin'), elf(), { mode: 0o755 })
-  fs.writeFileSync(path.join(template, 'cli-node'), elf(), { mode: 0o755 })
-  const rows = describeKernelCatalog(root)
-  assert.deepEqual(
-    rows.map((row) => [row.id, row.paid, row.ready, row.version]),
-    [
-      ['cli-node', false, true, null],
-      ['crag', true, true, 'v2'],
-    ],
-  )
-  assert.equal(rows[0].updated_at, null)
-  assert.equal(JSON.stringify(rows).includes(root), false)
-  assert.equal(JSON.stringify(rows).includes('public_key'), false)
-  assert.equal(fs.existsSync(path.join(root, 'vms')), false)
-  fs.appendFileSync(path.join(pkg, 'crag-v2.payload.enc'), 'tampered')
-  assert.equal(describeKernelCatalog(root)[1].ready, false)
-})
 
 test('CLI pull downloads only the free pair, installs both, and preserves legacy factory assets', async (t) => {
   const root = fixture(t)
@@ -222,146 +157,6 @@ for (const [label, files, options, code] of [
     assert.equal(describeKernelCatalog(root)[0].ready, true)
   })
 
-test('native pull atomically selects an immutable sibling without touching the read-only factory', {
-  skip: cragV2Arch() !== 'amd64',
-}, async (t) => {
-  const root = fixture(t)
-  const factory = seedEncryptedPackage(root, { revision: 'new' })
-  const bytes = archive(factory)
-  seedEncryptedPackage(root, { revision: 'factory' })
-  writable(factory)
-  for (const name of fs.readdirSync(factory)) {
-    const file = path.join(factory, name)
-    if (fs.statSync(file).isFile()) fs.chmodSync(file, fs.statSync(file).mode & 0o111 ? 0o555 : 0o444)
-  }
-  fs.chmodSync(factory, 0o555)
-  const before = snapshot(factory)
-  const result = await pullKernelRelease(root, { kernel: 'crag' }, transport({ [CRAG_V2_RELEASE_ASSET]: bytes }))
-  assert.equal(result.ok, true, result.error)
-  const selected = cragV2PackageRoot(root)
-  assert.notEqual(selected, factory)
-  assert.equal(path.dirname(selected), path.join(path.dirname(factory), 'packages'))
-  assert.deepEqual(snapshot(factory), before)
-  assert.equal(fs.statSync(selected).mode & 0o222, 0)
-  assert.equal(describeKernelCatalog(root)[1].version, '1.2.3')
-  assert.equal(describeKernelCatalog(root)[1].ready, true)
-})
-
-const nativeMutations = [
-  [
-    'path traversal',
-    (rows) => [...rows, { name: '../escape', body: Buffer.from('escape') }],
-    'crag_v2_archive_invalid',
-  ],
-  ['absolute path', (rows) => [...rows, { name: '/tmp/escape', body: Buffer.alloc(0) }], 'crag_v2_archive_invalid'],
-  [
-    'symbolic link',
-    (rows) => [...rows, { name: 'link', body: Buffer.alloc(0), type: '2', link: '/tmp' }],
-    'crag_v2_archive_invalid',
-  ],
-  [
-    'hard link',
-    (rows) => [...rows, { name: 'link', body: Buffer.alloc(0), type: '1', link: 'crag-v2' }],
-    'crag_v2_archive_invalid',
-  ],
-  ['duplicate member', (rows) => [...rows, rows[0]], 'crag_v2_archive_invalid'],
-  ['unbounded declared member', (rows) => [{ ...rows[0], size: 600 * 1024 * 1024 }], 'crag_v2_archive_invalid'],
-  [
-    'ciphertext tamper',
-    (rows) =>
-      rows.map((row) =>
-        row.name === 'crag-v2.payload.enc' ? { ...row, body: Buffer.concat([row.body, Buffer.from('tamper')]) } : row,
-      ),
-    'crag_v2_hash_mismatch',
-  ],
-  [
-    'signature tamper',
-    (rows) =>
-      rows.map((row) =>
-        row.name === 'manifest.json'
-          ? {
-              ...row,
-              body: Buffer.from(
-                JSON.stringify({
-                  ...JSON.parse(row.body),
-                  payload: { ...JSON.parse(row.body).payload, signature: Buffer.alloc(64).toString('base64url') },
-                }),
-              ),
-            }
-          : row,
-      ),
-    'crag_v2_manifest_invalid',
-  ],
-]
-for (const [label, mutate, code] of nativeMutations)
-  test(`native ${label} never replaces the prior package`, { skip: cragV2Arch() !== 'amd64' }, async (t) => {
-    const root = fixture(t)
-    const factory = seedEncryptedPackage(root)
-    const good = archive(factory)
-    assert.equal(
-      (await pullKernelRelease(root, { kernel: 'crag' }, transport({ [CRAG_V2_RELEASE_ASSET]: good }))).ok,
-      true,
-    )
-    const previous = cragV2PackageRoot(root)
-    const before = snapshot(previous)
-    const bad = archive(factory, mutate)
-    const result = await pullKernelRelease(root, { kernel: 'crag' }, transport({ [CRAG_V2_RELEASE_ASSET]: bad }))
-    assert.equal(result.code, code)
-    assert.equal(result.ok, false)
-    assert.equal(cragV2PackageRoot(root), previous)
-    assert.deepEqual(snapshot(previous), before)
-    assert.equal(fs.existsSync(path.join(root, 'share/crag/kernels/v2/packages/escape')), false)
-    assert.equal(describeKernelCatalog(root)[1].ready, true)
-  })
-
-test('a self-signed replacement authority cannot replace the pinned native issuer', {
-  skip: cragV2Arch() !== 'amd64',
-}, async (t) => {
-  const root = fixture(t),
-    attacker = fixture(t)
-  const factory = seedEncryptedPackage(root)
-  const previous = snapshot(factory)
-  const bad = archive(seedEncryptedPackage(attacker))
-  const result = await pullKernelRelease(root, { kernel: 'crag' }, transport({ [CRAG_V2_RELEASE_ASSET]: bad }))
-  assert.equal(result.code, 'crag_v2_authority_mismatch')
-  assert.equal(cragV2PackageRoot(root), factory)
-  assert.deepEqual(snapshot(factory), previous)
-})
-
-test('missing native release is explicit and never fetches the legacy ELF', async (t) => {
-  const root = fixture(t)
-  const factory = seedEncryptedPackage(root)
-  const http = transport({ 'kin-kernel-crag': elf() })
-  const result = await pullKernelRelease(root, { kernel: 'crag' }, http)
-  assert.equal(result.code, 'crag_v2_asset_missing')
-  assert.equal(http.seen.length, 1)
-  assert.equal(cragV2PackageRoot(root), factory)
-  assert.equal(describeKernelCatalog(root)[1].ready, true)
-})
-
-test('resolver rejects unsafe relative pointers and preserves explicit override precedence', (t) => {
-  const root = fixture(t),
-    override = fixture(t)
-  const factory = seedEncryptedPackage(root)
-  const other = seedEncryptedPackage(override)
-  const pointer = path.join(path.dirname(factory), `current-${cragV2Arch()}.json`)
-  for (const value of ['../outside', '/tmp/outside', 'packages/../../outside', 'packages/amd64-not-a-uuid']) {
-    fs.writeFileSync(pointer, JSON.stringify({ package: value }))
-    assert.throws(() => cragV2PackageRoot(root), { code: 'kernel_cache_invalid' })
-    assert.equal(describeKernelCatalog(root)[1].code, 'kernel_cache_invalid')
-    assert.equal(
-      materializeCragV2(root, { id: 'vm-invalid', dataplane: 'crag', crag_kernel_version: 'v2' }).code,
-      'kernel_cache_invalid',
-    )
-  }
-  process.env.KIN_CRAG_V2_ROOT = other
-  try {
-    assert.equal(cragV2PackageRoot(root), other)
-  } finally {
-    delete process.env.KIN_CRAG_V2_ROOT
-  }
-})
-
 test('publication failure preserves the pointer and prior package byte-for-byte', async (t) => {
   const root = fixture(t)
   const files = { 'kin-kernel': elf('old'), 'cli-node': elf('old') }
@@ -407,77 +202,6 @@ test('cache retains only current and previous immutable snapshots', async (t) =>
   assert.equal(fs.existsSync(selected[0]), false)
   assert.equal(fs.existsSync(selected[1]), true)
   assert.equal(fs.existsSync(selected[2]), true)
-})
-
-test('native rejects truncated gzip and incorrect architecture without changing factory', {
-  skip: cragV2Arch() !== 'amd64',
-}, async (t) => {
-  const root = fixture(t)
-  const factory = seedEncryptedPackage(root)
-  const before = snapshot(factory)
-  const good = archive(factory)
-  const truncated = await pullKernelRelease(
-    root,
-    { kernel: 'crag' },
-    transport({ [CRAG_V2_RELEASE_ASSET]: good.subarray(0, good.length - 8) }),
-  )
-  assert.equal(truncated.ok, false)
-  assert.equal(cragV2PackageRoot(root), factory)
-  const wrongArch = archive(factory, (rows) =>
-    rows.map((row) =>
-      row.name === 'manifest.json'
-        ? { ...row, body: Buffer.from(JSON.stringify({ ...JSON.parse(row.body), arch: 'arm64' })) }
-        : row,
-    ),
-  )
-  const result = await pullKernelRelease(root, { kernel: 'crag' }, transport({ [CRAG_V2_RELEASE_ASSET]: wrongArch }))
-  assert.equal(result.code, 'crag_v2_arch_mismatch')
-  assert.deepEqual(snapshot(factory), before)
-})
-
-test('archive download honors declared bounds before reading a body', { skip: cragV2Arch() !== 'amd64' }, async (t) => {
-  const root = fixture(t)
-  const factory = seedEncryptedPackage(root)
-  const http = transport({ [CRAG_V2_RELEASE_ASSET]: archive(factory) })
-  let consumed = false
-  const result = await pullKernelRelease(
-    root,
-    { kernel: 'crag' },
-    {
-      fetchImpl: async (url, options) => {
-        if (String(url).includes('/releases/latest')) return http.fetchImpl(url, options)
-        return {
-          status: 200,
-          ok: true,
-          headers: new Headers({ 'content-length': String(513 * 1024 * 1024) }),
-          get body() {
-            consumed = true
-            throw new Error('must not consume')
-          },
-        }
-      },
-    },
-  )
-  assert.equal(result.code, 'crag_v2_too_large')
-  assert.equal(consumed, false)
-  assert.equal(cragV2PackageRoot(root), factory)
-})
-
-test('explicit overrides block misleading pulls and preserve selected packages', async (t) => {
-  const root = fixture(t)
-  const factory = seedEncryptedPackage(root)
-  process.env.KIN_CRAG_V2_ROOT = factory
-  try {
-    const result = await pullKernelRelease(
-      root,
-      { kernel: 'crag' },
-      transport({ [CRAG_V2_RELEASE_ASSET]: archive(factory) }),
-    )
-    assert.equal(result.code, 'kernel_override_active')
-    assert.equal(cragV2PackageRoot(root), factory)
-  } finally {
-    delete process.env.KIN_CRAG_V2_ROOT
-  }
 })
 
 test('standard project KIN_KERNEL_BIN permits pulling and resolves the published pair', async (t) => {
@@ -567,43 +291,6 @@ test('only missing pointers permit factory fallback; malformed, missing-target a
   assert.equal(wrapCliTemplateDir(root), factory)
   assert.equal(describeKernelCatalog(root)[0].ready, true)
 })
-
-test('native accepts the exact shipped customer wrapper directory', { skip: cragV2Arch() !== 'amd64' }, async (t) => {
-  const root = fixture(t)
-  const factory = seedEncryptedPackage(root)
-  const wrapped = archive(factory, (rows) => [
-    { name: 'crag-v2-licensed-amd64/', body: Buffer.alloc(0), type: '5', mode: 0o755 },
-    { name: 'crag-v2-licensed-amd64/claude-code-2.1.317/', body: Buffer.alloc(0), type: '5', mode: 0o755 },
-    ...rows.map((row) => ({ ...row, name: `crag-v2-licensed-amd64/${row.name}` })),
-  ])
-  const result = await pullKernelRelease(root, { kernel: 'crag' }, transport({ [CRAG_V2_RELEASE_ASSET]: wrapped }))
-  assert.equal(result.ok, true, result.error)
-  assert.notEqual(cragV2PackageRoot(root), factory)
-  assert.equal(fs.existsSync(path.join(cragV2PackageRoot(root), 'manifest.json')), true)
-  assert.equal(fs.existsSync(path.join(cragV2PackageRoot(root), 'crag-v2-licensed-amd64')), false)
-  assert.equal(describeKernelCatalog(root)[1].ready, true)
-})
-
-for (const layout of ['mixed', 'arbitrary-root', 'wrapper-traversal'])
-  test(`native rejects ${layout} archive layout without replacing factory`, {
-    skip: cragV2Arch() !== 'amd64',
-  }, async (t) => {
-    const root = fixture(t)
-    const factory = seedEncryptedPackage(root)
-    const before = snapshot(factory)
-    const bytes = archive(factory, (rows) =>
-      layout === 'mixed'
-        ? rows.map((row, index) => ({ ...row, name: index ? `crag-v2-licensed-amd64/${row.name}` : row.name }))
-        : rows.map((row) => ({
-            ...row,
-            name: `${layout === 'arbitrary-root' ? 'arbitrary-root' : 'crag-v2-licensed-amd64/..'}/${row.name}`,
-          })),
-    )
-    const result = await pullKernelRelease(root, { kernel: 'crag' }, transport({ [CRAG_V2_RELEASE_ASSET]: bytes }))
-    assert.equal(result.code, 'crag_v2_archive_invalid')
-    assert.equal(cragV2PackageRoot(root), factory)
-    assert.deepEqual(snapshot(factory), before)
-  })
 
 test('incomplete selected CLI cache cannot silently reuse the factory kernel', async (t) => {
   const root = fixture(t)

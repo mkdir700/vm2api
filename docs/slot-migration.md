@@ -8,8 +8,8 @@ Nothing in this feature deploys the control plane or automatically migrates slot
 
 ## Deliberately limited first version
 
-- Running Claude KVM slots on SSH-connected **Linux remote nodes** only. No controller
-  placement, Docker-slot, Codex, crag or macOS/native migration, shrinking, or disk resizing.
+- 仅支持通过 SSH 接入的 Linux 远程节点上运行中的 Claude KVM 槽位。
+  不支持控制面本机、Docker 槽位、Codex、macOS 原生槽位、缩容或磁盘调整。
 - Both SSH users must have the same UID/GID. Both nodes need Python 3, GNU
   `timeout` and `nice`; the target needs working KVM and prebuilt slot/egress images.
 - The target's desired KVM Docker image ID must equal the source container's

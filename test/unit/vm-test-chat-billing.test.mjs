@@ -10,7 +10,6 @@ import {
   CRS_OFFICIAL_SYSTEM,
   CRS_OFFICIAL_AGENT_PROMPT,
 } from '../../src/lib/identity/crs-persona.mjs'
-import { classifyClient } from '../../src/lib/protocol/client-fingerprint.mjs'
 import { runVmTestChat, buildVmTestInbound, testChatCredentialMode } from '../../src/lib/admin/vm-test-chat.mjs'
 
 function seedVm(root, id = 'vm-01') {
@@ -235,42 +234,4 @@ test('runVmTestChat reports cli-hop when slot engine is rust', async (t) => {
   assert.equal(calls[0].body.system, undefined)
   assert.ok(result.log.some((l) => /cli-hop wrap/.test(l.message)))
   assert.ok(result.log.some((l) => /cli-hop CLI 官方提示词/.test(l.message)))
-})
-
-test('runVmTestChat reports crag dataplane when routing says crag', async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-testchat-crag-'))
-  t.after(() => fs.rmSync(root, { recursive: true, force: true }))
-  seedVm(root, 'vm-13')
-  fs.mkdirSync(path.join(root, 'src/config'), { recursive: true })
-  fs.writeFileSync(
-    path.join(root, 'src/config/routing.json'),
-    JSON.stringify({ inference: { engine: 'rust', dataplane: 'crag', fallback_to_go: false, strict: true } }),
-  )
-  const { baseUrl } = await startLoopbackServer(t, () => ({
-    status: 200,
-    body: {
-      type: 'message',
-      role: 'assistant',
-      model: 'claude-haiku-4-5-20251001',
-      content: [{ type: 'text', text: 'hi' }],
-      usage: { input_tokens: 8, output_tokens: 2 },
-      stop_reason: 'end_turn',
-    },
-  }))
-  const result = await runVmTestChat({
-    projectRoot: root,
-    vmId: 'vm-13',
-    model: 'claude-haiku-4-5',
-    prompt: 'hello',
-    max_tokens: 64,
-    baseUrl,
-    apiKey: 'test-master-key',
-  })
-  assert.equal(result.ok, true)
-  assert.equal(result.dataplane, 'crag')
-  assert.ok(result.log.some((l) => /cli-hop crag/.test(l.message)))
-  assert.equal(
-    result.log.some((l) => /cli-hop wrap/.test(l.message)),
-    false,
-  )
 })

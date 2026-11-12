@@ -1,5 +1,5 @@
 /**
- * Download linux amd64 kin-kernel, cli-node, cc-node, and kin-kernel-crag from one GitHub Release.
+ * Download linux amd64 kin-kernel, cli-node and cc-node from one GitHub Release.
  * Callers install both and sync slots; this module only fetches bytes.
  * Redirects stay on GitHub hosts so a release payload cannot point the
  * control plane at an internal URL.
@@ -10,12 +10,9 @@ import { GITHUB_REPO, githubApiHeaders, isReleaseTag, normalizeTag, normalizeVer
 export const KERNEL_RELEASE_ASSET = 'kin-kernel'
 export const CLI_NODE_RELEASE_ASSET = 'cli-node'
 export const CC_NODE_RELEASE_ASSET = 'cc-node'
-export const KERNEL_CRAG_RELEASE_ASSET = 'kin-kernel-crag'
-export const CRAG_V2_RELEASE_ASSET = 'crag-v2-licensed-amd64.tar.gz'
 export const MAX_KERNEL_DOWNLOAD_BYTES = 32 * 1024 * 1024
 export const MAX_CLI_NODE_DOWNLOAD_BYTES = 64 * 1024 * 1024
 export const MAX_CC_NODE_DOWNLOAD_BYTES = MAX_CLI_NODE_DOWNLOAD_BYTES
-export const MAX_CRAG_DOWNLOAD_BYTES = MAX_KERNEL_DOWNLOAD_BYTES
 
 const META_TIMEOUT_MS = 8000
 const DOWNLOAD_TIMEOUT_MS = 60_000
@@ -44,8 +41,7 @@ export function kernelReleaseHttpStatus(code) {
     code === 'kernel_empty' ||
     String(code || '').startsWith('kernel_not_') ||
     String(code || '').startsWith('cli_node_') ||
-    String(code || '').startsWith('cc_node_') ||
-    String(code || '').startsWith('crag_')
+    String(code || '').startsWith('cc_node_')
   ) {
     return 400
   }
@@ -67,7 +63,7 @@ export function isAllowedKernelUrl(raw, { redirect = false } = {}) {
   }
   if (url.hostname === 'github.com') {
     return new RegExp(
-      `^/${GITHUB_REPO}/releases/download/v\\d+\\.\\d+\\.\\d+/(?:${KERNEL_RELEASE_ASSET}|${CLI_NODE_RELEASE_ASSET}|${CC_NODE_RELEASE_ASSET}|${KERNEL_CRAG_RELEASE_ASSET}|crag-v2-licensed-amd64\\.tar\\.gz)$`,
+      `^/${GITHUB_REPO}/releases/download/v\\d+\\.\\d+\\.\\d+/(?:${KERNEL_RELEASE_ASSET}|${CLI_NODE_RELEASE_ASSET}|${CC_NODE_RELEASE_ASSET})$`,
     ).test(url.pathname)
   }
   return (
@@ -137,24 +133,13 @@ export function selectCcNodeAsset(payload) {
   })
 }
 
-export function selectCragAsset(payload) {
-  return selectReleaseAsset(payload, {
-    name: KERNEL_CRAG_RELEASE_ASSET,
-    maxBytes: MAX_CRAG_DOWNLOAD_BYTES,
-    missingCode: 'crag_asset_missing',
-    tooLargeCode: 'crag_too_large',
-  })
-}
-
 async function readCappedBody(res, maxBytes, label) {
   const tooLarge =
     label === CLI_NODE_RELEASE_ASSET
       ? 'cli_node_too_large'
       : label === CC_NODE_RELEASE_ASSET
         ? 'cc_node_too_large'
-        : label === KERNEL_CRAG_RELEASE_ASSET
-          ? 'crag_too_large'
-          : 'kernel_too_large'
+        : 'kernel_too_large'
   const declared = Number(res.headers.get('content-length'))
   if (Number.isFinite(declared) && declared > maxBytes) {
     throw coded(tooLarge, `${label} 超过 ${Math.round(maxBytes / (1024 * 1024))}MB`)
@@ -211,9 +196,7 @@ export async function openKernelReleaseAsset(startUrl, fetchImpl = globalThis.fe
           ? 'cli_node_download_failed'
           : label === CC_NODE_RELEASE_ASSET
             ? 'cc_node_download_failed'
-            : label === KERNEL_CRAG_RELEASE_ASSET
-              ? 'crag_download_failed'
-              : 'kernel_download_failed'
+            : 'kernel_download_failed'
       throw coded(code, `GitHub ${label} 下载失败 (${res.status})`)
     }
     return res
@@ -293,17 +276,13 @@ export async function downloadReleaseKernel({ tag = '', fetchImpl = globalThis.f
   if (!cliNode.ok) return cliNode
   const ccNode = selectCcNodeAsset(payload)
   if (!ccNode.ok) return ccNode
-  const crag = selectCragAsset(payload)
-  if (!crag.ok) return crag
   let kernelBytes
   let cliBytes
   let ccBytes
-  let cragBytes
   try {
     kernelBytes = await fetchReleaseBytes(kernel.url, fetchImpl, MAX_KERNEL_DOWNLOAD_BYTES, KERNEL_RELEASE_ASSET)
     cliBytes = await fetchReleaseBytes(cliNode.url, fetchImpl, MAX_CLI_NODE_DOWNLOAD_BYTES, CLI_NODE_RELEASE_ASSET)
     ccBytes = await fetchReleaseBytes(ccNode.url, fetchImpl, MAX_CC_NODE_DOWNLOAD_BYTES, CC_NODE_RELEASE_ASSET)
-    cragBytes = await fetchReleaseBytes(crag.url, fetchImpl, MAX_CRAG_DOWNLOAD_BYTES, KERNEL_CRAG_RELEASE_ASSET)
   } catch (error) {
     return {
       ok: false,
@@ -316,16 +295,6 @@ export async function downloadReleaseKernel({ tag = '', fetchImpl = globalThis.f
   const cliCheck = inspectLinuxAmd64Elf(cliBytes)
   if (!cliCheck.ok) {
     return { ok: false, code: 'cli_node_not_elf', error: cliCheck.error || 'cli-node binary is not a linux amd64 ELF' }
-  }
-  if (cragBytes) {
-    const cragCheck = inspectLinuxAmd64Elf(cragBytes)
-    if (!cragCheck.ok) {
-      return {
-        ok: false,
-        code: cragCheck.code || 'crag_not_elf',
-        error: cragCheck.error || 'kin-kernel-crag is not ELF',
-      }
-    }
   }
   const ccCheck = inspectLinuxAmd64Elf(ccBytes)
   if (!ccCheck.ok) {
@@ -348,6 +317,5 @@ export async function downloadReleaseKernel({ tag = '', fetchImpl = globalThis.f
       size: ccBytes.length,
       bytes: ccBytes,
     },
-    crag: { asset: crag.asset, size: cragBytes.length, bytes: cragBytes },
   }
 }

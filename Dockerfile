@@ -55,7 +55,6 @@ COPY --from=payload /payload/bin/ /opt/vm2api/image-bin/
 COPY --from=helpers /out/ /opt/vm2api/image-bin/
 COPY share/wrap-cli /opt/vm2api/image-wrap-cli
 COPY --from=payload /payload/share/wrap-cli/ /opt/vm2api/image-wrap-cli/
-COPY --from=payload /payload/share/crag/ /opt/vm2api/image-crag/
 COPY scripts/docker-entrypoint.sh /usr/local/bin/vm2api-entrypoint
 RUN chmod 755 /usr/local/bin/vm2api-entrypoint /opt/vm2api/image-bin/* \
   && rm -f /opt/vm2api/src/lib/oauth/auth.js \

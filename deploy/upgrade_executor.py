@@ -323,7 +323,7 @@ console.log(JSON.stringify({result:'PASS',versions:db.prepare('SELECT version FR
                 except Exception:time.sleep(.5)
             else:raise RuntimeError('目标镜像预检失败')
             # Existing migration files and slot payloads must stay byte-identical.
-            paths=['src/lib/db/migrations','image-wrap-cli','image-crag']
+            paths=['src/lib/db/migrations','image-wrap-cli']
             for sub in paths:
                 old=self.directory/'old'/sub;new=self.directory/'new'/sub
                 old.parent.mkdir(parents=True,exist_ok=True);new.parent.mkdir(parents=True,exist_ok=True)
@@ -356,7 +356,7 @@ console.log(JSON.stringify({result:'PASS',versions:db.prepare('SELECT version FR
         self.original=self.snapshot();atomic_json(self.directory/'original.json',self.original)
         self.others={r['Names']:r['ID'] for r in (json.loads(line) for line in command(['docker','ps','-a','--no-trunc','--format','json']).splitlines()) if r['Names']!=self.container}
         # 默认入口会覆盖这些程序文件；它们在停机前保存。
-        for sub in ['bin','share/wrap-cli','share/crag','src/config']:
+        for sub in ['bin','share/wrap-cli','src/config']:
             source=self.root/sub
             if source.exists():shutil.copytree(source,backup/'static'/sub,symlinks=True)
         for i,file in enumerate(self.files):shutil.copy2(file,backup/('compose-'+str(i)))
@@ -450,7 +450,7 @@ console.log(JSON.stringify({result:'PASS',versions:db.prepare('SELECT version FR
             self.database_compatibility(rollback=True)
             backup=self.directory/'backup'
             if (backup/'.env').exists():atomic_bytes(self.root/'.env',(backup/'.env').read_bytes())
-            for sub in ['bin','share/wrap-cli','share/crag','src/config']:
+            for sub in ['bin','share/wrap-cli','src/config']:
                 source=backup/'static'/sub
                 if source.exists():
                     target=self.root/sub

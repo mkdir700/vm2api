@@ -3,7 +3,7 @@
 ## 适用范围
 
 本流程适用于本机 Linux Docker Claude 槽位。
-管理员可在 cli-node、CRAG v2 与 Hermit 之间切换。
+管理员可在 默认内核与 Hermit 之间切换。
 本流程覆盖进入 Hermit、更新 Hermit 版本及从 Hermit 切回原生内核。
 原生内核之间的切换继续使用原有入口。
 远程槽位、KVM 槽位和 Codex 槽位不能使用本流程。
@@ -178,8 +178,6 @@ HTTP 响应结束后仍有外部工具等待时，系统会拒绝切换。
 ```
 
 切回 cli-node 时，使用 `{"action":"apply","target":{"dataplane":"wrap"}}`。
-切到 CRAG v2 时，使用 `{"action":"apply","target":{"dataplane":"crag"}}`。
-CRAG v2 还要求安装包和有效授权。
 回滚使用 `{"action":"rollback"}`。
 确认使用 `{"action":"finalize"}`。
 

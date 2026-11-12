@@ -66,8 +66,6 @@
 | GET | `/pool/stream` | SSE。`event: seats`：`{ seats: { [vmId]: { seats_used, seats_max, seats_grace, queue_depth, conc_waiting, inflight, sessions } }, global_queue_depth, queue_max, ts }`，`sessions` 与列表的 `seat_sessions` 同形；缺席的 VM 表示空闲；每次请求开始/结束都会推。`event: proxy`：`{ proxies: { [vmId]: { id, status, enabled, blocked_reason, latency_ms, last_error, last_probe_at } }, ts }`，每次探测或代理状态变化推送。两类帧都按 250ms 节流，租户只收到自己 VM 的条目 |
 | GET | `/vms/:id` | 详情 + 调度等级 + 代理健康 + `billing.today/window_5h/window_7d/prev_window_5h/prev_window_7d/window_5h_projection/by_model/usage_stats`（`usage_stats` = 近 30 个上海自然日的按日用量 + 模型 / 入站路径排名，日界同 `billing.today`；`prev_window_*` 与 `window_5h_projection` 见下） + `account.runtime_window` |
 | PATCH | `/vms/:id` | 热改并发/RPM、OpenAI 会话上限、Claude 席位/配额、模型白名单、槽策略、Claude `schedule_level`、`weight`（Codex 选槽权重 1–100，`null` 回默认 1）、`active_hours`、`timezone` 或 `name`（不重启槽，不改 VM 编号）。`name` 是 1–80 字符的面板显示名，创建时的编号保持不变。`timezone` 为任意有效 IANA 名称，会钉住该槽（后续绑定不覆盖）；`timezone_follow_proxy: true` 重新跟随已绑代理的出口时区 |
-| GET | `/vms/:id/crag-license` | 仅 admin/master，沿用 VM 属主校验。返回 `{license,machine_code}`。在线授权显式初始化/复用本槽设备机器码；离线 `CRAGU1` 通用码不需机器码、不绑本槽，`machine_code` 可为空。`license` 含签名期限、绝对 UTC 生效/到期、公开状态及 `kind: 'online' \| 'offline'`，不回注册码/私钥/解密 key。需要已安装签名加密 native V2 包及 Linux 私有 run 映射 |
-| POST | `/vms/:id/crag-license` | `{registration_code}`。支持离线 `CRAGU1` 通用码（不绑 VM/machine-id/设备）与在线设备绑定码；响应 `license.kind` 区分 `offline` / `online`。在线码先验证 Ed25519 签名、VM/machine-id/设备绑定、封装 key 和当前有效期，再原子替换。`1m`/`6m`/`1y` 从签发时间按自然月计；客户不能请求任意延期。错误码保持 `license_required` / `license_invalid` / `license_binding_mismatch` / `license_not_yet_valid` / `license_expired` / `license_unconfigured`，失败不破坏已有有效授权；激活本身不隐式切换内核 |
 | POST | `/vms/pool-policy` | 批量槽策略。`{ ids: [...] }` 或 `{ all: true }`，可带 `weight`(1–100) / `schedule_level`(1–10 或 `"auto"`) / `max_concurrency`(1–256) / `max_rpm`(0–1000000) / `max_sessions`(0–256)；`null`（或 `""`）取消钉住：weight 回默认 1、schedule_level 回 auto、上限回 tier / 全局默认，语义与逐槽 PATCH 一致。只写 `vms/*.json`、不重建槽详情，100+ 槽一次调用即可（逐个 `PATCH /vms/:id` 每槽约 4s，并发下发会压住控制面）。返回 `{ updated, missing, failed, items: [{ id, weight, schedule_level, max_concurrency, concurrency_override, max_rpm, max_sessions }] }` |
 | POST | `/vms/:id/probe` | 槽 SOCKS5 探官方 `/usage` + Fable（Pro 跳过 Fable） |
 | POST | `/vms/:id/exit-probe` | 测这个槽真实出口的 IP 与地理（仅 admin）：SOCKS5 槽经代理查；本地代理槽查它所在 VPS 那条本地代理并刷新该行地理。未绑定 502 `proxy_required` |
@@ -87,9 +85,9 @@
 | GET/PUT | `/vms/:id/seed-settings` | 播种；面板默认锁定，解锁后改、播种前确认。`settings.json` 可编辑 env（经 `extra_env`）与 `theme`；`autoUpdates`/`grove_enabled` 与 TZ/LANG/LC_ALL、telemetry/bedrock/vertex 等契约 env 只读展示，TZ/LANG 经 PUT `timezone` / `timezone_follow_proxy` / `locale` 写入槽位后再播种，不经 `extra_env`；`claude_setting` 可编辑。`GET ?debug=1` 额外返回 `telemetry_log`（最近 40 行脱敏上传审计，默认不带） |
 | POST | `/vms/:id/collect-identity` | guest 采集（locale/tz/`guest_machine_id`） |
 | POST | `/vms/:id/reload` | 重载该槽 worker |
-| GET | `/kernels` | 仅 admin/master。返回两种产品 `kernels`（`cli-node` 默认免费、`crag` 签名加密 V2）、真实本地版本/就绪状态、按 VM 的公开 `licenses` 与 `installations`。读取不会初始化设备身份，不返回机器码、注册码或私钥 |
-| POST | `/kernels/pull` | `{ kernel: "cli-node" \| "crag", tag?: "vX.Y.Z" }`，省略 tag 拉最新正式 Release。只更新安装包缓存，不安装、不停 VM。默认内核仅下载 `kin-kernel` 与 `cli-node`；CRAG 要求 `crag-v2-licensed-amd64.tar.gz`，按本机可信发行公钥校验签名、密文与成员。缺失返回 `crag_v2_asset_missing`，不退回 legacy ELF |
-| POST | `/kernels/install` | `{ targets: [{ id, kernel: "cli-node" \| "crag" }] }`，仅处理非空显式范围；未知/重复/越权/Codex 目标在任何停用前拒绝。每槽先检查包与授权，再停服务、禁用自动重启、安装并保存选择；完成后保持 stopped，不自动启动。返回 `{ ok,total,ok_count,failed_count,items:[{id,kernel,ok,stopped,version?,code?,error?}] }`，逐项失败不伪装成全局成功 |
+| GET | `/kernels` | 仅 admin/master。返回默认内核的版本、就绪状态和按 VM 的 `installations`。Hermit 包使用 `/kernel-packages` 接口 |
+| POST | `/kernels/pull` | `{ kernel: "cli-node", tag?: "vX.Y.Z" }`。只拉取并校验默认内核的 `kin-kernel` 与 `cli-node`，不停止或安装 VM |
+| POST | `/kernels/install` | `{ targets: [{ id, kernel: "cli-node" \| "hermit", manifest_sha256? }] }`。先验证完整目标范围。每槽检查包，再停止服务并安装。完成后保持 stopped。Hermit 使用当前包；涉及 Hermit 或已移除内核的迁移使用容器切换事务。返回逐槽结果 |
 | GET | `/wrap-cli` | kernel / wrap 样本 inspect：`ok, dir, kernel_bin, glibc_shim, wrapper, meta, kernel`。`kernel.source` 为 `configured`（仓内 `KIN_KERNEL_BIN` / `bin/kin-kernel`）或 `sample` |
 | POST | `/wrap-cli/make` | `{ glibc_vm? }` 重整 share/wrap-cli；叠上仓内最新 kernel；可从指定槽拷 glibc shim |
 | POST | `/wrap-cli/kernel` | 原始 `application/octet-stream` linux amd64 ELF。替换仓内 `bin/kin-kernel` 与 `share/wrap-cli/kin-kernel.bin`。不自动同步槽位 |
@@ -115,9 +113,9 @@
 | GET | `/models` | 策略目录（不 hop worker） |
 | GET | `/oauth` | 全槽脱敏 credential |
 
-`/wrap` 仅展示 cli-node 默认内核与需注册码授权的 CRAG。每台 VM 可独立选择后安装；「全部重装并停用」先展示明确范围，再按各 VM 选择逐槽处理并显示结果。CRAG 可直接在行内打开授权管理；VM 详情「运维 → 推理内核」的既有授权入口仍可用。激活授权与安装是两个独立动作，不隐式开机。
+`/wrap` 提供默认内核和 Hermit。每台 VM 独立选择后安装。批量操作先展示明确范围，再逐槽处理。页面显示当前实际内核；不支持的旧选择不会显示为默认内核。
 
-拉取与安装分离：拉取失败保留旧包，安装包就绪不代表服务已启动。默认内核不依赖 cc-node 或 legacy CRAG。注册码无效、过期或包未就绪时不停止该槽；停用后的复制/配置失败仍保持 stopped 并返回 `stopped:true`。凭据、授权设备密钥、指纹和工作数据保留；后续需显式启动。若停止状态写入失败，保留本次安装器的安全暂停，修复存储后成功重装、启动或恢复服务才清除；不会清除无关维护暂停。
+拉取与安装分离。拉取失败保留旧包。包就绪不代表服务已启动。包检查失败时不停止该槽。停用后的复制或配置失败保持 stopped 并返回 `stopped:true`。安装保留凭据、指纹和工作数据。停止状态写入失败时保留安装器的安全暂停。
 
 该重装入口当前仅支持本机 Linux Docker Claude 槽；远端、KVM 和 Codex 目标明确拒绝且不停止服务，不伪装成已安装。
 
@@ -597,3 +595,5 @@ sessionKey / 授权码导入必须走该槽 SOCKS5。
 ## 管理口（master）
 
 常用：`GET/PUT /admin/routing`、`GET /admin/vms`、`POST /admin/vms/probe-all`、`GET /admin/usage/summary`、`GET /admin/vm/oauth`、`POST /admin/vm/oauth/refresh`、`GET/PUT/DELETE /admin/intercept/rules`。`POST /admin/models/refresh` 只读本地策略目录、回完整目录，不 hop 槽位；`GET /v1/models` 同样不 hop，但按密钥 `group_type` 和 `allowed_models` 过滤。`GET/POST /admin/vm/claude-code/*` 返回 410。
+
+Crag 已移除。旧内核标识、旧版本字段及其历史别名不能用于新选择。旧配置不会自动回退。请明确安装默认内核或 Hermit。详见[移除契约](operations/crag-removal.md)。

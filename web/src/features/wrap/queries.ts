@@ -1,14 +1,12 @@
 import { queryOptions } from '@tanstack/react-query'
-import type { CragLicenseStatus } from '@/types/panel-vm'
 import { api } from '@/lib/api'
 
-export type ReleaseKernelId = 'cli-node' | 'crag'
+export type ReleaseKernelId = 'cli-node'
 export type KernelId = ReleaseKernelId | 'hermit'
 
 export type KernelProduct = {
   id: ReleaseKernelId
   name: string
-  paid: boolean
   ready: boolean
   version: string | null
   updated_at: string | null
@@ -24,7 +22,6 @@ export type KernelInstallation = {
 
 export type KernelCatalog = {
   kernels: KernelProduct[]
-  licenses: Record<string, CragLicenseStatus>
   installations?: Record<string, KernelInstallation>
 }
 

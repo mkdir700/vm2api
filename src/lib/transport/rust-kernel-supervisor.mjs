@@ -17,7 +17,6 @@ import {
 } from './rust-kernel-client.mjs'
 import { maxRequestBytes, streamIdleTimeoutMs } from '../core/config.mjs'
 import { profileForPreset } from '../identity/official-profiles.mjs'
-import { resolveWorkstationProfile } from '../identity/workstation-profile.mjs'
 import { cacheTtlFromRouting, normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
 import { thinkingDisplayMode } from '../protocol/thinking.mjs'
 import { getModelPolicy } from '../protocol/model-policy.mjs'
@@ -31,9 +30,9 @@ import {
   KERNEL_NATIVE_SLOT_COUNT,
   normalizeSessionIdleTtlSeconds,
   resolveCliSystemLayout,
-  resolveCragKernelVersion,
   resolveKernelDataplane,
   resolveSlotPersonaPreset,
+  kernelDataplaneStatus,
 } from '../vm/slot-engine.mjs'
 import {
   ensureOfficialCredentialLink,
@@ -45,9 +44,7 @@ import {
 } from '../oauth/oauth-credentials.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
 import { buildNativeTelemetry } from '../vm/native-telemetry.mjs'
-import { defaultSeedPolicy, isTelemetryEnabled } from '../protocol/seed-policy.mjs'
 import { RETIRE_LEGACY_TELEMETRY } from '../vm/slot-process-status.mjs'
-import { checkCragLicense } from '../vm/crag-license.mjs'
 import { workerPaths } from './go-worker-client.mjs'
 
 /** The native host is authenticated separately from account scheduling readiness. */
@@ -150,7 +147,7 @@ export function readExistingKernelConfig(configPath) {
   }
 }
 
-/** Legacy crag and cc use cc-node; native V2 owns its own child lifecycle. */
+/** The cc compatibility path uses cc-node. */
 export function dataplaneUsesCcNode(exec) {
   const configPath = rustKernelPaths(exec).configPath
   if (!configPath) return false
@@ -158,7 +155,7 @@ export function dataplaneUsesCcNode(exec) {
   const plane = String(config.dataplane || '')
     .trim()
     .toLowerCase()
-  return (plane === 'crag' && config.crag_kernel_version !== 'v2') || plane === 'cc' || plane === 'cc-node'
+  return plane === 'cc' || plane === 'cc-node'
 }
 function projectRootFromExec(exec = {}) {
   if (exec?.projectRoot) return exec.projectRoot
@@ -199,15 +196,7 @@ export function stopRustKernel(exec = {}) {
     execArgv(exec, [
       'sh',
       '-lc',
-      [
-        'for p in $(pidof crag-v2 2>/dev/null); do',
-        '  case "$(tr "\\000" " " < "/proc/$p/cmdline" 2>/dev/null)" in',
-        '    *" --gateway-worker "*) kill -TERM "$p" 2>/dev/null || true ;;',
-        '  esac',
-        'done',
-        'kill $(pidof kin-kernel) >/dev/null 2>&1 || true',
-        'kill $(pidof bun) >/dev/null 2>&1 || true',
-      ].join('\n'),
+      ['kill $(pidof kin-kernel) >/dev/null 2>&1 || true', 'kill $(pidof bun) >/dev/null 2>&1 || true'].join('\n'),
     ]),
     { encoding: 'utf8', timeout: 5000, ...(env ? { env } : {}) },
   )
@@ -271,18 +260,8 @@ async function waitForHealth(exec, timeoutMs, allowMissingCredential = false) {
 async function kernelProcessAlive(exec, runDockerExec) {
   const container = slotContainerName(exec)
   if (!container) return false
-  const config = readExistingKernelConfig(rustKernelPaths(exec).configPath)
   const probe =
-    config.dataplane === 'crag' && config.crag_kernel_version === 'v2'
-      ? [
-          'for p in $(pidof crag-v2 2>/dev/null); do',
-          '  case "$(tr "\\000" " " < "/proc/$p/cmdline" 2>/dev/null)" in',
-          '    *" --gateway-worker "*) exit 0 ;;',
-          '  esac',
-          'done',
-          'exit 1',
-        ].join('\n')
-      : 'pgrep -f /home/kincli/.kin/kin-kernel.bin >/dev/null || pgrep -f /home/kincli/.kin/kin-kernel >/dev/null || pidof kin-kernel >/dev/null'
+    'pgrep -f /home/kincli/.kin/kin-kernel.bin >/dev/null || pgrep -f /home/kincli/.kin/kin-kernel >/dev/null || pidof kin-kernel >/dev/null'
   const result = await runDockerExec(execArgv(exec, ['sh', '-c', probe]), { timeoutMs: 1500 })
   return result?.ok === true
 }
@@ -368,11 +347,8 @@ async function killWrapDataplane(exec, runDockerExec) {
         'for d in /proc/[0-9]*; do',
         '  exe=$(readlink "$d/exe" 2>/dev/null || true)',
         '  case "$exe" in */qemu-*) exe=$(tr "\\000" "\\n" < "$d/cmdline" 2>/dev/null | sed -n 2p) ;; esac',
-        '  case "$exe" in */.kin/crag-v2/crag-v2)',
-        '    case "$(tr "\\000" " " < "$d/cmdline" 2>/dev/null)" in *" --internal-execution-guard "*) continue ;; esac ;;',
-        '  esac',
         '  case "$exe" in',
-        '    */.kin/crag-v2/*|*/.kin/cli-node*|*/.kin/kin-kernel*|*/.kin/glibc239/ld-linux*|*/.kin/glibc239/arm64/ld-linux*|/opt/kin/cli-node*|/opt/kin/kin-kernel*|/opt/kin/glibc239/ld-linux*|/opt/kin/glibc239/arm64/ld-linux*)',
+        '    */.kin/cli-node*|*/.kin/kin-kernel*|*/.kin/glibc239/ld-linux*|*/.kin/glibc239/arm64/ld-linux*|/opt/kin/cli-node*|/opt/kin/kin-kernel*|/opt/kin/glibc239/ld-linux*|/opt/kin/glibc239/arm64/ld-linux*)',
         '      kill -KILL "${d#/proc/}" 2>/dev/null || true',
         '  esac',
         'done',
@@ -508,14 +484,6 @@ function kernelJobsRunning(exec, health) {
   }
   if (!rustKernelProcessUp(health)) return 0
   if (health.recovering === true) return 1
-  if (health.runtime_variant === 'crag-v2') {
-    return (
-      Math.max(
-        Number(health.active || 0) + Number(health.waiting || 0),
-        Array.isArray(health.pids) ? health.pids.length : 0,
-      ) + Number(health.queued || 0)
-    )
-  }
   const ready = Number(health.ready_slots)
   if (!Number.isFinite(ready)) return 0
   const total = Number(readExistingKernelConfig(rustKernelPaths(exec).configPath).slots_per_worker) || WRAP_SLOT_MAX
@@ -613,7 +581,7 @@ export async function recycleWrapIfIdle(
 async function containerKernelIsPid1(container, runDockerExec, vm) {
   if (isKvmRuntime(vm)) return false
   const info = await runDockerExec(['inspect', '--format', '{{.Path}}', container], { timeoutMs: 3000 })
-  return /kin-kernel|(?:^|\/)crag-v2$/.test(String(info?.stdout || '').trim())
+  return /kin-kernel/.test(String(info?.stdout || '').trim())
 }
 function bootWaitMs(timeoutMs, { pid1Kernel, wedged }) {
   if (!pid1Kernel && !wedged) return 0
@@ -689,10 +657,10 @@ async function startRustKernel(
   exec,
   { timeoutMs, healthTimeoutMs = 800, control, runDockerExec, force = false, allowMissingCredential = false },
 ) {
-  const licensed = checkCragLicense(projectRootFromExec(exec), exec?.vm, {
+  const supported = kernelDataplaneStatus(exec?.vm, {
     inference: { dataplane: readExistingKernelConfig(rustKernelPaths(exec).configPath).dataplane },
   })
-  if (!licensed.ok) return { ...licensed, reason: licensed.code }
+  if (!supported.ok) return { ...supported, reason: supported.code }
   if (exec?.homeDir) {
     const ids = slotUidGidFromHomeDir(exec.homeDir)
     ensureOfficialCredentialLink(exec.homeDir, ids || {})
@@ -801,55 +769,6 @@ function kernelConfigText(config) {
   return JSON.stringify(config, null, 2) + '\n'
 }
 
-function acceptNativeClaudeSetup(homeDir, workDir) {
-  // The TUI refuses login, theme, and folder-trust screens. The credential file is
-  // separate; these flags are what Claude reads before it will take a prompt.
-  for (const file of [path.join(homeDir, '.claude', '.claude.json'), path.join(homeDir, '.claude.json')]) {
-    let raw
-    try {
-      raw = fs.readFileSync(file, 'utf8')
-    } catch {
-      continue
-    }
-    let doc
-    try {
-      doc = JSON.parse(raw)
-    } catch {
-      continue
-    }
-    if (!doc || typeof doc !== 'object' || Array.isArray(doc)) continue
-    let changed = false
-    if (doc.hasCompletedOnboarding !== true) {
-      doc.hasCompletedOnboarding = true
-      changed = true
-    }
-    if (typeof doc.theme !== 'string' || !doc.theme) {
-      doc.theme = 'dark'
-      changed = true
-    }
-    if (!doc.projects || typeof doc.projects !== 'object' || Array.isArray(doc.projects)) {
-      doc.projects = {}
-      changed = true
-    }
-    for (const folder of [workDir, '/home/kincli']) {
-      const current = doc.projects[folder]
-      const project = current && typeof current === 'object' && !Array.isArray(current) ? current : {}
-      if (project.hasTrustDialogAccepted === true) continue
-      project.hasTrustDialogAccepted = true
-      doc.projects[folder] = project
-      changed = true
-    }
-    if (!changed) continue
-    const st = fs.statSync(file)
-    const tmp = `${file}.${process.pid}.tmp`
-    fs.writeFileSync(tmp, `${JSON.stringify(doc)}\n`, { mode: st.mode & 0o777 })
-    try {
-      fs.chownSync(tmp, st.uid, st.gid)
-    } catch {}
-    fs.renameSync(tmp, file)
-  }
-}
-
 function writeKernelJsonAtomically(configPath, config, vm) {
   const body = kernelConfigText(config)
   let same = false
@@ -869,6 +788,8 @@ export function writeKernelConfig(
   vm,
   { token, proxyUrl, proxyRequired, officialCcInference, timezone, routing, publish = true } = {},
 ) {
+  const supported = kernelDataplaneStatus(vm, routing)
+  if (!supported.ok) throw Object.assign(new Error(supported.error), { code: supported.code })
   if (resolveKernelDataplane(vm, routing || {}) === 'hermit')
     return writeHermitKernelConfig(projectRoot, vm, { routing })
   // Callers pass partial vm snapshots; persisted placement owns the guest run mount.
@@ -971,7 +892,6 @@ export function writeKernelConfig(
     test_endpoints: testEndpoints,
     provider: 'local_cli',
     dataplane,
-    ...(dataplane === 'crag' ? { license_dir: '/run/kin/crag-license' } : {}),
     claude_bin: claudeBin,
     slots_per_worker: wrapSlotCount(vm, routing || {}),
     persona_preset: resolveSlotPersonaPreset(vm, routing || {}),
@@ -987,46 +907,6 @@ export function writeKernelConfig(
     model_effort: modelEffort,
     ...(!host.native && !isCodexVm(record) ? { telemetry: buildNativeTelemetry(record, projectRoot, routing) } : {}),
   }
-  if (
-    dataplane === 'crag' &&
-    resolveCragKernelVersion({ ...record, ...vm }, routing || {}) === 'v2' &&
-    !String(record?.node_id || '').trim() &&
-    !isKvmRuntime(record)
-  ) {
-    config.crag_kernel_version = 'v2'
-    config.runtime_variant = 'crag-v2'
-    config.claude_bin = '/home/kincli/.kin/crag-v2/claude-code-2.1.317/claude'
-    config.asset_dir = '/run/kin/crag-native-assets'
-    config.work_dir = '/run/kin/work'
-    const owner = runtimeFileOwner(vm)
-    for (const name of ['crag-native-assets', 'work']) {
-      const dir = path.join(runDir, name)
-      fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
-      fs.chmodSync(dir, 0o700)
-      if (privileged) fs.chownSync(dir, owner.uid, owner.gid)
-    }
-    acceptNativeClaudeSetup(homeDir, '/run/kin/work')
-    // Native Claude owns UA/billing version; never inject a legacy profile version.
-    config.cli_version = ''
-    if (config.telemetry && isTelemetryEnabled(defaultSeedPolicy(record.seed_policy || {}))) {
-      const workstation = resolveWorkstationProfile(record)
-      config.telemetry = {
-        ...config.telemetry,
-        enabled: true,
-        dmi_dir: '/etc/kin-dmi',
-        identity: {
-          enabled: true,
-          linux_kernel: workstation.linux_kernel,
-          linux_distro_id: workstation.linux_distro_id,
-          linux_distro_version: workstation.linux_distro_version,
-          shell: workstation.shell,
-          terminal: workstation.terminal,
-          package_managers: workstation.package_managers,
-        },
-      }
-    }
-  }
-
   if (tz) config.timezone = tz
   if (testEndpoints) {
     const anthropicBaseUrl = String(process.env.KIN_ANTHROPIC_BASE_URL || '').trim()
@@ -1038,7 +918,7 @@ export function writeKernelConfig(
   try {
     fs.chmodSync(configPath, privileged ? 0o600 : 0o640)
   } catch {}
-  // Legacy cli-node hot-reads settings; native V2 uses an explicit idle restart.
+  // cli-node hot-reads settings.
   if (changed && publish) host.queueSyncRun(record, path.join(projectRoot, 'vms', vm.id))
   return {
     runDir,

@@ -1,3 +1,4 @@
+import { kernelDataplaneStatus } from '../vm/slot-engine.mjs'
 /**
  * Slot lifecycle on a macOS cluster node (`platform: 'darwin'`). Same return
  * contract as remote-slot's Docker lifecycle, but nothing here touches Docker:
@@ -19,18 +20,17 @@
  *
  * Isolation is the user account: every slot on the node shares the SSH user,
  * its network and its hardware. First version: Claude slots on the node's own
- * network exit only (no SOCKS5 binding, no Codex, no crag).
+ * network exit only (no SOCKS5 binding, no Codex).
  */
 
 import path from 'node:path'
 import { ensureGuestMachineIdFile } from '../identity/workstation-fingerprint.mjs'
 import { isLocalEgressProxy } from '../vm/egress.mjs'
 import { isKvmRuntime, runtimeKind } from '../vm/runtime-kind.mjs'
-import { resolveKernelDataplane } from '../vm/slot-engine.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { displayName, normalizeTimezone, STANDARD_LOCALE, writeWorkerFiles } from '../vm/vm-runtime.mjs'
 import { describeNativePayload, ensureNativePayload, remoteNativePayloadDir } from './native-payload.mjs'
-import { clusterManager, nodeSession, placementProjectRoot, remoteSlotDir, vmNodeId } from './placement.mjs'
+import { clusterManager, nodeSession, remoteSlotDir, vmNodeId } from './placement.mjs'
 import { openSftp, readRemoteFileNoFollow, runRemote, shellQuote, writeRemoteFile } from './remote-fs.mjs'
 import { pushSlotFiles, reconcileSlotCredentials, removeRemoteSlotDir } from './remote-slot-files.mjs'
 import { ClusterError, execCollect } from './ssh-link.mjs'
@@ -73,11 +73,10 @@ export function nativeSlotPaths(root, vmId, digest) {
 /** Why `vm` cannot run on a macOS node in this version, or null. */
 export function nativeUnsupported(vm, routing) {
   const no = (code, error) => ({ ok: false, code, error })
+  const supported = kernelDataplaneStatus(vm, routing)
+  if (!supported.ok) return supported
   if (isCodexVm(vm)) return no('native_codex_unsupported', 'macOS 原生节点暂不支持 Codex 槽位')
   if (isKvmRuntime(vm)) return no('native_kvm_unsupported', 'macOS 原生节点不运行 KVM 槽位')
-  if (resolveKernelDataplane(vm, routing || {}) === 'crag' || vm?.dataplane === 'crag') {
-    return no('native_crag_unsupported', 'crag 数据面暂不支持 macOS 原生节点')
-  }
   if (!isLocalEgressProxy(vm?.proxy)) {
     return no('native_proxy_unsupported', 'macOS 原生节点目前只支持本机网络出口，请解除 SOCKS5 代理绑定')
   }

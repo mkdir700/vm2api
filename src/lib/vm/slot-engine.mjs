@@ -19,12 +19,10 @@ import { isCodexVm } from './vm-kind.mjs'
 export const INFERENCE_ENGINES = Object.freeze(['rust'])
 export const SLOT_PERSONA_PRESETS = Object.freeze(['official', 'official_full', 'zero', OFFICIAL_303_PRESET])
 export const OFFICIAL_CC_INFERENCES = Object.freeze(['http', 'cli-hop'])
-export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'cc', 'crag', 'hermit'])
-export const CRAG_KERNEL_VERSIONS = Object.freeze(['legacy', 'v2'])
+export const KERNEL_DATAPLANES = Object.freeze(['wrap', 'cc', 'hermit'])
 
 export const CONTAINER_CLI_NODE_BIN = '/home/kincli/.kin/cli-node'
 export const CONTAINER_CC_NODE_BIN = '/home/kincli/.kin/cc-node'
-export const CONTAINER_CRAG_CLAUDE_BIN = CONTAINER_CC_NODE_BIN
 // Cluster-node slots run the self-contained image: binaries live in the image,
 // not in the bind-mounted home (see cluster/slot-image.mjs).
 export const REMOTE_KIN_DIR = '/opt/kin'
@@ -133,7 +131,6 @@ export function normalizeInferenceConfig(raw = {}) {
     session_slots: normalizeSessionSlots(raw.session_slots),
     session_idle_ttl_seconds: normalizeSessionIdleTtlSeconds(raw.session_idle_ttl_seconds),
     dataplane: normalizeKernelDataplane(raw.dataplane),
-    crag_kernel_version: normalizeCragKernelVersion(raw.crag_kernel_version) || 'legacy',
   }
 }
 
@@ -157,10 +154,8 @@ export function normalizeKernelDataplane(value, { inherit = false } = {}) {
   }
   if (raw === 'cc' || raw === 'cc-node') return 'cc'
   if (raw === 'hermit') return 'hermit'
-  if (raw === 'crag' || raw === 'official-cli' || raw === 'official-cc' || raw === 'claude-code') {
-    return 'crag'
-  }
-  return inherit ? '' : 'wrap'
+  // Preserve unsupported selections so old configuration cannot silently change kernels.
+  return raw
 }
 
 export function resolveKernelDataplane(vm, routing = {}) {
@@ -170,35 +165,15 @@ export function resolveKernelDataplane(vm, routing = {}) {
   return normalizeKernelDataplane(routing?.inference?.dataplane)
 }
 
-/** Public ids are `crag-legacy` and `crag-v2`. Omitted stays legacy; a VM pin beats routing. */
-export function normalizeCragKernelVersion(value, { inherit = false } = {}) {
-  const raw = String(value ?? '')
-    .trim()
-    .toLowerCase()
-    .replaceAll('_', '-')
-  if (!raw || raw === 'inherit' || raw === 'global' || raw === 'default' || raw === 'auto') {
-    return inherit ? '' : 'legacy'
+export function kernelDataplaneStatus(vm, routing = {}) {
+  if (isCodexVm(vm)) return { ok: true }
+  const dataplane = resolveKernelDataplane(vm, routing)
+  if (KERNEL_DATAPLANES.includes(dataplane)) return { ok: true }
+  return {
+    ok: false,
+    code: 'kernel_unsupported',
+    error: `内核 ${dataplane} 已不受支持，请明确安装默认内核或 Hermit`,
   }
-  if (raw === 'legacy' || raw === 'crag-legacy' || raw === 'elf') return 'legacy'
-  if (raw === 'v2' || raw === 'crag-v2') return 'v2'
-  return null
-}
-
-export function resolveCragKernelVersion(vm, routing = {}) {
-  if (isCodexVm(vm)) return null
-  const fromVm = normalizeCragKernelVersion(vm?.crag_kernel_version, { inherit: true })
-  if (fromVm) return fromVm
-  const fromRouting = normalizeCragKernelVersion(routing?.inference?.crag_kernel_version, { inherit: true })
-  if (fromRouting) return fromRouting
-  return 'legacy'
-}
-
-export function parseCragKernelVersionPatch(value) {
-  if (value == null || value === '') return { ok: true, value: '' }
-  const parsed = normalizeCragKernelVersion(value, { inherit: true })
-  if (parsed == null) return { ok: false, error: 'crag_kernel_version must be legacy or v2' }
-  if (!parsed) return { ok: true, value: '' }
-  return { ok: true, value: parsed }
 }
 
 export function parseKernelDataplanePatch(value) {
@@ -206,7 +181,7 @@ export function parseKernelDataplanePatch(value) {
   const parsed = normalizeKernelDataplane(value, { inherit: true })
   if (!parsed) return { ok: true, value: '' }
   if (!KERNEL_DATAPLANES.includes(parsed)) {
-    return { ok: false, error: 'dataplane must be wrap, cc, crag, or hermit' }
+    return { ok: false, error: 'dataplane 必须是 wrap、cc 或 hermit' }
   }
   return { ok: true, value: parsed }
 }
@@ -318,9 +293,10 @@ export function parseSlotEnginePolicyPatch(body = {}) {
   const hasEngine = Object.prototype.hasOwnProperty.call(body, 'inference_engine')
   const hasPersona = Object.prototype.hasOwnProperty.call(body, 'persona_preset')
   const hasDataplane = Object.prototype.hasOwnProperty.call(body, 'dataplane')
-  const hasCragVersion = Object.prototype.hasOwnProperty.call(body, 'crag_kernel_version')
-  if (!hasEngine && !hasPersona && !hasDataplane && !hasCragVersion) {
-    return { ok: false, error: 'inference_engine, persona_preset, dataplane or crag_kernel_version required' }
+  if (Object.prototype.hasOwnProperty.call(body, 'crag_kernel_version'))
+    return { ok: false, error: 'crag_kernel_version 已移除，请选择默认内核或 Hermit' }
+  if (!hasEngine && !hasPersona && !hasDataplane) {
+    return { ok: false, error: 'inference_engine, persona_preset, dataplane required' }
   }
   const patch = {}
   if (hasEngine) {
@@ -338,11 +314,6 @@ export function parseSlotEnginePolicyPatch(body = {}) {
     if (!parsed.ok) return parsed
     if (parsed.value === 'hermit') return { ok: false, error: '请通过内核包选择接口绑定 Hermit 版本' }
     patch.dataplane = parsed.value
-  }
-  if (hasCragVersion) {
-    const parsed = parseCragKernelVersionPatch(body.crag_kernel_version)
-    if (!parsed.ok) return parsed
-    patch.crag_kernel_version = parsed.value
   }
   return { ok: true, patch }
 }
@@ -408,13 +379,10 @@ export function validateInferenceRoutingPatch(body = {}) {
   if (Object.prototype.hasOwnProperty.call(body.inference, 'dataplane')) {
     const parsed = parseKernelDataplanePatch(body.inference.dataplane)
     if (!parsed.ok) errors.push(parsed.error)
-    else if (!parsed.value) errors.push('inference.dataplane 必须是 wrap、cc 或 crag')
+    else if (!parsed.value) errors.push('inference.dataplane 必须是 wrap 或 cc')
     else if (parsed.value === 'hermit') errors.push('Hermit 必须通过版本包接口绑定具体槽位')
   }
-  if (Object.prototype.hasOwnProperty.call(body.inference, 'crag_kernel_version')) {
-    const parsed = parseCragKernelVersionPatch(body.inference.crag_kernel_version)
-    if (!parsed.ok) errors.push(parsed.error)
-    else if (!parsed.value) errors.push('inference.crag_kernel_version 必须是 legacy 或 v2')
-  }
+  if (Object.prototype.hasOwnProperty.call(body.inference, 'crag_kernel_version'))
+    errors.push('crag_kernel_version 已移除')
   return errors
 }

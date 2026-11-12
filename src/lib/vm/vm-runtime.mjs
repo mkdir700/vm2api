@@ -11,7 +11,6 @@ import { execFileSync } from 'node:child_process'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
-import { isDeepStrictEqual } from 'node:util'
 import { slotHost } from './slot-host.mjs'
 import { maxRequestBytes, readRoutingConfigFile, streamIdleTimeoutMs } from '../core/config.mjs'
 import { US_TIMEZONES, validTimezone } from '../core/timezone.mjs'
@@ -19,16 +18,15 @@ import { runtimeKind, isKvmRuntime, RUNTIME_KVM } from './runtime-kind.mjs'
 import { isCodexVm } from './vm-kind.mjs'
 import { defaultSeedPolicy, isTelemetryEnabled } from '../protocol/seed-policy.mjs'
 import { kernelBinPath, writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
-import { checkCragLicense } from './crag-license.mjs'
-import { workerPaths as transportWorkerPaths } from '../transport/go-worker-client.mjs'
 import {
+  kernelDataplaneStatus,
   assertCliHopAllowed,
   resolveKernelDataplane,
   resolveSessionSlots,
-  resolveCragKernelVersion,
   resolveOfficialCcInference,
   resolveSlotPersonaPreset,
 } from './slot-engine.mjs'
+import { workerPaths as transportWorkerPaths } from '../transport/go-worker-client.mjs'
 import { profileForPreset } from '../identity/official-profiles.mjs'
 import {
   ensureSlotClaudeOwnership,
@@ -68,15 +66,6 @@ const KVM_MEMORY_OVERHEAD_MIB = 512
 const NET = process.env.KIN_VM_NETWORK || 'bridge'
 const PUBLIC_IP = process.env.PUBLIC_HOST || '166.88.96.199'
 const MODULE_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
-const CRAG_V2_SECCOMP_PATH = fileURLToPath(new URL('./crag-v2-seccomp.json', import.meta.url))
-const CRAG_V2_SECCOMP = JSON.parse(fs.readFileSync(CRAG_V2_SECCOMP_PATH, 'utf8'))
-function apparmorUserNamespaceRestricted() {
-  try {
-    return fs.readFileSync('/proc/sys/kernel/unprivileged_userns_apparmor_policy', 'utf8').trim() === '1'
-  } catch {
-    return false
-  }
-}
 
 // Root in the runner must write into the slot-uid 0700 dirs and drop qemu to the slot uid.
 export const KVM_CAPS = ['SETUID', 'SETGID', 'SETPCAP', 'CHOWN', 'FOWNER', 'DAC_OVERRIDE']
@@ -258,31 +247,7 @@ export function suspendVmRuntimeRestart(vm, { run = sh } = {}) {
   return { ok: result.ok === true, code: result.ok ? undefined : 'kernel_restart_policy_failed', error: result.stderr }
 }
 
-/** Docker cannot change seccomp or AppArmor on restart. */
-export function nativeSlotSandboxNeedsRecreate(existing, vm, routing = {}, options = {}) {
-  if (
-    !existing ||
-    isKvmRuntime(vm) ||
-    resolveKernelDataplane(vm, routing) !== 'crag' ||
-    resolveCragKernelVersion(vm, routing) !== 'v2'
-  )
-    return false
-  const opts = existing.securityOpts || []
-  const seccompOk = opts.some((option) => {
-    if (option === `seccomp=${CRAG_V2_SECCOMP_PATH}`) return true
-    if (!option.startsWith('seccomp=')) return false
-    try {
-      return isDeepStrictEqual(JSON.parse(option.slice('seccomp='.length)), CRAG_V2_SECCOMP)
-    } catch {
-      return false
-    }
-  })
-  if (!seccompOk) return true
-  const restricted = options.userNamespaceRestricted ?? apparmorUserNamespaceRestricted()
-  return (restricted && !opts.includes('apparmor=unconfined')) || existing.init !== true
-}
-
-/** Migrate existing local slots in place, including paused ones; never start or recreate them. */
+/** Migrate restart policies without starting or recreating slots. */
 export function syncLocalSlotRestartPolicies(vms, { run = sh } = {}) {
   const changed = []
   for (const vm of vms) {
@@ -516,8 +481,8 @@ export function slotWorkerNeedsRecreate(existing, vm, paths) {
  * KVM restarts the guest kin-kernel unit; docker restart would reboot the VM.
  */
 export async function reloadSlotWorker(vm, projectRoot, { routing } = {}) {
-  const licensed = checkCragLicense(projectRoot, vm, resolveSlotRouting(projectRoot, routing))
-  if (!licensed.ok) return licensed
+  const supported = kernelDataplaneStatus(vm, resolveSlotRouting(projectRoot, routing))
+  if (!supported.ok) return supported
   if (!vm?.id) return { ok: false, error: 'vm required' }
   // Outside the cached-config fallback: invalid quotas must never reach restart.
   if (!isKvmRuntime(vm)) slotDockerCpus(vm)
@@ -1026,8 +991,8 @@ export async function startVmRuntime(
 ) {
   if (vm.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(vm.kernel_transition.state))
     return { ok: false, code: 'kernel_transition_pending', error: '内核切换尚未完成，请先回滚' }
-  const licensed = checkCragLicense(projectRoot, vm, resolveSlotRouting(projectRoot, routing))
-  if (!licensed.ok) return licensed
+  const supported = kernelDataplaneStatus(vm, resolveSlotRouting(projectRoot, routing))
+  if (!supported.ok) return supported
   if (!isKvmRuntime(vm)) slotDockerCpus(vm) // reject corrupt persisted quotas before any lifecycle changes
   if (isKvmRuntime(vm) && accelOpt !== 'kvm' && accelOpt !== 'tcg') {
     const recorded = vm.runtime?.accel
@@ -1084,8 +1049,7 @@ export async function startVmRuntime(
     recreate ||
     (!hermit && existing?.running && !slotKernelAlive(existing, paths, vm)) ||
     roleMismatch ||
-    codexContainerStale(existing, vm) ||
-    (!hermit && nativeSlotSandboxNeedsRecreate(existing, vm, resolvedRouting))
+    codexContainerStale(existing, vm)
 
   // Node restart / 开机 must not bounce a live slot with a healthy worker.
   if (existing?.running && !replace) {
@@ -1102,20 +1066,13 @@ export async function startVmRuntime(
   }
   const codex = isCodexVm(vm)
   if (!codex && !hermit) {
-    const dataplane = resolveKernelDataplane(vm, resolvedRouting) || 'wrap'
-
     try {
-      const laid = materializeResolvedKernel(projectRoot, vm, {
+      materializeResolvedKernel(projectRoot, vm, {
         uid: runtimeUidNum(vm),
         gid: Number(GID),
         routing: resolvedRouting,
       })
-      if (dataplane === 'crag' && laid?.ok === false) return laid
-    } catch (error) {
-      if (dataplane === 'crag') {
-        return { ok: false, code: 'dataplane_materialize_failed', error: String(error?.message || error) }
-      }
-    }
+    } catch {}
   }
   const wrapKernel = path.join(home, '.kin', 'kin-kernel')
   const kernelBin = kernelBinPath()
@@ -1255,18 +1212,6 @@ export async function startVmRuntime(
       '/tmp:rw,noexec,nosuid,size=32m',
       '--security-opt',
       'no-new-privileges',
-      ...(resolveKernelDataplane(vm, resolvedRouting) === 'crag' &&
-      resolveCragKernelVersion(vm, resolvedRouting) === 'v2'
-        ? ['--init']
-        : []),
-      ...(resolveKernelDataplane(vm, resolvedRouting) === 'crag' &&
-      resolveCragKernelVersion(vm, resolvedRouting) === 'v2'
-        ? [
-            '--security-opt',
-            `seccomp=${CRAG_V2_SECCOMP_PATH}`,
-            ...(apparmorUserNamespaceRestricted() ? ['--security-opt', 'apparmor=unconfined'] : []),
-          ]
-        : []),
       '--cap-drop',
       'ALL',
       '--label',

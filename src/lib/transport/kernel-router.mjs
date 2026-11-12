@@ -7,8 +7,7 @@ import { clientCancelledResult, isClientCancelledResult } from '../core/errors.m
 import { ensureWorkerCredential } from './go-worker-client.mjs'
 import { ensureOfficialCredentialLink, slotUidGidFromHomeDir } from '../oauth/oauth-credentials.mjs'
 import { slotHost } from '../vm/slot-host.mjs'
-import path from 'node:path'
-import { checkCragLicense, cragLicenseDeniedResult } from '../vm/crag-license.mjs'
+import { kernelDataplaneStatus } from '../vm/slot-engine.mjs'
 import {
   streamRustKernel,
   callRustKernel,
@@ -229,9 +228,15 @@ async function prepareRust(exec, { ensure, routing, slotWaitMs } = {}) {
 
 async function runHop({ mode, opts }) {
   const routing = opts.routing || {}
-  const projectRoot = opts.exec?.projectRoot || (opts.exec?.homeDir ? path.resolve(opts.exec.homeDir, '../../..') : '')
-  const licensed = checkCragLicense(projectRoot, opts.exec?.vm, routing)
-  if (!licensed.ok) return cragLicenseDeniedResult(licensed)
+  const supported = kernelDataplaneStatus(opts.exec?.vm, routing)
+  if (!supported.ok)
+    return {
+      ...supported,
+      status: 409,
+      committed: false,
+      terminalState: 'rejected',
+      body: { type: 'error', error: { type: 'invalid_request_error', code: supported.code, message: supported.error } },
+    }
   const decision = resolveHopEngine(opts.exec?.vm, routing)
   let engine = 'rust'
   let reason = decision.reason

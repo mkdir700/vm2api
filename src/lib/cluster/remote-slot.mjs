@@ -1,3 +1,4 @@
+import { kernelDataplaneStatus, REMOTE_KERNEL_ENTRY } from '../vm/slot-engine.mjs'
 /**
  * Slot lifecycle for VMs placed on a cluster node (`vm.node_id`). Same shape
  * and return contract as vm-runtime's startVmRuntime / stopVmRuntime /
@@ -28,13 +29,12 @@ import {
   proxyKey,
 } from '../vm/egress.mjs'
 import { OS_CATALOG } from '../vm/os-catalog.mjs'
-import { REMOTE_KERNEL_ENTRY, resolveKernelDataplane } from '../vm/slot-engine.mjs'
 import { isCodexVm } from '../vm/vm-kind.mjs'
 import { proxyBlockedReason } from '../vm/proxy-policy.mjs'
 import { isKvmRuntime, runtimeKind } from '../vm/runtime-kind.mjs'
 import { slotMemory, slotDockerCpus, memoryMiB, normalizeVmConfig } from '../vm/machine-spec.mjs'
 import { dockerEnvMap, ensureKvmMachineRecord, kvmEnvMapIncomplete, kvmMachineFields } from '../vm/kvm-machine.mjs'
-import { slotExecArgv, slotExecCmd } from '../vm/slot-exec.mjs'
+import { slotExecArgv } from '../vm/slot-exec.mjs'
 import {
   CODEX_SLOT_ROLE,
   containerName,
@@ -49,7 +49,6 @@ import {
   containerAction,
   createContainerRaw,
   createNetwork,
-  execDetached,
   imagePresent,
   inspectContainerOrNull,
   inspectNetworkOrNull,
@@ -982,14 +981,9 @@ export async function refreshClusterSlotPayloads(
   for (const vm of vms || []) {
     // Codex inference is the host Codex kernel; this update targets Claude CLI payloads.
     if (isCodexVm(vm)) continue
-    if (resolveKernelDataplane(vm, routing || {}) === 'crag' || vm?.dataplane === 'crag') {
-      items.push({
-        id: vm.id,
-        ok: false,
-        code: 'remote_unsupported',
-        error: 'crag 数据面暂不支持集群节点',
-        kernel_changed: false,
-      })
+    const supported = kernelDataplaneStatus(vm, routing)
+    if (!supported.ok) {
+      items.push({ id: vm.id, ...supported, kernel_changed: false })
       continue
     }
     const nodeId = vmNodeId(vm)
@@ -1017,9 +1011,8 @@ export async function refreshClusterSlotPayloads(
 }
 
 async function prepare(vm, projectRoot, routing, { pinnedImageId = null } = {}) {
-  if (resolveKernelDataplane(vm, routing || {}) === 'crag') {
-    return { fail: { ok: false, code: 'remote_unsupported', error: 'crag 数据面暂不支持集群节点' } }
-  }
+  const supported = kernelDataplaneStatus(vm, routing)
+  if (!supported.ok) return { fail: supported }
   vm.kernel = vm.kernel && OS_CATALOG[vm.kernel] ? vm.kernel : 'ubuntu-24.04'
   vm.timezone = normalizeTimezone(vm.timezone)
   vm.locale = vm.locale || STANDARD_LOCALE

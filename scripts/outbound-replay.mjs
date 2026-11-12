@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * official_303 outbound replay: real inbound fixtures (crag replay schema v1) through the
+ * official_303 outbound replay: real inbound fixtures (inbound replay schema v1) through the
  * real chain (Node handler → kin-kernel → cli-node → capture upstream), judged on the bytes
  * cli-node finally sends. Fixtures, wires and verdicts are private; `summary` prints counts,
  * rule ids and paths only.

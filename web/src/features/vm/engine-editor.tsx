@@ -1,21 +1,16 @@
-import { useMemo, useState, type ReactNode } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { useMemo, type ReactNode } from 'react'
+import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
 import type { Vm, VmKernelSnapshot } from '@/types/panel-vm'
 import { toast } from 'sonner'
-import { activateVmCragLicense, isApiError, patchVm } from '@/lib/api'
+import { patchVm } from '@/lib/api'
 import { isCodexVm } from '@/lib/vm-kind'
 import { Button } from '@/components/ui/button'
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { dashboardQueryOptions } from '@/features/overview/queries'
-import {
-  CragLicenseEditor,
-  CragLicenseSummary,
-  cragLicenseErrorMessage,
-} from '@/features/vm/crag-license-editor'
 import {
   DATAPLANE_HINT,
   HOP_TRANSPORT_LABEL,
+  dataplaneLabel,
 } from '@/features/vm/dataplane-contract'
 import {
   DEFAULT_RESOLVED_ENGINE,
@@ -24,10 +19,7 @@ import {
   normalizeInferenceEngine,
 } from '@/features/vm/engine-contract'
 import { isRemoteVm, REMOTE_UNSUPPORTED_TEXT } from '@/features/vm/placement'
-import {
-  vmCragLicenseQueryOptions,
-  vmQueryOptions,
-} from '@/features/vm/queries'
+import { vmQueryOptions } from '@/features/vm/queries'
 import { useVmPerms } from '@/features/vm/vm-perms'
 
 export function VmEngineEditor({
@@ -91,18 +83,12 @@ export function VmEngineEditor({
         />
       </div>
       <p className='mt-3 text-xs leading-relaxed text-muted-foreground'>
-        运输固定 {HOP_TRANSPORT_LABEL}。{DATAPLANE_HINT} 本槽可在 cli-node 与
-        CRAG v2 及 Hermit 之间切换。Hermit
-        切换会重建本槽容器，并保留旧容器供回滚。切换不改凭据。舰队级 cc / crag
-        legacy 仍在{' '}
+        运输固定 {HOP_TRANSPORT_LABEL}。{DATAPLANE_HINT} 请在
         <Link to='/wrap' className='underline underline-offset-4'>
           内核页
         </Link>
-        。Go HTTP 转发不再启用。
+        安装默认内核或 Hermit。切换保留凭据。
       </p>
-      {canEdit && !isCodexVm(vm) ? (
-        <SlotKernelSwitch key={id} id={id} vm={vm} remote={remote} />
-      ) : null}
       {inherits || !canEdit ? null : (
         <Button
           className='mt-3'
@@ -123,221 +109,7 @@ export function VmEngineEditor({
 }
 
 function kernelLabel(vm: Vm) {
-  if (
-    vm.resolved_dataplane === 'crag' &&
-    vm.resolved_crag_kernel_version === 'v2'
-  )
-    return 'CRAG v2'
-  if (vm.resolved_dataplane === 'crag') return 'crag legacy'
-  if (vm.resolved_dataplane === 'hermit') return 'Hermit'
-  if (vm.resolved_dataplane === 'cc') return 'cc-node'
-  return 'cli-node'
-}
-
-function SlotKernelSwitch({
-  id,
-  vm,
-  remote,
-}: {
-  id: string
-  vm: Vm
-  remote: boolean
-}) {
-  const qc = useQueryClient()
-  const [pending, setPending] = useState<'wrap' | 'v2' | null>(null)
-  const [licenseOpen, setLicenseOpen] = useState(false)
-  const [switchAfterActivation, setSwitchAfterActivation] = useState(false)
-  const [checkingLicense, setCheckingLicense] = useState(false)
-  const [registrationCode, setRegistrationCode] = useState('')
-  const kvm = vm.runtime_type === 'kvm'
-  const blocked = remote || kvm
-  const onV2 =
-    vm.resolved_dataplane === 'crag' && vm.resolved_crag_kernel_version === 'v2'
-  const onCli =
-    vm.resolved_dataplane == null || vm.resolved_dataplane === 'wrap'
-  const licenseQuery = useQuery({
-    ...vmCragLicenseQueryOptions(id),
-    enabled: !blocked,
-  })
-  const activateLicense = useMutation({
-    // Keep the registration code out of cached mutation variables.
-    mutationFn: () => activateVmCragLicense(id, registrationCode.trim()),
-    onSuccess: async (data) => {
-      qc.setQueryData(vmCragLicenseQueryOptions(id).queryKey, data)
-      setRegistrationCode('')
-      if (!data.license.valid || data.license.status !== 'valid') {
-        toast.error('授权未生效，请检查下方状态并联系授权方。')
-        return
-      }
-      toast.success('CRAG 授权已激活')
-      if (switchAfterActivation && !onV2) setPending('v2')
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: vmQueryOptions(id).queryKey }),
-        qc.invalidateQueries({ queryKey: dashboardQueryOptions().queryKey }),
-      ])
-    },
-  })
-
-  async function requestV2() {
-    setSwitchAfterActivation(true)
-    setCheckingLicense(true)
-    try {
-      const data = await qc.fetchQuery(vmCragLicenseQueryOptions(id))
-      if (data.license.valid && data.license.status === 'valid') {
-        setPending('v2')
-      } else {
-        setLicenseOpen(true)
-      }
-    } catch {
-      setLicenseOpen(true)
-    } finally {
-      setCheckingLicense(false)
-    }
-  }
-  const switchKernel = useMutation({
-    mutationFn: (next: 'wrap' | 'v2') =>
-      patchVm(
-        id,
-        next === 'v2'
-          ? { dataplane: 'crag', crag_kernel_version: 'v2' }
-          : { dataplane: 'wrap', crag_kernel_version: '' }
-      ),
-    onSuccess: async (_data, next) => {
-      toast.success(
-        next === 'v2' ? '本槽已切到 CRAG v2' : '本槽已切回 cli-node'
-      )
-      setPending(null)
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: vmQueryOptions(id).queryKey }),
-        qc.invalidateQueries({ queryKey: dashboardQueryOptions().queryKey }),
-      ])
-    },
-    onError: (error: Error) => {
-      if (isApiError(error) && error.code.startsWith('license_')) {
-        toast.error(cragLicenseErrorMessage(error))
-        setLicenseOpen(true)
-        setSwitchAfterActivation(true)
-        void qc.invalidateQueries({
-          queryKey: vmCragLicenseQueryOptions(id).queryKey,
-        })
-      } else {
-        toast.error(error.message)
-      }
-      setPending(null)
-    },
-  })
-  const busy =
-    checkingLicense || switchKernel.isPending || activateLicense.isPending
-  return (
-    <div className='mt-3 space-y-2'>
-      <div className='flex flex-wrap gap-2'>
-        <Button
-          variant='outline'
-          disabled={blocked || busy || onCli}
-          onClick={() => setPending('wrap')}
-        >
-          本槽切回 cli-node
-        </Button>
-        <Button
-          variant='outline'
-          disabled={blocked || busy || onV2}
-          onClick={() => void requestV2()}
-        >
-          {checkingLicense ? '正在检查授权…' : '本槽切到 CRAG v2'}
-        </Button>
-        {!blocked ? (
-          <Button
-            variant='outline'
-            disabled={busy}
-            aria-expanded={licenseOpen}
-            aria-controls={`crag-license-${id}`}
-            onClick={() => {
-              setSwitchAfterActivation(false)
-              setLicenseOpen(!licenseOpen)
-              setRegistrationCode('')
-              activateLicense.reset()
-            }}
-          >
-            CRAG 授权 / 续期
-          </Button>
-        ) : null}
-      </div>
-      <p className='text-xs text-muted-foreground'>
-        当前 {kernelLabel(vm)}。只改这一槽。cli-node 留在盘上。没有 CRAG v2
-        包时拒绝切换，原内核不动。
-      </p>
-      {blocked ? (
-        <p className='text-xs text-muted-foreground'>
-          {remote
-            ? `CRAG v2：${REMOTE_UNSUPPORTED_TEXT}`
-            : 'KVM 槽不运行 CRAG v2'}
-        </p>
-      ) : null}
-      {!blocked ? (
-        <div id={`crag-license-${id}`} className='min-w-0 pt-2'>
-          {licenseOpen ? (
-            <CragLicenseEditor
-              data={licenseQuery.data}
-              loading={licenseQuery.isFetching}
-              loadError={licenseQuery.error}
-              activationError={activateLicense.error}
-              registrationCode={registrationCode}
-              activating={activateLicense.isPending}
-              onChange={(code) => {
-                setRegistrationCode(code)
-                activateLicense.reset()
-              }}
-              onRefresh={() => {
-                void licenseQuery.refetch()
-              }}
-              onActivate={() => activateLicense.mutate()}
-              onClose={() => {
-                setLicenseOpen(false)
-                setRegistrationCode('')
-                setSwitchAfterActivation(false)
-                activateLicense.reset()
-              }}
-            />
-          ) : licenseQuery.isError ? (
-            <p role='alert' className='text-sm text-destructive'>
-              {cragLicenseErrorMessage(licenseQuery.error)} 打开“CRAG 授权 /
-              续期”可重试。
-            </p>
-          ) : licenseQuery.data ? (
-            <CragLicenseSummary license={licenseQuery.data.license} />
-          ) : (
-            <p role='status' className='text-sm text-muted-foreground'>
-              正在读取 CRAG 授权状态…
-            </p>
-          )}
-        </div>
-      ) : null}
-      <p className='mt-4 border-t pt-3 text-sm text-muted-foreground'>
-        <Link to='/wrap' className='underline underline-offset-4'>
-          前往内核页面
-        </Link>
-        ，统一安装 cli-node、CRAG 或 Hermit。
-      </p>
-      <ConfirmDialog
-        open={pending != null}
-        onOpenChange={(open) => {
-          if (!open && !switchKernel.isPending) setPending(null)
-        }}
-        title={pending === 'v2' ? '本槽切到 CRAG v2？' : '本槽切回 cli-node？'}
-        desc={
-          pending === 'v2'
-            ? '切换本槽内核。从 Hermit 切换时重建容器，并保留旧容器供回滚。请先结束工具调用。凭据保持不变。'
-            : '切回 cli-node。从 Hermit 切换时重建容器，并保留旧容器供回滚。请先结束工具调用。凭据保持不变。'
-        }
-        cancelBtnText='取消'
-        confirmText='切换'
-        isLoading={switchKernel.isPending}
-        handleConfirm={() => {
-          if (pending) switchKernel.mutate(pending)
-        }}
-      />
-    </div>
-  )
+  return dataplaneLabel(vm.resolved_dataplane)
 }
 
 function CardSection({

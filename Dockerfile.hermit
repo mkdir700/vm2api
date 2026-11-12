@@ -2,7 +2,7 @@ ARG VM2API_BASE_IMAGE
 ARG HERMIT_PAYLOAD_IMAGE
 FROM ${HERMIT_PAYLOAD_IMAGE} AS hermit
 FROM ${VM2API_BASE_IMAGE}
-RUN rm -rf /opt/vm2api/image-wrap-cli /opt/vm2api/image-crag
+RUN rm -rf /opt/vm2api/image-wrap-cli
 COPY --from=hermit /payload/bin/ /opt/vm2api/image-bin/
 COPY --from=hermit /payload/share/wrap-cli/ /opt/vm2api/image-wrap-cli/
 COPY --from=hermit /payload/payload.json /opt/vm2api/hermit-payload.json

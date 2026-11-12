@@ -1,3 +1,4 @@
+import { kernelDataplaneStatus } from '../vm/slot-engine.mjs'
 /**
  * Single schedulability gate shared by the pool picker and the panel.
  * Green on the console must mean the scheduler will actually select the slot.
@@ -101,7 +102,9 @@ export function slotHasBoundProxy(vm) {
   return hasBoundExit(vm.proxy)
 }
 
-export function evaluateSlotGate(vm) {
+export function evaluateSlotGate(vm, routing = {}) {
+  const supported = kernelDataplaneStatus(vm, routing)
+  if (!supported.ok) return { ok: false, reason: supported.code }
   if (vm?.kernel_transition && !['applied', 'finalized', 'rolled_back'].includes(vm.kernel_transition.state))
     return { ok: false, reason: 'maintenance' }
   if (isCodexVm(vm)) return { ok: false, reason: 'codex_vm' }

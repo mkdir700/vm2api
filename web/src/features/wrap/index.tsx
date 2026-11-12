@@ -1,11 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
-import type { CragLicenseStatus, Vm } from '@/types/panel-vm'
+import type { Vm } from '@/types/panel-vm'
 import {
   CheckCircle2,
   Download,
-  KeyRound,
   Loader2,
   Power,
   RefreshCw,
@@ -33,10 +32,10 @@ import { PageHeader } from '@/components/page-header'
 import { QueryGate } from '@/components/query-gate'
 import { meQueryOptions } from '@/features/auth/queries'
 import { dashboardQueryOptions } from '@/features/overview/queries'
+import { dataplaneLabel } from '@/features/vm/dataplane-contract'
 import { KernelTransitionControls } from '@/features/vm/kernel-transition-controls'
 import { isRemoteVm } from '@/features/vm/placement'
 import { HermitPackageUpload } from './hermit-package'
-import { KernelLicenseDialog } from './license-dialog'
 import {
   installKernelTargets,
   hermitPackageQueryOptions,
@@ -51,17 +50,8 @@ import {
 
 const KERNEL_NAMES = {
   'cli-node': 'cli-node',
-  crag: 'CRAG',
   hermit: 'Hermit',
 } as const
-const LICENSE_LABELS: Record<CragLicenseStatus['status'], string> = {
-  valid: '授权有效',
-  unlicensed: '未授权',
-  expired: '已到期',
-  not_yet_valid: '尚未生效',
-  invalid: '授权无效',
-  unconfigured: '未配置',
-}
 const VM_STATUS: Record<string, string> = {
   running: '运行中',
   stopped: '已停用',
@@ -86,7 +76,6 @@ export function WrapSamplePage() {
   const canEdit = me.data?.role === 'admin'
   const [drafts, setDrafts] = useState<Record<string, KernelId>>({})
   const [confirm, setConfirm] = useState<KernelTarget[] | null>(null)
-  const [licenseVm, setLicenseVm] = useState<Vm | null>(null)
   const [installing, setInstalling] = useState(false)
   const [job, setJob] = useState<InstallProgress | null>(null)
   const [pullError, setPullError] = useState<{
@@ -101,11 +90,7 @@ export function WrapSamplePage() {
           vm,
           kernel:
             drafts[vm.id] ??
-            (vm.resolved_dataplane === 'hermit'
-              ? 'hermit'
-              : vm.resolved_dataplane === 'crag'
-                ? 'crag'
-                : 'cli-node'),
+            (vm.resolved_dataplane === 'hermit' ? 'hermit' : 'cli-node'),
         })),
     [dashboard.data?.vms, drafts]
   )
@@ -123,11 +108,7 @@ export function WrapSamplePage() {
       toast.success(`${KERNEL_NAMES[kernel]} 安装包已更新`)
     },
     onError: (error: Error, kernel) => {
-      const message =
-        isApiError(error) && error.code === 'crag_v2_asset_missing'
-          ? '发布源尚无 CRAG 授权包，现有版本未改动。'
-          : error.message
-      setPullError({ kernel, message })
+      setPullError({ kernel, message: error.message })
     },
   })
   const busy = installing || pull.isPending
@@ -146,11 +127,6 @@ export function WrapSamplePage() {
   const succeededCount = job
     ? Object.values(job.results).filter((item) => item.ok).length
     : 0
-  const missingLicenses = (confirm || []).filter(
-    (target) =>
-      target.kernel === 'crag' && !catalog.data?.licenses[target.id]?.valid
-  )
-
   function requestInstall(targets: KernelTarget[]) {
     if (!canEdit || busy || !targets.length) return
     const invalidHermit = targets.find(
@@ -186,7 +162,7 @@ export function WrapSamplePage() {
     const unsupported = targets.find((target) => {
       const vm = vmById.get(target.id)
       return (
-        (target.kernel === 'crag' || target.kernel === 'hermit') &&
+        target.kernel === 'hermit' &&
         vm &&
         (isRemoteVm(vm) || vm.runtime_type === 'kvm')
       )
@@ -195,16 +171,6 @@ export function WrapSamplePage() {
       toast.error(
         `${vmById.get(unsupported.id)?.name || unsupported.id} 仅能安装默认内核`
       )
-      return
-    }
-    const unlicensed = targets.find(
-      (target) =>
-        target.kernel === 'crag' && !catalog.data?.licenses[target.id]?.valid
-    )
-    if (unlicensed && targets.length === 1) {
-      const vm = vmById.get(unlicensed.id)
-      toast.error(`${vm?.name || unlicensed.id} 需要 CRAG 授权`)
-      if (vm) setLicenseVm(vm)
       return
     }
     setConfirm(targets)
@@ -291,7 +257,7 @@ export function WrapSamplePage() {
   return (
     <PageHeader
       title='内核'
-      description='cli-node 默认免费，CRAG 使用注册码授权，Hermit 支持上传内核包。'
+      description='默认内核使用 cli-node，Hermit 支持上传内核包。'
       extra={
         <Button
           variant='ghost'
@@ -330,23 +296,14 @@ export function WrapSamplePage() {
               >
                 <div className='min-w-0'>
                   <div className='flex flex-wrap items-center gap-2.5'>
-                    {product.paid ? (
-                      <KeyRound
-                        aria-hidden='true'
-                        className='size-5 text-muted-foreground'
-                      />
-                    ) : (
-                      <Terminal
-                        aria-hidden='true'
-                        className='size-5 text-muted-foreground'
-                      />
-                    )}
+                    <Terminal
+                      aria-hidden='true'
+                      className='size-5 text-muted-foreground'
+                    />
                     <h3 className='text-lg font-semibold'>
                       {KERNEL_NAMES[product.id]}
                     </h3>
-                    <Badge variant='secondary'>
-                      {product.paid ? '付费 · 授权码' : '默认 · 免费'}
-                    </Badge>
+                    <Badge variant='secondary'>默认内核</Badge>
                   </div>
                   <div className='mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-base sm:text-sm'>
                     <span
@@ -491,14 +448,13 @@ export function WrapSamplePage() {
                 >
                   <div role='columnheader'>虚拟机</div>
                   <div role='columnheader'>安装内核</div>
-                  <div role='columnheader'>授权</div>
+                  <div role='columnheader'>当前内核</div>
                   <div role='columnheader' className='text-right'>
                     操作
                   </div>
                 </div>
                 <div role='rowgroup' className='divide-y'>
                   {rows.map(({ vm, kernel }) => {
-                    const license = catalog.data?.licenses[vm.id]
                     const installed = catalog.data?.installations?.[vm.id]
                     const result = job?.results[vm.id]
                     const active = installing && job?.activeId === vm.id
@@ -507,12 +463,10 @@ export function WrapSamplePage() {
                     const currentKernel =
                       vm.resolved_dataplane === 'hermit'
                         ? 'hermit'
-                        : vm.resolved_dataplane === 'crag' &&
-                            vm.resolved_crag_kernel_version === 'v2'
-                          ? 'crag'
-                          : vm.resolved_dataplane === 'wrap'
-                            ? 'cli-node'
-                            : null
+                        : vm.resolved_dataplane === 'wrap' ||
+                            vm.resolved_dataplane === 'cc'
+                          ? 'cli-node'
+                          : null
                     const changed =
                       kernel !== currentKernel ||
                       (kernel === 'hermit' &&
@@ -586,11 +540,7 @@ export function WrapSamplePage() {
                             value={kernel}
                             disabled={!canEdit || busy}
                             onValueChange={(value) => {
-                              if (
-                                value === 'cli-node' ||
-                                value === 'crag' ||
-                                value === 'hermit'
-                              )
+                              if (value === 'cli-node' || value === 'hermit')
                                 setDrafts((previous) => ({
                                   ...previous,
                                   [vm.id]: value,
@@ -606,12 +556,6 @@ export function WrapSamplePage() {
                             <SelectContent className='motion-reduce:animate-none [&_[role=option]]:min-h-11'>
                               <SelectItem value='cli-node'>
                                 cli-node · 默认
-                              </SelectItem>
-                              <SelectItem
-                                value='crag'
-                                disabled={nativeUnsupported}
-                              >
-                                CRAG · 付费
                               </SelectItem>
                               <SelectItem
                                 value='hermit'
@@ -662,47 +606,9 @@ export function WrapSamplePage() {
                           role='cell'
                           className='flex min-w-0 flex-wrap items-center gap-2 sm:content-center'
                         >
-                          {kernel === 'crag' ? (
-                            <>
-                              <div className='min-w-0 space-y-1 text-base sm:text-sm'>
-                                <div
-                                  className={
-                                    license?.valid
-                                      ? 'text-primary'
-                                      : 'text-destructive'
-                                  }
-                                >
-                                  {nativeUnsupported
-                                    ? '仅支持本地 Docker'
-                                    : license
-                                      ? LICENSE_LABELS[license.status]
-                                      : '状态未知'}
-                                </div>
-                                {license?.valid && license.expires_at ? (
-                                  <div className='text-sm text-muted-foreground tabular-nums'>
-                                    {new Date(license.expires_at * 1000)
-                                      .toISOString()
-                                      .slice(0, 10)}{' '}
-                                    UTC
-                                  </div>
-                                ) : null}
-                              </div>
-                              <Button
-                                variant='ghost'
-                                className='h-11'
-                                disabled={!canEdit || busy || nativeUnsupported}
-                                onClick={() => setLicenseVm(vm)}
-                                aria-label={`管理 ${vm.name || vm.id} CRAG 授权`}
-                              >
-                                <KeyRound aria-hidden='true' />
-                                {license?.valid ? '续期' : '激活'}
-                              </Button>
-                            </>
-                          ) : (
-                            <span className='text-base text-muted-foreground sm:text-sm'>
-                              无需授权
-                            </span>
-                          )}
+                          <span className='text-base text-muted-foreground sm:text-sm'>
+                            {dataplaneLabel(vm.resolved_dataplane)}
+                          </span>
                         </div>
                         <div
                           role='cell'
@@ -714,8 +620,7 @@ export function WrapSamplePage() {
                             disabled={
                               !canEdit ||
                               busy ||
-                              ((kernel === 'crag' || kernel === 'hermit') &&
-                                nativeUnsupported)
+                              (kernel === 'hermit' && nativeUnsupported)
                             }
                             loading={active}
                             aria-label={`${changed ? '安装' : '重装'} ${vm.name || vm.id} 并停用`}
@@ -751,10 +656,9 @@ export function WrapSamplePage() {
             ? `重装 ${vmById.get(confirm[0].id)?.name || confirm[0].id} 并停用？`
             : `重装全部 ${confirm?.length || 0} 台 VM 并停用？`
         }
-        desc='按所选内核安装，完成后服务保持关闭。凭据、授权和工作数据保留。涉及 Hermit 时会重建槽位容器并检查内核。安装成功后清理旧容器。'
+        desc='按所选内核安装，完成后服务保持关闭。凭据和工作数据保留。涉及 Hermit 时会重建槽位容器并检查内核。安装成功后清理旧容器。'
         confirmText='重装并停用'
         cancelBtnText='取消'
-        disabled={missingLicenses.length > 0}
         destructive
         className='motion-reduce:animate-none [&_button]:min-h-11'
         handleConfirm={() => {
@@ -775,28 +679,11 @@ export function WrapSamplePage() {
                 {target.kernel === 'hermit' && packages.data?.item
                   ? ` · ${packages.data.item.version}`
                   : ''}
-                {target.kernel === 'crag' &&
-                !catalog.data?.licenses[target.id]?.valid
-                  ? ' · 待授权'
-                  : ''}
               </span>
             </li>
           ))}
         </ul>
-        {missingLicenses.length ? (
-          <p role='alert' className='text-sm text-destructive'>
-            {missingLicenses.length} 台 CRAG 尚未授权，请先在对应 VM
-            行激活。未执行任何重装或停用。
-          </p>
-        ) : null}
       </ConfirmDialog>
-      {licenseVm ? (
-        <KernelLicenseDialog
-          key={licenseVm.id}
-          vm={licenseVm}
-          onClose={() => setLicenseVm(null)}
-        />
-      ) : null}
     </PageHeader>
   )
 }

@@ -1,8 +1,4 @@
-import type {
-  CragLicenseResponse,
-  VmActiveHours,
-  VmQuotaOverride,
-} from '@/types/panel-vm'
+import type { VmActiveHours, VmQuotaOverride } from '@/types/panel-vm'
 import {
   apiBase,
   expirePanelSession,
@@ -148,8 +144,7 @@ export async function api<T = unknown>(
 export type VmPatch = {
   inference_engine?: 'go' | 'rust' | ''
   persona_preset?: string
-  dataplane?: 'wrap' | 'cc' | 'crag' | ''
-  crag_kernel_version?: 'legacy' | 'v2' | ''
+  dataplane?: 'wrap' | 'cc' | ''
   /** null = 去掉本槽覆盖，跟随分档 / 全局。 */
   max_concurrency?: number | null
   max_rpm?: number | null
@@ -172,22 +167,6 @@ export function patchVm<T = unknown>(id: string, body: VmPatch) {
     method: 'PATCH',
     body: JSON.stringify(body),
   })
-}
-
-export function getVmCragLicense(id: string) {
-  return api<CragLicenseResponse>(
-    `/api/panel/vms/${encodeURIComponent(id)}/crag-license`
-  )
-}
-
-export function activateVmCragLicense(id: string, registrationCode: string) {
-  return api<CragLicenseResponse>(
-    `/api/panel/vms/${encodeURIComponent(id)}/crag-license`,
-    {
-      method: 'POST',
-      body: JSON.stringify({ registration_code: registrationCode }),
-    }
-  )
 }
 
 export async function loginRequest(input: {

@@ -1,8 +1,8 @@
+import { kernelDataplaneStatus } from '../vm/slot-engine.mjs'
 /** Administrator-initiated, cold KVM migration. Persistent holds fail closed on controller restart. */
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { isCodexVm } from '../vm/vm-kind.mjs'
-import { resolveKernelDataplane } from '../vm/slot-engine.mjs'
 import { applyHold } from '../pool/schedule-state.mjs'
 import { getVm, patchVmRecord, clearScheduleHold } from '../vm/vm-registry.mjs'
 import { isValidVmId, withVmLock } from '../vm/vm-file.mjs'
@@ -49,8 +49,10 @@ export function slotMigrationJob(projectRoot, id) {
 
 export function migrationRequest(vm, body, routing) {
   if (!vm) throw migrationError('vm_not_found', '槽位不存在', 404)
-  if (!vm.node_id || runtimeKind(vm) !== 'kvm' || isCodexVm(vm) || resolveKernelDataplane(vm, routing) === 'crag')
-    throw migrationError('migration_unsupported', '首版仅支持远程 Linux 节点上的 Claude KVM 槽（不含 crag）')
+  const supported = kernelDataplaneStatus(vm, routing)
+  if (!supported.ok) throw migrationError(supported.code, supported.error, 409)
+  if (!vm.node_id || runtimeKind(vm) !== 'kvm' || isCodexVm(vm))
+    throw migrationError('migration_unsupported', '首版仅支持远程 Linux 节点上的 Claude KVM 槽')
   if (vm.status !== 'running') throw migrationError('migration_not_running', '请先确认原槽已正常运行')
   if (migrationActive(vm) || vm.schedule_hold)
     throw migrationError('migration_busy', '槽位正在迁移或维护中，请先完成原任务')

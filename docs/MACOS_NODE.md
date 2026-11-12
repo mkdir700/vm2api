@@ -75,7 +75,7 @@ plist 放在槽位目录里，不放 `~/Library/LaunchAgents`，避免登录时 
 
 ## 首版限制
 
-- 只支持 Claude 槽，出口只能是节点本机网络（`px-local`）；绑定 SOCKS5、Codex 槽、crag 数据面、KVM 会明确拒绝。
+- 只支持 Claude 槽，出口只能是节点本机网络（`px-local`）；绑定 SOCKS5、Codex 槽、KVM 会明确拒绝。
 - 隔离边界是 SSH 用户：同一节点的槽位共用这个用户、它的网络和硬件，launchd 不限制内存。需要更强隔离时，
   每个账号用单独的 macOS 用户分别接入。
 - 不支持面板终端、槽内官方登录（`claude auth login` / setup-token）、直连通道、在线调整内存，这些接口对 macOS 槽返回

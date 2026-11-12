@@ -8,7 +8,7 @@ import { installKernelTargets } from '../../src/lib/vm/kernel-install.mjs'
 import { getVm, patchVmRecord } from '../../src/lib/vm/vm-registry.mjs'
 
 const saved = Object.fromEntries(
-  ['KIN_KERNEL_BIN', 'KIN_WRAP_CLI_ROOT', 'KIN_CRAG_V2_ROOT', 'KIN_SLOT_RUN_ROOT', 'KIN_NATIVE_CLI_ROOT'].map((key) => [
+  ['KIN_KERNEL_BIN', 'KIN_WRAP_CLI_ROOT', 'KIN_SLOT_RUN_ROOT', 'KIN_NATIVE_CLI_ROOT'].map((key) => [
     key,
     process.env[key],
   ]),

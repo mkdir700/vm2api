@@ -69,7 +69,6 @@ COPY --from=payload /payload/bin/ /opt/vm2api/image-bin/
 COPY --from=helpers /out/amd64/ /opt/vm2api/cluster-bin-amd64/
 COPY share/wrap-cli /opt/vm2api/image-wrap-cli/
 COPY --from=payload /payload/share/wrap-cli/ /opt/vm2api/image-wrap-cli/
-COPY --from=payload /payload/share/crag/ /opt/vm2api/image-crag/
 COPY --from=native-cli /native-cli/ /opt/vm2api/image-native-cli/
 # Only the remaining x86 executables need these libraries and loader under QEMU.
 COPY --from=amd64-runtime /usr/lib/x86_64-linux-gnu/ /usr/lib/x86_64-linux-gnu/

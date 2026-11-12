@@ -98,11 +98,8 @@ export function seedFreshCliHome(projectRoot, vm) {
   // A baked slot image carries its binaries; no .kin copy in the home.
   if (!slotHost(vm).bakedKernel) {
     try {
-      const laid = materializeResolvedKernel(projectRoot, vm)
-      if (laid?.ok === false && vm?.dataplane === 'crag') throw new Error(laid.error || laid.code)
-    } catch (error) {
-      if (vm?.dataplane === 'crag') throw error
-    }
+      materializeResolvedKernel(projectRoot, vm)
+    } catch {}
   }
   return { homeDir: written.homeDir, seed_policy: written.seed_policy || defaultSeedPolicy(vm.seed_policy || {}) }
 }

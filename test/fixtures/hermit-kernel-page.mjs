@@ -21,7 +21,7 @@ try {
   await page.goto(url + '/cc?e2e=wrap#/wrap');
   await page.waitForSelector('section[aria-label="可用内核"]');
   check('three_peer_kernel_rows', await page.evaluate(() =>
-    [...document.querySelectorAll('section[aria-label="可用内核"] h3')].map(n => n.textContent).join(',') === 'cli-node,CRAG,Hermit'));
+    [...document.querySelectorAll('section[aria-label="可用内核"] h3')].map(n => n.textContent).join(',') === 'cli-node,Hermit'));
   check('hermit_pull_disabled', await page.evaluate(() => document.querySelector('button[aria-label="拉取 Hermit 最新内核包"]').disabled));
   check('no_standalone_upload_form', await page.evaluate(() => !document.querySelector('input[type="file"]')));
   await page.screenshot({ path: artifact + '/kernels-desktop.png' });

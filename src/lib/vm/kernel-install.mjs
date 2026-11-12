@@ -1,9 +1,8 @@
-import fs from 'node:fs'
+import { kernelDataplaneStatus, resolveKernelDataplane } from './slot-engine.mjs'
 import path from 'node:path'
 import { describeKernelCatalog } from '../admin/kernel-catalog.mjs'
 import { writeKernelConfig } from '../transport/rust-kernel-supervisor.mjs'
 import { applyScheduleOff, migrateScheduleRecord } from '../pool/schedule-state.mjs'
-import { checkCragLicense } from './crag-license.mjs'
 import { isValidVmId, withVmLock } from './vm-file.mjs'
 import { getVm, patchVmRecord } from './vm-registry.mjs'
 import { isCodexVm } from './vm-kind.mjs'
@@ -11,10 +10,9 @@ import { isKvmRuntime } from './runtime-kind.mjs'
 import { stopSlot } from './slot-runtime.mjs'
 import { officialCcUidGid, suspendVmRuntimeRestart } from './vm-runtime.mjs'
 import { materializeResolvedKernel } from './wrap-cli-runtime.mjs'
-import { resolveKernelDataplane } from './slot-engine.mjs'
 import { runKernelTransition } from './kernel-transition.mjs'
 
-const PRODUCTS = new Set(['cli-node', 'crag', 'hermit'])
+const PRODUCTS = new Set(['cli-node', 'hermit'])
 // Only exceptional installer holds may be cleared by a later explicit start.
 // Key by record path so independent projects cannot release each other's slot.
 const safetyHolds = new Map()
@@ -40,40 +38,21 @@ const report = (items) => {
   return { ok: failed_count === 0, total: items.length, ok_count: items.length - failed_count, failed_count, items }
 }
 
-function desiredVm(vm, kernel) {
-  const desired = { ...vm, dataplane: kernel === 'crag' ? 'crag' : 'wrap' }
-  if (kernel === 'crag') desired.crag_kernel_version = 'v2'
-  else delete desired.crag_kernel_version
+function desiredVm(vm) {
+  const desired = { ...vm, dataplane: 'wrap' }
+  delete desired.crag_kernel_version
   return desired
 }
 
-function placementFailure(vm, kernel) {
+function placementFailure(vm) {
   if (isCodexVm(vm)) return { code: 'kernel_codex_unsupported', error: '请选择 Claude 虚拟机' }
   if (vm.node_id || isKvmRuntime(vm) || process.platform !== 'linux') {
     return {
-      code: kernel === 'crag' ? 'crag_v2_unsupported_placement' : 'kernel_install_unsupported_placement',
+      code: 'kernel_install_unsupported_placement',
       error: '内核重装仅支持本机 Linux Docker 虚拟机',
     }
   }
   return null
-}
-
-function prepareNativeDirectories(runDir, owner) {
-  if (!runDir || !path.isAbsolute(runDir) || /^\/mnt\/[a-z](?:\/|$)/i.test(runDir)) {
-    throw Object.assign(new Error('CRAG 私有目录必须位于 Linux 文件系统'), {
-      code: 'crag_v2_private_directory_invalid',
-    })
-  }
-  for (const name of ['crag-native-assets', 'work']) {
-    const dir = path.join(runDir, name)
-    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { mode: 0o700 })
-    const stat = fs.lstatSync(dir)
-    if (!stat.isDirectory() || stat.isSymbolicLink()) {
-      throw Object.assign(new Error('CRAG 私有目录不能是链接或文件'), { code: 'crag_v2_private_directory_invalid' })
-    }
-    fs.chmodSync(dir, 0o700)
-    if (typeof process.getuid === 'function' && process.getuid() === 0) fs.chownSync(dir, owner.uid, owner.gid)
-  }
 }
 
 /** Explicit, bounded selection only; an invalid batch never partially installs. */
@@ -127,7 +106,11 @@ export async function installKernelTargets({
     items.push(
       await withVmLock(file, async () => {
         const current = getVm(projectRoot, target.id)
-        if (target.kernel === 'hermit' || resolveKernelDataplane(current, routing) === 'hermit') {
+        if (
+          target.kernel === 'hermit' ||
+          resolveKernelDataplane(current, routing) === 'hermit' ||
+          !kernelDataplaneStatus(current, routing).ok
+        ) {
           const options = { project: projectRoot, id: target.id, routing, watchdog, scheduler, proxyPool }
           const applied = await runKernelTransition({
             ...options,
@@ -135,7 +118,7 @@ export async function installKernelTargets({
             target:
               target.kernel === 'hermit'
                 ? { dataplane: 'hermit', manifest_sha256: target.manifest_sha256 }
-                : { dataplane: target.kernel === 'crag' ? 'crag' : 'wrap' },
+                : { dataplane: 'wrap' },
           })
           if (!applied.ok)
             return failure(target, applied.code, applied.error, getVm(projectRoot, target.id)?.status === 'stopped')
@@ -163,18 +146,14 @@ export async function installKernelTargets({
           await watchdog?.hold?.(target.id)
           const vm = getVm(projectRoot, target.id)
           if (!vm || vm.id !== target.id) return failure(target, 'vm_not_found', '所选虚拟机不存在')
-          const unsupported = placementFailure(vm, target.kernel)
+          const unsupported = placementFailure(vm)
           if (unsupported) return failure(target, unsupported.code, unsupported.error)
-          const desired = desiredVm(vm, target.kernel)
+
           const product = (ops.describeKernelCatalog || describeKernelCatalog)(projectRoot).find(
             (item) => item.id === target.kernel,
           )
           if (!product?.ready)
             return failure(target, product?.code || 'kernel_package_missing', product?.error || '请先拉取所选内核')
-          if (target.kernel === 'crag') {
-            const grant = (ops.checkCragLicense || checkCragLicense)(projectRoot, desired, routing)
-            if (!grant.ok) return failure(target, grant.code || 'license_required', grant.error || '请先激活 CRAG 授权')
-          }
           phase = 'kernel_stop_failed'
           const halt = await (ops.stopSlot || stopSlot)(vm)
           if (!halt?.ok) return failure(target, halt?.code || phase, halt?.error || '虚拟机停止失败')
@@ -197,7 +176,7 @@ export async function installKernelTargets({
           phase = 'kernel_restart_policy_failed'
           const policy = await (ops.suspendVmRuntimeRestart || suspendVmRuntimeRestart)(halted)
           if (!policy?.ok) return failure(target, policy?.code || phase, policy?.error || '无法关闭容器自动重启', true)
-          const candidate = desiredVm(halted, target.kernel)
+          const candidate = desiredVm(halted)
           const owner = officialCcUidGid(target.id)
           phase = 'kernel_materialize_failed'
           // Pull publishes immutable packages by a synchronous pointer swap. Observe the
@@ -224,12 +203,10 @@ export async function installKernelTargets({
             publish: false,
           })
           if (!config?.configPath) return failure(target, phase, '内核配置生成失败', true)
-          if (target.kernel === 'crag') prepareNativeDirectories(config.runDir, owner)
           phase = 'kernel_selection_persist_failed'
           const saved = patchVmRecord(projectRoot, target.id, (record) => {
             record.dataplane = candidate.dataplane
-            if (target.kernel === 'crag') record.crag_kernel_version = 'v2'
-            else delete record.crag_kernel_version
+            delete record.crag_kernel_version
             record.kernel_installation = {
               kernel: target.kernel,
               version: installedProduct.version ?? null,

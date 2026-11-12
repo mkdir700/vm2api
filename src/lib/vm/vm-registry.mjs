@@ -1,3 +1,4 @@
+import { kernelDataplaneStatus } from './slot-engine.mjs'
 /**
  * Multi-VM registry — load all vms/*.json (except active.json)
  * Writes go through atomicWriteJson so the DB credential mirror
@@ -105,7 +106,6 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
           can_rollback: !['finalized', 'rolled_back'].includes(vm.kernel_transition.state),
         }
       : null,
-    crag_kernel_version: vm.crag_kernel_version || null,
     kernel_installation: vm.kernel_installation
       ? {
           kernel: vm.kernel_installation.kernel,
@@ -176,7 +176,7 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
     claude_code_version: vm.claude_code_version || null,
     stats: vm.stats || {},
     fingerprint: vm.fingerprint || null,
-    schedulable: vm.schedulable !== false,
+    schedulable: kernelDataplaneStatus(vm, routing).ok && vm.schedulable !== false,
     schedule_manual: vm.schedule_manual === true,
     schedule_disabled_reason: vm.schedule_disabled_reason || null,
     schedule_off: vm.schedule_off === true,
@@ -466,10 +466,6 @@ function applySlotEnginePatch(vm, patch = {}) {
     if (patch.dataplane) vm.dataplane = patch.dataplane
     else delete vm.dataplane
   }
-  if (Object.prototype.hasOwnProperty.call(patch, 'crag_kernel_version')) {
-    if (patch.crag_kernel_version) vm.crag_kernel_version = patch.crag_kernel_version
-    else delete vm.crag_kernel_version
-  }
 }
 
 export function persistSlotEnginePolicy(projectRoot, vmId, patch = {}) {
@@ -549,6 +545,7 @@ export function vmHasSchedulableCredential(vm, projectRoot = null) {
  */
 export function isVmScheduleReady(vm, { allowMissingCredential = false } = {}) {
   if (!vm) return false
+  if (!kernelDataplaneStatus(vm).ok) return false
   if (vm.schedulable === false && !isLeftoverQuotaScheduleOff(vm)) return false
   if (!allowMissingCredential && !vmHasClaudeCredential(vm)) return false
   const status = String(vm.status || '').toLowerCase()

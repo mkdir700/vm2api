@@ -11,10 +11,8 @@ import {
   remoteNativePayloadDir,
 } from '../../src/lib/cluster/native-payload.mjs'
 import {
-  nativeLabels,
   nativeServicePlists,
   nativeSlotPaths,
-  nativeUnsupported,
   parseLaunchctlPrint,
   renderPlist,
 } from '../../src/lib/cluster/native-slot.mjs'
@@ -144,20 +142,6 @@ test('launchctl print parsing covers running, exited and missing jobs', () => {
   assert.equal(parseLaunchctlPrint(nested).state, 'stopped')
   assert.equal(parseLaunchctlPrint('Could not find service "x" in domain', 113).state, 'missing')
   assert.equal(parseLaunchctlPrint('garbage').state, 'unknown')
-})
-
-test('only Claude slots on the node network exit can run natively', () => {
-  const local = { id: 'vm-1', proxy: { id: 'px-local' } }
-  assert.equal(nativeUnsupported(local, {}), null)
-  // Same as a Docker slot: no bound exit at all is not a runnable slot.
-  assert.equal(nativeUnsupported({ ...local, proxy: null }, {})?.code, 'native_proxy_unsupported')
-  assert.equal(
-    nativeUnsupported({ ...local, proxy: { id: 'px-1', type: 'socks5', host: '203.0.113.9', port: 1080 } }, {}).code,
-    'native_proxy_unsupported',
-  )
-  assert.equal(nativeUnsupported({ ...local, kind: 'codex' }, {})?.code, 'native_codex_unsupported')
-  assert.equal(nativeUnsupported({ ...local, dataplane: 'crag' }, {})?.code, 'native_crag_unsupported')
-  assert.equal(nativeUnsupported({ ...local, runtime_type: 'kvm' }, {})?.code, 'native_kvm_unsupported')
 })
 
 test('node platform comes from uname -s and the darwin host stats parse like /proc', () => {

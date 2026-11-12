@@ -11,12 +11,7 @@ import {
   workerHealth,
   workerPaths,
 } from './go-worker-client.mjs'
-import { checkCragLicense, cragLicenseDeniedResult } from '../vm/crag-license.mjs'
-
-function licenseCheck(opts) {
-  const root = opts.exec?.projectRoot || (opts.exec?.homeDir ? path.resolve(opts.exec.homeDir, '../../..') : '')
-  return checkCragLicense(root, opts.exec?.vm, opts.routing)
-}
+import { kernelDataplaneStatus } from '../vm/slot-engine.mjs'
 
 export function rustKernelPaths(exec = {}) {
   const base = workerPaths(exec)
@@ -54,14 +49,28 @@ function remapVia(result) {
 }
 
 export async function callRustKernel(opts = {}) {
-  const licensed = licenseCheck(opts)
-  if (!licensed.ok) return cragLicenseDeniedResult(licensed)
+  const supported = kernelDataplaneStatus(opts.exec?.vm, opts.routing)
+  if (!supported.ok)
+    return {
+      ...supported,
+      status: 409,
+      committed: false,
+      terminalState: 'rejected',
+      body: { type: 'error', error: { type: 'invalid_request_error', code: supported.code, message: supported.error } },
+    }
   return remapVia(await callGoWorker({ ...opts, exec: withRustKernelExec(opts.exec) }))
 }
 
 export async function streamRustKernel(opts = {}) {
-  const licensed = licenseCheck(opts)
-  if (!licensed.ok) return cragLicenseDeniedResult(licensed)
+  const supported = kernelDataplaneStatus(opts.exec?.vm, opts.routing)
+  if (!supported.ok)
+    return {
+      ...supported,
+      status: 409,
+      committed: false,
+      terminalState: 'rejected',
+      body: { type: 'error', error: { type: 'invalid_request_error', code: supported.code, message: supported.error } },
+    }
   return remapVia(await streamGoWorker({ ...opts, exec: withRustKernelExec(opts.exec) }))
 }
 

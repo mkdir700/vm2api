@@ -1,3 +1,4 @@
+import { kernelDataplaneStatus, resolveKernelDataplane } from './slot-engine.mjs'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import net from 'node:net'
@@ -12,12 +13,10 @@ import { slotHost } from './slot-host.mjs'
 import { runtimeKind } from './runtime-kind.mjs'
 import { inspectContainer, runtimePatch } from './vm-runtime.mjs'
 import { isCodexVm } from './vm-kind.mjs'
-import { resolveKernelDataplane } from './slot-engine.mjs'
 import { getKernelPackage, collectKernelPackages } from './kernel-packages.mjs'
 import { resolveHermitPackage, assertHermitActivation, hermitAuthentication } from './hermit-runtime.mjs'
 import { ensureHermitKernel, stopHermitKernel } from '../transport/hermit-kernel-supervisor.mjs'
 import { rustKernelHealth, rustKernelPaths } from '../transport/rust-kernel-client.mjs'
-import { checkCragLicense } from './crag-license.mjs'
 import { describeKernelCatalog } from '../admin/kernel-catalog.mjs'
 import { deriveScheduleFields, migrateScheduleRecord, applyScheduleOff } from '../pool/schedule-state.mjs'
 
@@ -169,17 +168,11 @@ async function prepare(project, vm, target, routing) {
     else delete desired.kernel_package.native_session_pool
     delete desired.crag_kernel_version
   } else {
-    if (!['wrap', 'crag'].includes(target.dataplane))
-      throw fail('invalid_dataplane', '请选择 cli-node、CRAG v2 或 Hermit')
+    if (!['wrap', 'cc'].includes(target.dataplane)) throw fail('invalid_dataplane', '请选择默认内核或 Hermit')
     delete desired.kernel_package
-    if (target.dataplane === 'crag') desired.crag_kernel_version = 'v2'
-    else delete desired.crag_kernel_version
-    const product = describeKernelCatalog(project).find(
-      (p) => p.id === (target.dataplane === 'crag' ? 'crag' : 'cli-node'),
-    )
+    delete desired.crag_kernel_version
+    const product = describeKernelCatalog(project).find((p) => p.id === 'cli-node')
     if (!product?.ready) throw fail(product?.code || 'kernel_package_missing', product?.error || '请先安装目标内核')
-    const license = checkCragLicense(project, desired, routing)
-    if (!license.ok) throw fail(license.code, license.error)
   }
   delete desired.pending_kernel_package
   return desired
@@ -217,7 +210,11 @@ export async function runKernelTransition({
       const proxy = proxyPool?.getProxyByIdWithAuth(vm.proxy?.id)
       if (!proxy) throw fail('proxy_required', '槽位缺少可用的出口绑定')
       vm = { ...vm, proxy }
-      if (target.dataplane !== 'hermit' && resolveKernelDataplane(vm, routing) !== 'hermit')
+      if (
+        target.dataplane !== 'hermit' &&
+        resolveKernelDataplane(vm, routing) !== 'hermit' &&
+        kernelDataplaneStatus(vm, routing).ok
+      )
         throw fail('kernel_transition_target_unsupported', '原生内核之间请使用现有切换入口')
       const desired = await prepare(project, vm, target, routing)
       if (
@@ -439,6 +436,10 @@ export async function runKernelTransition({
 }
 
 async function restore(project, vm, t, routing) {
+  const previous = { ...vm }
+  replaceSelection(previous, t.previous)
+  const supported = kernelDataplaneStatus(previous, routing)
+  if (!supported.ok) throw fail(supported.code, supported.error)
   save(project, vm.id, t, 'rolling_back')
   const old = await inspect(vm, t.backup)
   let current = await inspect(vm, t.container)

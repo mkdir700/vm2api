@@ -141,7 +141,7 @@ function MigrationForm({ vm, nodes }: { vm: Vm; nodes: ClusterApiNode[] }) {
         </select>
       </label>
       <p className='text-xs leading-relaxed text-muted-foreground'>
-        仅支持运行中的远程 Linux Claude KVM（不含 crag）
+        仅支持运行中的远程 Linux Claude KVM
         槽和内存扩容。两端镜像须完全一致；跨节点的直连或回环出口会被拒绝。任务串行执行、限速传盘，可能需要数十分钟。原节点冷盘保留为回滚资料，不自动删除。
       </p>
       <label className='flex items-start gap-2'>

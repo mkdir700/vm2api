@@ -1,6 +1,6 @@
 /**
  * Real outbound chain for e2e and replay: in-process Node handler → kin-kernel ELF →
- * cli-node ELF → local capture upstream. `send(fixture)` takes a crag replay
+ * cli-node ELF → local capture upstream. `send(fixture)` takes an inbound replay
  * fixture (schema v1) and returns what the CLI finally put on the wire.
  */
 import http from 'node:http'

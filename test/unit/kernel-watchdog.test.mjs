@@ -1,7 +1,4 @@
 import assert from 'node:assert/strict'
-import fs from 'node:fs'
-import os from 'node:os'
-import path from 'node:path'
 import test from 'node:test'
 import { createKernelWatchdog, isKernelWatchdogTarget } from '../../src/lib/transport/kernel-watchdog.mjs'
 import { kernelFaults } from '../../src/lib/transport/rust-kernel-client.mjs'
@@ -111,29 +108,6 @@ test('container restarts are bounded, spaced out, then the VM is faulted until h
   } finally {
     kernelFaults.delete('vm-loop')
   }
-})
-
-test('watchdog does not restart a live crag slot', async () => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'kin-wd-crag-'))
-  const home = path.join(root, 'vms', 'vm-crag', 'cli-home')
-  const run = path.join(root, 'vms', 'vm-crag', 'run')
-  fs.mkdirSync(home, { recursive: true })
-  fs.mkdirSync(run, { recursive: true })
-  fs.writeFileSync(path.join(run, 'kernel.json'), JSON.stringify({ dataplane: 'crag' }))
-  const ensured = []
-  const wd = createKernelWatchdog({
-    observeRuntime: async () => ({ state: 'running' }),
-    listTargets: () => [{ id: 'vm-crag', inference_engine: 'rust' }],
-    homeDirFor: () => home,
-    health: async () => ({ ok: true, engine: 'rust', ready_slots: 0, cli_pid: 0 }),
-    ensure: async (exec) => {
-      ensured.push(exec.vmId)
-      return { ok: true }
-    },
-  })
-  await wd.tick()
-  assert.deepEqual(ensured, [])
-  fs.rmSync(root, { recursive: true, force: true })
 })
 
 test('inherited rust slot reaches the restart ladder after CLI budget is spent', async () => {

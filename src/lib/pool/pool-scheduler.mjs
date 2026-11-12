@@ -204,7 +204,7 @@ function seatHomes({ deviceVm = '', sessionVm = '', familyVm = '' } = {}) {
   })
 }
 
-function byVmHas(candidates, vmId) {
+function _byVmHas(candidates, vmId) {
   return (candidates || []).some((candidate) => candidate.vmId === vmId)
 }
 
@@ -353,6 +353,7 @@ export class PoolScheduler extends EventEmitter {
     accountQuota = null,
     runtimeRepo = null,
     workerHealth = null,
+    getRouting = () => ({}),
     config = {},
   } = {}) {
     super()
@@ -362,6 +363,7 @@ export class PoolScheduler extends EventEmitter {
     this.stickyRouter = stickyRouter
     this.accountQuota = accountQuota
     this.runtimeRepo = runtimeRepo
+    this.getRouting = getRouting
     this.workerHealth = workerHealth
     this.config = normalizePoolConfig(config)
     this.lastStickyCleared = false
@@ -1168,7 +1170,7 @@ export class PoolScheduler extends EventEmitter {
       if (circuit?.reason === 'circuit_open') return { ok: false, reason: circuit.reason, until: circuit.until }
       if (circuit?.reason === 'circuit_probe') circuitProbeUntil = circuit.until
     }
-    const gate = await evaluateSlotGate(vm)
+    const gate = await evaluateSlotGate(vm, this.getRouting())
     if (!gate.ok && gate.reason !== 'no_credential') {
       // Master pin may test a slot taken out of the pool, but SOCKS is still mandatory.
       if (!(pinned && gate.reason === 'vm_unschedulable')) return gate
@@ -1724,7 +1726,7 @@ export class PoolScheduler extends EventEmitter {
       !keyAllowsVm(candidate.keyScope, vm)
     )
       return null
-    const gate = evaluateSlotGate(vm)
+    const gate = evaluateSlotGate(vm, this.getRouting())
     if (!gate.ok && gate.reason !== 'no_credential' && !(pinned && gate.reason === 'vm_unschedulable')) return null
     if (!slotHasBoundProxy(vm) || kernelFaults.has(vm.id) || !vmNodeReady(vm)) return null
     const proxySync = evaluateProxySync({

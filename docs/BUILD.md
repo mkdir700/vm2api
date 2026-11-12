@@ -1,9 +1,9 @@
 # 版本与构建
 
-git 里只有源码。`bin/`、`web/dist`、`share/crag` 与 `share/wrap-cli` 里的 ELF / glibc 都不进 git：
+git 里只有源码。`bin/`、`web/dist` 与 `share/wrap-cli` 里的 ELF / glibc 都不进 git：
 
 - `web/dist` 与 `kin-api-kernel` 由源码编译（镜像构建内或本机）。
-- 生产验证过的 linux amd64 产物（`kin-kernel`、`kin-codex-kernel`、`kin-oauth-auth`、`kin-computer`、`kin-worker`、`kin-egress`、`kin-slot-gate`、`cli-node`、`cc-node`、crag kernel、glibc 2.39 shim）放在独立的 payload Release，由 [`deploy/payload.json`](../deploy/payload.json) 按 sha256 / 大小钉住。`npm run fetch:payload` 下载并校验到 `bin/` / `share/`；镜像构建同样按清单下载，校验不过即失败。
+- 生产验证过的 linux amd64 产物（`kin-kernel`、`kin-codex-kernel`、`kin-oauth-auth`、`kin-computer`、`kin-worker`、`kin-egress`、`kin-slot-gate`、`cli-node`、`cc-node`、glibc 2.39 shim）放在独立的 payload Release，由 [`deploy/payload.json`](../deploy/payload.json) 按 sha256 / 大小钉住。`npm run fetch:payload` 下载并校验到 `bin/` / `share/`；镜像构建同样按清单下载，校验不过即失败。
 
 换 payload：把新文件放到本机对应路径，然后
 
@@ -45,7 +45,7 @@ git push origin v1.2.22
 | `kin-worker` | **只** `telemetry`，不是 hop |
 | `kin-codex-kernel` | Codex 槽（payload） |
 | `kin-oauth-auth` | OAuth / Setup Token 换票服务二进制；源码不随部署上传 |
-| `kin-kernel-crag` / `cli-node` / `cc-node` | crag kernel 与槽内 wrap CLI（payload） |
+| `cli-node` / `cc-node` | 槽内默认内核 CLI（payload） |
 
 没有 tag、只点 workflow_dispatch 时，产物进 artifact，不会建 Release。
 
@@ -77,7 +77,7 @@ install -m 755 kin-kernel kin-egress kin-worker kin-codex-kernel kin-oauth-auth 
 npm ci
 pnpm -C web install --frozen-lockfile
 
-npm run fetch:payload     # bin/kin-{kernel,codex-kernel,oauth-auth,computer,worker,egress,slot-gate}、share/wrap-cli、share/crag
+npm run fetch:payload     # bin/kin-{kernel,codex-kernel,oauth-auth,computer,worker,egress,slot-gate}、share/wrap-cli
 npm run build:web         # web/dist
 ```
 
