@@ -50,7 +50,7 @@ export async function startHermitReleaseOrigin(directory) {
     if (mode === 'too-large') latest.archive.bytes = 64 * 1024 * 1024 + 1
     if (mode === 'release-hash') latest.release_sha256 = '0'.repeat(64)
     if (mode === 'huge-metadata') latest.padding = 'x'.repeat(70000)
-    if (req.url === '/v1/releases/latest') {
+    if (req.url === '/v1/releases/latest' || req.url === fixed) {
       if (mode === 'unavailable') { res.writeHead(503); return res.end('{}') }
       if (mode === 'redirect') { res.writeHead(302, { location: base + '/forbidden' }); return res.end() }
       res.setHeader('Content-Type', 'application/json')

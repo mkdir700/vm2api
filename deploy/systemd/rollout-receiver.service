@@ -1,0 +1,17 @@
+[Unit]
+Description=TrueRouter rollout receiver
+After=docker.service network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+Restart=on-failure
+User=root
+UMask=0077
+WorkingDirectory=/opt/truerouter-rollout/vm2api
+ExecStart=/usr/bin/python3 /opt/truerouter-rollout/vm2api/deploy/rollout-agent.py receive --port 8791 --config /etc/truerouter-rollout/agent.json
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

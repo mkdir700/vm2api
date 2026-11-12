@@ -497,3 +497,7 @@ Telegram 群组 **[t.me/vm2api](https://t.me/vm2api)**（`@VM2API`）：部署�
 ### 集群槽位迁移与扩容
 
 管理员可在「集群 → 机器 → 槽位行 → 迁移 / 扩容」选择目标节点或原节点扩内存。首版限定运行中的远程 Linux KVM 槽；停机迁移、预检、进度、失败回滚及人工恢复边界见 [操作说明](docs/slot-migration.md)。
+
+## tag 自动发布
+
+会话部署组、宿主机配置和恢复步骤见 [tag 发布操作说明](docs/operations/tag-rollout.md)。生产默认关闭。

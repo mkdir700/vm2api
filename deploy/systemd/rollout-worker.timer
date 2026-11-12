@@ -1,0 +1,10 @@
+[Unit]
+Description=TrueRouter rollout queue polling
+
+[Timer]
+OnBootSec=30s
+OnUnitInactiveSec=30s
+Unit=rollout-worker.service
+
+[Install]
+WantedBy=timers.target

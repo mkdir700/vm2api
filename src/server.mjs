@@ -1,4 +1,7 @@
 import { setupObservability } from './lib/observability/tracing.mjs'
+import { RolloutGroup } from './lib/rollout/group.mjs'
+import { rustKernelHealth } from './lib/transport/rust-kernel-client.mjs'
+import { slotExec } from './lib/vm/slot-runtime.mjs'
 import { restoreHermitKernels, stopAllHermitKernels } from './lib/transport/hermit-kernel-supervisor.mjs'
 import { EgressDrainClient, acquireManagedDrain } from './lib/vm/managed-egress-drain.mjs'
 import { egressRunDir, egressPidsForProxyConfig } from './lib/vm/egress.mjs'
@@ -157,6 +160,7 @@ const allowRate = createRateLimiter({
 // --- Persistent store (SQLite, sub2api-inspired) ---
 const dataDir = cfg.paths.data || path.join(cfg.paths.root, 'data')
 openDatabase({ dataDir, pooled: true })
+const rolloutGroup = process.env.KIN_ROLLOUT_GROUP ? new RolloutGroup(cfg.paths.project, getDb()) : null
 armWriteBehind(getDb())
 const jevUsageRepo = new JevUsageRepo()
 installJevUsageRecorder((event) => jevUsageRepo.record(event))
@@ -319,7 +323,7 @@ accountQuota = new AccountQuota({
 })
 accountQuota.loadVmQuotaOverrides(listVms(cfg.paths.project))
 
-const apiKeyStore = new ApiKeyStore({ dataDir: cfg.paths.data })
+const apiKeyStore = rolloutGroup?.keys || new ApiKeyStore({ dataDir: cfg.paths.data })
 groupsRepo = new GroupsRepo()
 const apiEndpointStore = new ApiEndpointStore({ dataDir: cfg.paths.data })
 const apiScheduler = new ApiScheduler()
@@ -785,9 +789,16 @@ async function refreshWorkerCredentialForVm({ vmId, vmPath, homeDir, vm, force =
   return published
 }
 
-const { json, writeSSEHeaders, readBody, readRawBody } = createRespond(cfg, {
+const {
+  json,
+  writeSSEHeaders,
+  readBody: readHttpBody,
+  readRawBody,
+} = createRespond(cfg, {
   tcpNodelay: () => routingConfig?.inference?.tcp_nodelay !== false,
 })
+
+const readBody = (req, maxBytes) => (req.rolloutBody ? Promise.resolve(req.rolloutBody) : readHttpBody(req, maxBytes))
 
 function rejectAuth(req, res, error) {
   req.authError = {
@@ -801,6 +812,12 @@ function rejectAuth(req, res, error) {
 
 /** `keyGate: false` (key self-service) skips the managed key's quota / RPM / concurrency gate and the gateway bucket. */
 function requireAuth(req, res, { keyGate = true } = {}) {
+  if (rolloutGroup && req.rollout) return true
+  if (rolloutGroup && !req.url.startsWith('/api/panel/') && !req.url.startsWith('/admin/'))
+    return rejectAuth(req, res, {
+      status: 401,
+      body: { error: { code: 'signed_admission_required', message: 'Signed admission required' } },
+    })
   req.presentedApiKey = extractApiKey(req)
   const token = extractPanelToken(req) || req.presentedApiKey
   if (!token) {
@@ -858,6 +875,11 @@ function requireAuth(req, res, { keyGate = true } = {}) {
   }
 
   // Managed multi-keys (sub2api-style)
+  if (rolloutGroup)
+    return rejectAuth(req, res, {
+      status: 401,
+      body: { error: { code: 'authority_access_required', message: 'Use the public gateway' } },
+    })
   const managed = apiKeyStore.authenticate(token)
   if (!managed.ok) {
     return rejectAuth(
@@ -1184,6 +1206,7 @@ const gracefulShutdown = createGracefulShutdown({
       await clusterManager.stop()
     } catch {}
     try {
+      rolloutGroup?.close()
       closeDatabase()
     } catch {}
     await shutdownTelemetry()
@@ -1203,6 +1226,42 @@ const server = http.createServer(async (req, res) => {
       return json(res, 400, { error: { message: 'Invalid URL', type: 'invalid_request' } })
     }
     const p = url.pathname
+    if (rolloutGroup && p.startsWith('/_rollout/')) {
+      return await rolloutGroup.handle(req, res, () =>
+        rolloutGroup.status(listVms(cfg.paths.project), poolScheduler?.queuedTotal?.() || 0, rustKernelHealth, (vm) =>
+          slotExec(cfg.paths.project, vm),
+        ),
+      )
+    }
+    if (rolloutGroup && /^\/api\/panel\/(api-keys|users|groups)(\/|$)/.test(p) && !['GET', 'HEAD'].includes(req.method))
+      return json(res, 409, { error: { code: 'authority_management_required' } })
+    if (
+      rolloutGroup &&
+      (p.startsWith('/v1/') ||
+        [
+          '/messages',
+          '/responses',
+          '/chat/completions',
+          '/completions',
+          '/alpha/search',
+          '/images/generations',
+          '/images/edits',
+          '/messages/count_tokens',
+          '/models',
+          '/usage',
+          '/me/quota',
+          '/me/usage',
+        ].includes(p))
+    ) {
+      if (
+        !(
+          (req.method === 'POST' && ['/v1/messages', '/v1/messages/count_tokens'].includes(p)) ||
+          (req.method === 'GET' && p === '/v1/models')
+        )
+      )
+        return json(res, 404, { error: { code: 'protocol_not_qualified' } })
+      await rolloutGroup.accept(req, res)
+    }
     if (gracefulShutdown.isShuttingDown()) {
       res.setHeader('Connection', 'close')
       if (p === '/health' || p === '/healthz') {
@@ -1377,9 +1436,22 @@ const server = http.createServer(async (req, res) => {
         res.end()
       } catch {}
     }
+  } finally {
+    if (req.rollout) {
+      if (!res.writableFinished && !res.destroyed)
+        await new Promise((resolve) => {
+          res.once('finish', resolve)
+          res.once('close', resolve)
+        })
+      rolloutGroup?.complete(req, res)
+    }
   }
 })
 server.on('upgrade', (req, socket, head) => {
+  if (rolloutGroup && ['/v1/responses', '/responses'].includes(parseRequestUrl(req)?.pathname)) {
+    socket.destroy()
+    return
+  }
   if (gracefulShutdown.isShuttingDown()) {
     socket.destroy()
     return

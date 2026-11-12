@@ -1,0 +1,20 @@
+services:
+  gateway:
+    image: ${ROLLOUT_IMAGE:?fixed image required}
+    container_name: ${ROLLOUT_GATEWAY_CONTAINER:?gateway container required}
+    init: true
+    restart: unless-stopped
+    network_mode: host
+    entrypoint: [node, src/session-gateway.mjs]
+    env_file: ["${ROLLOUT_GATEWAY_ENV:?private gateway env required}"]
+    environment:
+      HOST: 127.0.0.1
+      PORT: ${ROLLOUT_GATEWAY_PORT:-8790}
+      KIN_ROLLOUT_ADMIN_PORT: ${ROLLOUT_GATEWAY_ADMIN_PORT}
+      KIN_ROLLOUT_INSTANCE: ${ROLLOUT_GATEWAY_INSTANCE}
+      KIN_ROLLOUT_REUSE_PORT: "1"
+      KIN_ROLLOUT_STATE: /authority
+      KIN_ROLLOUT_SECRET_FILE: /run/rollout-token
+    volumes:
+      - ${ROLLOUT_GATEWAY_AUTHORITY}:/authority
+      - ${ROLLOUT_SECRET_FILE}:/run/rollout-token:ro
