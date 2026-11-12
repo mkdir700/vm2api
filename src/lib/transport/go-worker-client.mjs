@@ -35,6 +35,7 @@ import {
   isWrapConnectionError,
 } from '../core/errors.mjs'
 import { extraHeadersFromLimitError } from '../pool/quota-window.mjs'
+import { readKernelTiming } from '../protocol/kernel-timing.mjs'
 import { createStreamTiming } from '../protocol/stream-timing.mjs'
 import { mergeUsage } from '../protocol/openai-usage.mjs'
 import { ensureRedaction, maskJson, restoreJsonValue, createSseRestorer } from '../redaction/runtime.mjs'
@@ -651,6 +652,7 @@ async function callGoWorkerAdmitted({
       maxRequestBytes,
       signal,
       timeoutMs,
+      headers: { te: 'trailers' },
     })
     const data = await readAll(response)
     const parsedRaw = parseJson(data, response.statusCode)
@@ -661,6 +663,7 @@ async function callGoWorkerAdmitted({
       ok,
       status: response.statusCode || 0,
       via: 'go-worker',
+      kernelTiming: readKernelTiming(response, requestId),
       body: parsed,
       headers,
       usage: parsed?.usage || null,
@@ -846,6 +849,7 @@ async function streamGoWorkerAdmitted({
         ok: false,
         status: response.statusCode || 0,
         via: 'go-worker-stream',
+        kernelTiming: readKernelTiming(response, requestId),
         body: parseJson(data, response.statusCode),
         headers,
         committed: false,
@@ -1015,6 +1019,7 @@ async function streamGoWorkerAdmitted({
         ok: response.statusCode === 200 && !lastError && complete,
         status: response.statusCode || 0,
         via: 'go-worker-stream',
+        kernelTiming: readKernelTiming(response, requestId),
 
         body: lastError || assembled || { type: 'message', role: 'assistant', content: [] },
         headers: rateHeaders,

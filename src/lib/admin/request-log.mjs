@@ -575,6 +575,7 @@ export class RequestLogStore {
       first_token_ms: extra.first_token_ms ?? null,
       first_byte_ms: extra.first_byte_ms ?? null,
       generation_ms: extra.generation_ms ?? null,
+      kernel_timing: extra.kernel_timing ?? null,
       stop_reason: extra.stop_reason || usage.stop_reason || null,
       attempt_count: extra.attempt_count ?? null,
       final_state: extra.final_state || null,

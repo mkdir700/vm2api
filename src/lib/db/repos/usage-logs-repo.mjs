@@ -123,6 +123,7 @@ const SUMMARY_COLUMNS = [
   'first_token_ms',
   'first_byte_ms',
   'generation_ms',
+  'kernel_timing',
   'stop_reason',
   'attempt_count',
   'final_state',

@@ -1,4 +1,4 @@
-import type { UsageLogRow } from '@/types/panel-usage-logs'
+import type { KernelTiming, UsageLogRow } from '@/types/panel-usage-logs'
 import { Clock, Gauge, Zap } from 'lucide-react'
 import {
   calculateOutputRate,
@@ -111,7 +111,8 @@ export function PerformanceTab({ row }: { row: UsageLogRow }) {
     ttftMs == null &&
     durationMs == null &&
     firstByteMs == null &&
-    generationMs == null
+    generationMs == null &&
+    !row.kernelTiming
   ) {
     return (
       <div className='py-8 text-center text-muted-foreground'>
@@ -210,6 +211,9 @@ export function PerformanceTab({ row }: { row: UsageLogRow }) {
           </div>
         </div>
       ) : null}
+      {row.kernelTiming?.schema_version === 1 ? (
+        <KernelTimingDetails timing={row.kernelTiming} />
+      ) : null}
       <div className='space-y-2'>
         <h4 className='text-sm font-semibold'>性能数据</h4>
         <div className='divide-y rounded-lg border bg-card'>
@@ -229,6 +233,85 @@ export function PerformanceTab({ row }: { row: UsageLogRow }) {
           </p>
         ) : null}
       </div>
+    </div>
+  )
+}
+
+const KERNEL_STAGES = [
+  ['pool_wait', '内核会话获取'],
+  ['context_check', '上下文检查'],
+  ['managed_prepare', '受管环境准备'],
+  ['runtime_ready', '运行时就绪'],
+  ['delivery', '请求执行与交付'],
+  ['history_confirm', '历史确认'],
+] as const
+
+const UPSTREAM_POINTS = [
+  ['dispatch_ms', '发起上游请求'],
+  ['headers_ms', '收到响应头'],
+  ['first_byte_ms', '收到首字节'],
+  ['first_protocol_ms', '收到首个协议事件'],
+  ['first_content_ms', '收到首个内容'],
+  ['complete_ms', '上游响应完成'],
+] as const
+
+function KernelTimingDetails({ timing }: { timing: KernelTiming }) {
+  const selection = timing.selection
+    ? {
+        owner_created: '新建会话',
+        owner_reused: '复用会话',
+        prewarm_claimed: '领取预热会话',
+        checkpoint_restore: '恢复检查点',
+        context_replacement: '替换上下文',
+        credential_rotation: '更新凭据',
+      }[timing.selection]
+    : null
+  const stages = KERNEL_STAGES.filter(([key]) => timing.timings_ms[key] != null)
+  const points = UPSTREAM_POINTS.filter(
+    ([key]) => timing.upstream_timing?.[key] != null
+  )
+  return (
+    <div className='space-y-3' data-testid='kernel-timing'>
+      <h4 className='text-sm font-semibold'>
+        内核耗时明细{selection ? ` · ${selection}` : ''}
+      </h4>
+      <div className='divide-y rounded-lg border bg-card'>
+        {stages.map(([key, label]) => (
+          <div
+            key={key}
+            className='flex items-center justify-between px-4 py-3'
+          >
+            <span className='text-sm text-muted-foreground'>{label}</span>
+            <span className='font-mono text-sm font-medium'>
+              {formatDuration(timing.timings_ms[key]!)}
+            </span>
+          </div>
+        ))}
+      </div>
+      <p className='text-xs text-muted-foreground'>
+        内核阶段可重叠，不能相加。环境准备和运行时就绪只在本次启动运行时时记录。
+      </p>
+      {points.length > 0 ? (
+        <>
+          <h5 className='text-sm font-medium'>内核上游时间点</h5>
+          <div className='divide-y rounded-lg border bg-card'>
+            {points.map(([key, label]) => (
+              <div
+                key={key}
+                className='flex items-center justify-between px-4 py-3'
+              >
+                <span className='text-sm text-muted-foreground'>{label}</span>
+                <span className='font-mono text-sm font-medium'>
+                  {formatDuration(timing.upstream_timing![key]!)}
+                </span>
+              </div>
+            ))}
+          </div>
+          <p className='text-xs text-muted-foreground'>
+            时间点从内核上游计时起点累计，不能相加。缺失的时间点不展示。
+          </p>
+        </>
+      ) : null}
     </div>
   )
 }

@@ -81,6 +81,40 @@ export type CacheTtlApplied = '5m' | '1h' | 'mixed' | null
 export type ReasoningEffort =
   'none' | 'minimal' | 'auto' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
 
+export type KernelTiming = {
+  schema_version: 1
+  selection:
+    | 'owner_created'
+    | 'owner_reused'
+    | 'prewarm_claimed'
+    | 'checkpoint_restore'
+    | 'context_replacement'
+    | 'credential_rotation'
+    | null
+  timings_ms: Partial<
+    Record<
+      | 'pool_wait'
+      | 'context_check'
+      | 'managed_prepare'
+      | 'runtime_ready'
+      | 'delivery'
+      | 'history_confirm',
+      number | null
+    >
+  >
+  upstream_timing: Partial<
+    Record<
+      | 'dispatch_ms'
+      | 'headers_ms'
+      | 'first_byte_ms'
+      | 'first_protocol_ms'
+      | 'first_content_ms'
+      | 'complete_ms',
+      number | null
+    >
+  > | null
+}
+
 /** 滚动日志的一行。`null` = 本行该字段为空（vm2api 不产出的 hub 字段已整体删去）。 */
 export type UsageLogRow = {
   /** `usage_logs.id`（`log_<12hex>`），游标 tiebreaker。 */
@@ -141,6 +175,7 @@ export type UsageLogRow = {
    * 首字节 / 首个协议事件（`first_byte_ms`），相对入口。
    * 历史行或未观测到上游协议事件为 `null`，不用别的时间估。
    */
+  kernelTiming?: KernelTiming | null
   firstByteMs: number | null
   /** 首个生成内容/进度（`first_token_ms`），包括 thinking、工具名称和参数。 */
   ttftMs: number | null

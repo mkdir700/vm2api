@@ -1,3 +1,4 @@
+import { storedKernelTiming } from '../../protocol/kernel-timing.mjs'
 /**
  * Keyset-paginated camelCase view over `usage_logs` for the scrolling log page
  * and its side panels (`GET /api/panel/usage-logs*`).
@@ -212,6 +213,7 @@ export function toUsageLogRow(row, names, chain = []) {
     ttftMs: nullableNum(row.first_token_ms),
     firstByteMs: nullableNum(row.first_byte_ms),
     generationMs: nullableNum(row.generation_ms),
+    kernelTiming: storedKernelTiming(row.kernel_timing),
     stopReason: row.stop_reason ?? null,
     attemptCount: nullableNum(row.attempt_count),
     finalState: row.final_state ?? null,

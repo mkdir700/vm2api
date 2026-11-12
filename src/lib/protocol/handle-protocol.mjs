@@ -1426,6 +1426,7 @@ export function createHandleProtocol(deps) {
         ? Math.max(0, result.firstByteAt - logCtx.t0)
         : (result?.firstByteMs ?? null)
       logBag.generation_ms = result?.generationMs ?? null
+      logBag.kernel_timing = result?.kernelTiming ? JSON.stringify(result.kernelTiming) : null
       logBag.final_state = result?.terminalState || null
       attachPricing(logBag, {
         managedKey,
@@ -2034,6 +2035,7 @@ export function createHandleProtocol(deps) {
       ? Math.max(0, result.firstByteAt - logCtx.t0)
       : (result?.firstByteMs ?? null)
     logBag.generation_ms = result?.generationMs ?? null
+    logBag.kernel_timing = result?.kernelTiming ? JSON.stringify(result.kernelTiming) : null
     logBag.stop_reason = result?.body?.stop_reason || result?.stopReason || null
     logBag.via = result?.via || 'go-worker-pool'
     if (result?.finalState === 'content_filter' || logBag.stop_reason === 'refusal') {
