@@ -137,6 +137,7 @@ export function withRequestProtocolBetas(tokens = [], body = {}) {
     let hasMessageFormat = false
     let hasMessageTaskBudget = false
     for (const message of body.messages) {
+      if (message?.role === 'system' || message?.role === 'developer') add(BETA_MID_CONVERSATION_SYSTEM)
       if (!message || typeof message !== 'object') continue
       if (message.clear_at != null) hasClearAt = true
       if (contentHasInlineToolDefinition(message.content)) hasInlineToolDefinition = true

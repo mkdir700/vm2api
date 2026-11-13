@@ -150,8 +150,16 @@ def worker(args):
                     'system': [{'type': 'text', 'text': 'SYNTHETIC_REPEATED_SLOT_CACHE_EXPERIMENT\n'+reference,
                                 'cache_control': {'type': 'ephemeral', 'ttl': '5m'}}],
                     'messages': [{'role': 'user', 'content': 'Reply with exactly PONG. Do not call tools.'}]}
+                if args.growing_context:
+                    body['messages'].append({'role': 'system', 'content': 'SYNTHETIC_INITIAL_SYSTEM_CONTEXT'})
                 replies = []
                 for index in range(4):
+                    if args.growing_context and index:
+                        body['messages'].extend([
+                            {'role': 'assistant', 'content': replies[-1]['body']['content']},
+                            {'role': 'user', 'content': f'Reply with exactly PONG. Synthetic turn {index}.'},
+                            {'role': 'system', 'content': f'Synthetic remaining budget: {9000-index}. Keep replies brief.'},
+                        ])
                     result = message(body)
                     replies.append(result)
                     save(args.out/'replies.json', replies)
@@ -160,18 +168,24 @@ def worker(args):
                 db = sqlite3.connect(str(root/'gateway-project/data/kin.db'))
                 rows = db.execute('select vm_id, outbound_session_id, status from usage_logs order by created_at').fetchall()
                 db.close()
-                check('one_actual_slot_four_execution_sessions', len(rows) == 4 and len({r[0] for r in rows}) == 1 and len({r[1] for r in rows}) == 4)
+                check('one_actual_slot_execution_identity', len(rows) == 4 and len({r[0] for r in rows}) == 1 and len({r[1] for r in rows}) == (1 if args.growing_context else 4))
                 save(args.out/'gateway-dispatches.json', [{'vm_id':r[0],'session_id':r[1],'status':r[2]} for r in rows])
                 observed = call(sock, '/internal/session-cache')
                 save(args.out/'native-cache.json', observed)
                 rows = observed['body']['requests']
                 successful = [row for row in rows if row['status'] == 200]
                 check('four_successful_generations', len(successful) == 4)
-                check('different_owners_inside_same_slot', len({row['native_owner'] for row in successful}) == 4)
+                check('native_owner_contract', len({row['native_owner'] for row in successful}) == (1 if args.growing_context else 4))
+                if args.growing_context:
+                    check('append_only_owner_reused', all(row['selection'] == 'owner_reused' for row in successful[1:]))
+                    if args.live:
+                        reads = [reply['body'].get('usage', {}).get('cache_read_input_tokens', 0) for reply in replies]
+                        check('real_history_cache_grows', all(reads[i] > reads[i-1] for i in range(1, len(reads))))
+                        save(args.out/'real-cache-read-growth.json', reads)
                 save(args.out/'slot-identity.json', {'slot': 'isolated-slot-a', 'kernel_socket_sha256':
                     hashlib.sha256(str(sock).encode()).hexdigest(), 'native_generation': observed['body'].get('generation'),
                     'cross_slot_dispatches': 0, 'owner_count': len(successful)})
-                if not args.live:
+                if not args.live and not args.growing_context:
                     tool_body = {**body, 'messages':[{'role':'user','content':'SYNTHETIC_NATIVE_TOOL_LIFECYCLE'}],
                         'tools':[{'name':'Probe','description':'Synthetic caller-owned tool','input_schema':{'type':'object','properties':{'label':{'type':'string'}},'required':['label']}}]}
                     first = message(tool_body)
@@ -199,6 +213,15 @@ def worker(args):
                     regenerated_initial = message(tool_body)
                     check('initial_tool_input_regenerates_after_completed_continuation',regenerated_initial['status']==200 and regenerated_initial['body']['stop_reason']=='tool_use')
             finally:
+                try:
+                    save(args.out/'native-last-observation.json', call(sock, '/internal/session-cache'))
+                except Exception as error:
+                    save(args.out/'observation-error.json', {'error': str(error)})
+                diagnostics = args.out/'native-diagnostics'
+                diagnostics.mkdir(exist_ok=True)
+                for name in ['native-input-events.jsonl', 'native-output-events.jsonl', 'supervisor.json', 'owner.json']:
+                    for file in (root/'owners').glob('*/'+name):
+                        (diagnostics/(file.parent.name+'-'+name)).write_bytes(file.read_bytes())
                 if gateway is not None and gateway.poll() is None:
                     gateway.terminate()
                     gateway.wait(timeout=20)
@@ -223,6 +246,7 @@ def main():
     parser.add_argument('--tmux', type=Path, default=Path('/opt/homebrew/bin/tmux'))
     parser.add_argument('--out', type=Path, required=True)
     parser.add_argument('--model', default='claude-opus-5-5')
+    parser.add_argument('--growing-context', action='store_true', help='Append system reminders and verify native cache continuity')
     parser.add_argument('--live', action='store_true')
     parser.add_argument('--live-host', default='primaryserver')
     parser.add_argument('--live-container', default='kin-02')
@@ -278,8 +302,15 @@ def main():
             history = json.dumps(body.get('messages', []))
             blocks = [{'type':'tool_use','id':'synthetic_external_tool','name':'mcp__outer__Probe','input':{'label':'synthetic'}}] if 'SYNTHETIC_NATIVE_TOOL_LIFECYCLE' in history and 'tool_result' not in history else []
             raw = sse(ordinal, blocks).replace(b'"claude-sonnet-4-6"', json.dumps(body['model']).encode())
-        record = {'ordinal': ordinal, 'control': control, 'status': result['status'],
+        error_detail = None
+        if result['status'] != 200:
+            try:
+                error_detail = json.loads(raw).get('error', {})
+            except ValueError:
+                error_detail = {'type': 'non_json_error'}
+        record = {'error': error_detail, 'ordinal': ordinal, 'control': control, 'status': result['status'],
             'request_id': result.get('request_id'), 'prefix': prefix(body), 'usage': usage(raw),
+            'protocol_betas': headers.get('anthropic-beta', '').split(','),
             'source': 'real-provider' if args.live else 'mock-provider'}
         with lock:
             records.append(record)
@@ -320,22 +351,59 @@ def main():
             '--api-kernel',str(args.api_kernel.resolve()),'--node',str(args.node.resolve()),
             '--provider', f'http://127.0.0.1:{server.server_port}']
         if args.live: command.append('--live')
+        if args.growing_context: command.append('--growing-context')
         result = subprocess.run(command, capture_output=True, timeout=420)
         (args.out/'worker-stderr.txt').write_bytes(result.stderr[-12000:])
         code = result.returncode
         source = {'hermit': sha(args.hermit), 'cli': sha(args.cli), 'tmux': sha(args.tmux),
             'harness': sha(__file__), 'api_kernel':sha(args.api_kernel), 'gateway_fixture':sha(WORKSPACE/'vm2api/test/fixtures/native-server-gateway.mjs'), 'vm2api': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=WORKSPACE/'vm2api', text=True).strip(),
-            'production_source':{name:sha(WORKSPACE/'vm2api'/name) for name in ['src/lib/pool/request-slots.mjs','src/lib/pool/failover-runner.mjs','src/lib/pool/pool-scheduler.mjs','src/lib/protocol/handle-protocol.mjs','src/lib/core/errors.mjs','src/lib/db/migrations/056_request_slot_bindings.sql']},
+            'production_source':{name:sha(WORKSPACE/'vm2api'/name) for name in ['src/lib/protocol/anthropic-policy.mjs','src/lib/transport/go-worker-client.mjs','src/lib/pool/request-slots.mjs','src/lib/pool/failover-runner.mjs','src/lib/pool/pool-scheduler.mjs','src/lib/protocol/handle-protocol.mjs','src/lib/core/errors.mjs','src/lib/db/migrations/056_request_slot_bindings.sql']},
             'hermit_source': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=WORKSPACE/'hermit', text=True).strip()}
         save(args.out/'pins.json', source)
-        native = [row for row in records if not row['control']][:4]
+        native = [row for row in records if not row['control'] and row['status'] == 200][:4]
+        if args.growing_context and len(captures) == 4:
+            def without_cache(value):
+                if isinstance(value, dict):
+                    return {key: without_cache(item) for key, item in value.items() if key != 'cache_control'}
+                if isinstance(value, list):
+                    return [without_cache(item) for item in value]
+                return value
+            messages = [without_cache(body['messages']) for body, _ in captures]
+            initial_system_retained = all(any(message['role'] == 'system' and
+                'SYNTHETIC_INITIAL_SYSTEM_CONTEXT' in json.dumps(message['content']) for message in history)
+                for history in messages)
+            history_preserved = all(messages[index][:len(messages[index-1])] == messages[index-1]
+                for index in range(1, len(messages)))
+            budgets_retained = all(all(any(message['role'] == 'system' and
+                f'Synthetic remaining budget: {9000-turn}.' in json.dumps(message['content'])
+                for message in messages[index]) for turn in range(1, index+1))
+                for index in range(1, len(messages)))
+            system_beta_set = all('mid-conversation-system-2026-04-07' in
+                headers.get('anthropic-beta', '').split(',') for _, headers in captures)
+            save(args.out/'system-context-checks.json', {'initial_system_retained': initial_system_retained,
+                'prior_history_preserved': history_preserved, 'budget_text_retained': budgets_retained,
+                'system_beta_set': system_beta_set})
+            if not all([initial_system_retained, history_preserved, budgets_retained, system_beta_set]):
+                code = 1
+                failures.append('native system context or historical prefix changed')
         summary = {'worker_exit_code': code, 'mode': 'live' if args.live else 'isolated-mock',
             'live_calls': live_calls, 'authorized_live_limit': args.live_authorized_limit if args.live else 0,
-            'actual_provider_requests': len([row for row in records if not row['control']]), 'cache_probe_requests':len(native), 'prefixes_identical': len(native) == 4 and
+            'actual_provider_requests': len([row for row in records if not row['control']]), 'upstream_rejections': len([row for row in records if row['status'] != 200]), 'cache_probe_requests':len(native), 'prefixes_identical': len(native) == 4 and
                 all(row['prefix'] == native[0]['prefix'] for row in native),
             'real_cache_verified': args.live and len(native) == 4 and
                 all(row['status'] == 200 and row['usage'].get('cache_read_input_tokens', 0) > 0 for row in native[1:]),
+            'growing_context': args.growing_context,
+            'fixed_system_and_tools': len(native) == 4 and all(row['prefix']['system'] == native[0]['prefix']['system'] and row['prefix']['tools'] == native[0]['prefix']['tools'] for row in native),
+            'real_history_cache_grows': args.live and args.growing_context and len(native) == 4 and all(native[i]['usage'].get('cache_read_input_tokens', 0) > native[i-1]['usage'].get('cache_read_input_tokens', 0) for i in range(1,4)),
             'failures': failures}
+        if args.growing_context and not summary['fixed_system_and_tools']:
+            code = 1
+            summary['worker_exit_code'] = code
+            failures.append('native fixed system/tools changed')
+        if args.live and args.growing_context and not summary['real_history_cache_grows']:
+            code = 1
+            summary['worker_exit_code'] = code
+            failures.append('real cache reads did not grow')
         save(args.out/'summary.json', summary)
         print(json.dumps(summary, ensure_ascii=False, indent=2))
     except Exception:

@@ -11,9 +11,8 @@ import {
   ensureFastModeBeta,
   stripInvalidThinkingBlocks,
   alignSamplingWithThinking,
-  modelSupportsMidConversationSystem,
 } from './anthropic-policy.mjs'
-import { liftMidConversationSystemMessages, promoteContentToBlocks } from './sanitize.mjs'
+import { promoteContentToBlocks } from './sanitize.mjs'
 import { applyThinkingDisplay, thinkingDisplayMode } from './thinking.mjs'
 import { ensureOutputConfigSchema } from './request-rectifier.mjs'
 import {
@@ -30,7 +29,6 @@ import {
   hasEnvironmentSection,
   stampBillingPromptId,
   stripSubagentBilling,
-  collapseSystemBudgetReminders,
   CRS_OFFICIAL_SYSTEM,
   CRS_OFFICIAL_CLI_SYSTEM,
   CRS_COMPACT_IDENTITY,
@@ -125,46 +123,6 @@ function stabilizeSystemBudget(body) {
   return changed ? { ...body, system } : body
 }
 
-function stabilizeBlockBudget(block) {
-  if (typeof block === 'string') return stabilizeOfficialContextBudget(block)
-  if (!block || typeof block !== 'object') return block
-  let next = block
-  if (typeof block.text === 'string') {
-    const text = stabilizeOfficialContextBudget(block.text)
-    if (text !== block.text) next = { ...next, text }
-  }
-  if (typeof block.content === 'string') {
-    const content = stabilizeOfficialContextBudget(block.content)
-    if (content !== block.content) next = { ...next, content }
-  }
-  return next
-}
-
-/** Historical role=system reminders sit inside the next lookup prefix. */
-function stabilizeMessageBudgets(body) {
-  if (!Array.isArray(body?.messages)) return body
-  let changed = false
-  const messages = body.messages.map((message) => {
-    const content = message?.content
-    if (typeof content === 'string') {
-      const text = stabilizeOfficialContextBudget(content)
-      if (text === content) return message
-      changed = true
-      return { ...message, content: text }
-    }
-    if (!Array.isArray(content)) return message
-    let touched = false
-    const next = content.map((block) => {
-      const stabilized = stabilizeBlockBudget(block)
-      if (stabilized !== block) touched = true
-      return stabilized
-    })
-    if (!touched) return message
-    changed = true
-    return { ...message, content: next }
-  })
-  return changed ? { ...body, messages } : body
-}
 const OFFICIAL_CACHE = Object.freeze({ type: 'ephemeral' })
 
 function textOf(block) {
@@ -361,11 +319,8 @@ export function prepareCliHopBody(
       else body.system = leftover
       body = stabilizeSystemBudget(body)
     }
-    body = stabilizeMessageBudgets(body)
   }
-  // cli-node sends mid-conversation-system. Only models that reject the role need the lift.
-  if (!lean && !modelSupportsMidConversationSystem(body.model)) body = liftMidConversationSystemMessages(body)
-  if (!preserveSystem && !lean) body = collapseSystemBudgetReminders(body)
+  // Keep every mid-conversation instruction at its original history boundary.
 
   // Native cli-node applies model policy and the medium effort default.
   // Explicit sampling fields stay omitted or present exactly as the caller sent them.

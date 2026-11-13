@@ -2,7 +2,6 @@ import crypto from 'node:crypto'
 import {
   anthropicContentIsEmpty,
   dropEmptySystemControlTurns,
-  liftMidConversationSystemMessages,
   mergeConsecutiveAnthropicMessages,
   messageHasTurnControls,
   stripIllegalContentFields,
@@ -294,18 +293,6 @@ export function modelSupportsContextManagement(modelId = '') {
 }
 
 /**
- * Docs list: Fable 5 / 5.1, Mythos 5 / 5.1, Opus 5.5 / 5 / 4.8, Sonnet 5.5, Haiku 5.5.
- * Sonnet 5, Haiku 4.5 and other Claude 4.x reject mid-conversation `role=system` (400).
- */
-export function modelSupportsMidConversationSystem(modelId = '') {
-  const id = String(modelId || '')
-    .trim()
-    .toLowerCase()
-    .replace(/\[1m\]$/i, '')
-  return /^claude-(?:(?:fable|mythos)-5(?:[-.]1)?|opus-(?:5(?:[-.]5)?|4[-.]8)|(?:sonnet|haiku)-5[-.]5)(?:-|$)/.test(id)
-}
-
-/**
  * Official Claude Code request default (not the response `{ applied_edits: [] }`).
  * Third-party / unofficial: fill only when missing AND thinking is enabled/adaptive.
  * Never overwrite a caller-supplied context_management. No thinking → skip
@@ -365,14 +352,10 @@ export function anthropicBetaTokensContains(header, token) {
  * Keep context_management only when the beta is present.
  * Haiku (and any hop without prompt-caching-scope) must drop cache_control.scope
  * or Anthropic 400s Extra inputs.
- * Haiku / hops without mid-conversation-system must lift messages[].role=system
- * or Anthropic 400s `role 'system' is not supported on this model`.
+ * Mid-conversation system turns remain in place for every model. Provider
+ * capability and placement failures must be returned without lifting content.
  */
-export function sanitizeAnthropicBodyForBetaTokens(
-  body = {},
-  anthropicBetaHeader = '',
-  { nativeSystemMessages = false } = {},
-) {
+export function sanitizeAnthropicBodyForBetaTokens(body = {}, anthropicBetaHeader = '') {
   if (!body || typeof body !== 'object') return body
   let out = body
   if (
@@ -393,21 +376,7 @@ export function sanitizeAnthropicBodyForBetaTokens(
     out = { ...out }
     delete out.speed
   }
-  const allowMidSystem =
-    modelSupportsMidConversationSystem(out.model) &&
-    (nativeSystemMessages || anthropicBetaTokensContains(anthropicBetaHeader, MID_CONVERSATION_SYSTEM_BETA))
-  if (
-    !allowMidSystem &&
-    Array.isArray(out.messages) &&
-    out.messages.some((message) => {
-      const role = String(message?.role || '')
-        .trim()
-        .toLowerCase()
-      return role === 'system' || role === 'developer'
-    })
-  ) {
-    out = liftMidConversationSystemMessages(out)
-  }
+  // Preserve system turns for every model. Upstream owns capability errors.
   out = dropEmptySystemControlTurns(out)
   return downgradeUngatedThinkingDisplay(out, anthropicBetaHeader)
 }

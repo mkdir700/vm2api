@@ -28,8 +28,6 @@ import {
   isBillingText,
   isOfficialIdentityText,
 } from './official-profiles.mjs'
-import { modelSupportsMidConversationSystem } from '../protocol/anthropic-policy.mjs'
-import { liftMidConversationSystemMessages } from '../protocol/sanitize.mjs'
 import { normalizeCacheTtl } from '../protocol/cache-ttl.mjs'
 import { stabilizeOfficialContextBudget } from '../protocol/outbound-attempt.mjs'
 
@@ -263,38 +261,26 @@ export function renderOfficial303Body(
   let messages = stripMessageMarkers(body.messages).map((message) =>
     message?.role === 'system' ? officialSystemContent(message) : message,
   )
-  if (modelSupportsMidConversationSystem(model)) {
-    let replaced = false
-    messages = messages.map((message) => {
-      if (message?.role !== 'system') return message
-      const next = replaceEnvironmentInMessage(message, (section) => {
-        // Each turn renders from its own facts so history bytes stay identical on later turns.
-        const own = environmentEnv(parseInboundEnvFacts([section]), { identity, model })
-        return buildOfficial303Environment(own, { model, oneM: oneM || /\(1M context\)|\[1m\]/i.test(section) })
-      })
-      if (!next) return message
-      replaced = true
-      return next
+  let replaced = false
+  messages = messages.map((message) => {
+    if (message?.role !== 'system') return message
+    const next = replaceEnvironmentInMessage(message, (section) => {
+      // Each turn renders from its own facts so history bytes stay identical on later turns.
+      const own = environmentEnv(parseInboundEnvFacts([section]), { identity, model })
+      return buildOfficial303Environment(own, { model, oneM: oneM || /\(1M context\)|\[1m\]/i.test(section) })
     })
-    if (!replaced) {
-      const at = lastUserIndex(messages)
-      if (at >= 0) messages.splice(at + 1, 0, { role: 'system', content: requestEnvironment })
-    }
-  } else {
-    // Official merges the session sections into guidance when role=system is unavailable.
-    const guidance = system.findLastIndex((block) => block?.cache_control && !isBillingText(block.text))
-    if (guidance >= 0) {
-      system = system.map((block, i) =>
-        i === guidance ? { ...block, text: `${block.text}\n\n${requestEnvironment}` } : block,
-      )
-    }
+    if (!next) return message
+    replaced = true
+    return next
+  })
+  if (!replaced) {
+    const at = lastUserIndex(messages)
+    if (at >= 0) messages.splice(at + 1, 0, { role: 'system', content: requestEnvironment })
   }
   if (leftover) messages = prependReminder(messages, leftover)
 
   let out = { ...body, system, messages }
   delete out.cache_control
-  // Lift before marking: merging the turns around a lifted role=system changes the user indexes.
-  if (!modelSupportsMidConversationSystem(model)) out = liftMidConversationSystemMessages(out)
   const marked = markLastUsers(out.messages, marker)
   out = {
     ...out,

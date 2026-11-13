@@ -150,10 +150,11 @@ test('multi-turn Messages remain native and unflattened', async () => {
       },
     })
     const tr = readTrace(gw)
-    assert.equal(tr.body.messages.length, 3)
-    assert.ok(msgText(tr.body.messages[0]).endsWith('first question'))
-    assert.equal(msgText(tr.body.messages[1]), 'first answer')
-    assert.ok(msgText(tr.body.messages[2]).endsWith('second question'))
+    const dialogue = tr.body.messages.filter((message) => message.role !== 'system')
+    assert.equal(dialogue.length, 3)
+    assert.ok(msgText(dialogue[0]).endsWith('first question'))
+    assert.equal(msgText(dialogue[1]), 'first answer')
+    assert.ok(msgText(dialogue[2]).endsWith('second question'))
   } finally {
     await gw.stop()
   }
@@ -200,11 +201,12 @@ test('HTTP path preserves long system without CLI argv truncation', async () => 
       },
     })
     const tr = readTrace(gw)
-    // Haiku cannot park leftover as messages[].role=system. official_full then
-    // keeps billing + identity + agent + env + caller_system (5 blocks).
-    assert.equal(tr.body.system.length, 5)
+    // Every model keeps environment instructions at their message boundary.
+    assert.equal(tr.body.system.length, 4)
     assert.equal(tr.body.messages[0].role, 'user')
-    assert.equal(tr.body.messages.length, 1)
+    assert.equal(tr.body.messages.length, 2)
+    assert.equal(tr.body.messages[1].role, 'system')
+    assert.match(msgText(tr.body.messages[1]), /# Environment/)
     assert.ok(!String(tr.body.system[2].text || '').includes(sys))
     assert.ok(!String(tr.body.system[3].text || '').includes(sys))
     assert.equal(tr.body.system.at(-1).text, sys)

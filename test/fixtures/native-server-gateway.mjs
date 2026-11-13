@@ -6,6 +6,7 @@ import { startGateway, seedVm } from '../harness.mjs'
 const [socket, apiKernel, out] = process.argv.slice(2)
 const project = path.join(path.dirname(socket), 'gateway-project')
 const vm = seedVm({ project })
+vm.claude.account_tier = 'max'
 vm.dataplane = 'hermit'
 vm.proxy = { id: 'px-local', scheme: 'direct' }
 vm.claude_code_version = '2.1.318'
