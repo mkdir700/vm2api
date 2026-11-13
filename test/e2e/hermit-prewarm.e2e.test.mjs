@@ -181,7 +181,7 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     } while (Date.now() < deadline)
     check(
       'controller_exposes_real_prewarm',
-      state?.pool?.prewarm_ready === 1 && state.pool.prewarm_stage === 'coordinator_ready',
+      state?.pool?.prewarm_ready === 1 && state.pool.prewarm_stage === 'cli_ready',
     )
     check('prewarm_makes_no_model_request', captures.length === 0)
     const config = JSON.parse(fs.readFileSync(path.join(run, 'native-slot.json')))
