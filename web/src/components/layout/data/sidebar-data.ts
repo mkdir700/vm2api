@@ -45,6 +45,7 @@ const ALL_GROUPS: NavGroup[] = [
     items: [
       { title: '模型', url: '/models', icon: Sparkles },
       { title: '风险审计', url: '/risk', icon: ShieldAlert },
+      { title: '审查记录', url: '/moderation-reviews', icon: ScrollText },
       { title: 'system提示词', url: '/system', icon: MessageSquareText },
       { title: 'API', url: '/api', icon: Send },
       { title: '密钥', url: '/keys', icon: KeyRound },

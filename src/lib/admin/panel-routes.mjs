@@ -1,3 +1,4 @@
+import { ModerationReviewsRepo } from '../db/repos/moderation-reviews-repo.mjs'
 import { runKernelTransition, publicKernelTransition } from '../vm/kernel-transition.mjs'
 import { resolveHermitPackage } from '../vm/hermit-runtime.mjs'
 import { installKernelPackage, getKernelPackage, MAX_KERNEL_PACKAGE_BYTES } from '../vm/kernel-packages.mjs'
@@ -6102,6 +6103,26 @@ export function createPanelHandler(ctx) {
       if (req.method === 'GET' && p === '/api/panel/protocol-entry') {
         return json(res, 200, panel.ok(requestLog.protocolEntryStats()))
       }
+      if (
+        req.method === 'GET' &&
+        (p === '/api/panel/moderation-reviews' || p.startsWith('/api/panel/moderation-reviews/'))
+      ) {
+        if (panelIdentity(req).role !== 'admin')
+          return json(res, 403, { ok: false, error: { code: 'forbidden', message: '仅管理员可查看审查记录' } })
+        try {
+          const repo = new ModerationReviewsRepo()
+          const data =
+            p === '/api/panel/moderation-reviews'
+              ? repo.list(Object.fromEntries(url.searchParams))
+              : repo.detail(p.split('/').at(-1))
+          if (!data) return json(res, 404, { ok: false, error: { code: 'not_found', message: '审查记录不存在' } })
+          return json(res, 200, panel.ok({ ...data, storage_errors_since_start: jevUsageStorageErrors() }))
+        } catch (error) {
+          if (error instanceof TypeError)
+            return json(res, 400, { ok: false, error: { code: 'invalid_review_query', message: '审查查询参数不正确' } })
+          throw error
+        }
+      }
       if (req.method === 'GET' && p === '/api/panel/jev-usage') {
         if (panelIdentity(req).role !== 'admin')
           return json(res, 403, { ok: false, error: { code: 'forbidden', message: '仅管理员可查看审核用量' } })
@@ -6154,7 +6175,13 @@ export function createPanelHandler(ctx) {
         const stored = readJevConfig((key, fallback) => new SettingsRepo().get(key, fallback))
         const apiKey = typedKey || stored.api_keys[0] || ''
         try {
-          const listed = await listDecisionModels(baseUrl, apiKey, Number(body?.timeout_ms) || current.timeout_ms)
+          const listed = await listDecisionModels(
+            baseUrl,
+            apiKey,
+            Number(body?.timeout_ms) || current.timeout_ms,
+            globalThis.fetch,
+            stored.provider,
+          )
           return json(res, 200, panel.ok({ models: listed.models, url: listed.url }))
         } catch (error) {
           return json(res, 502, {

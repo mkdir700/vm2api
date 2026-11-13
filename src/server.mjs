@@ -86,7 +86,8 @@ import { isTelemetryPath, telemetryInterceptResponse } from './lib/identity/tele
 import { openDatabase, closeDatabase, getDb } from './lib/db/database.mjs'
 import { armWriteBehind } from './lib/db/write-behind.mjs'
 import { JevUsageRepo } from './lib/db/repos/jev-usage-repo.mjs'
-import { installJevUsageRecorder } from './lib/protocol/jev-usage.mjs'
+import { ModerationReviewsRepo } from './lib/db/repos/moderation-reviews-repo.mjs'
+import { installModerationReviewRecorder, installJevUsageRecorder } from './lib/protocol/jev-usage.mjs'
 import { runLegacyImport } from './lib/db/legacy-import.mjs'
 import { initVmDbSync, stopVmWatch } from './lib/vm/vm-db-sync.mjs'
 import { BackupService } from './lib/admin/backup-service.mjs'
@@ -164,6 +165,8 @@ const rolloutGroup = process.env.KIN_ROLLOUT_GROUP ? new RolloutGroup(cfg.paths.
 armWriteBehind(getDb())
 const jevUsageRepo = new JevUsageRepo()
 installJevUsageRecorder((event) => jevUsageRepo.record(event))
+const moderationReviewsRepo = new ModerationReviewsRepo()
+installModerationReviewRecorder((event) => moderationReviewsRepo.record(event))
 try {
   loadModelPolicy()
 } catch (e) {
@@ -1161,6 +1164,7 @@ const handlePanel = createPanelHandler({
 const gracefulShutdown = createGracefulShutdown({
   beforeDrain: async () => {
     installJevUsageRecorder(null)
+    installModerationReviewRecorder(null)
     try {
       vmTestSchedule.stop()
     } catch {}

@@ -1,0 +1,121 @@
+{
+  "command": "node --test test/e2e/moderation-services.e2e.test.mjs",
+  "checks": [
+    "Perplexity 地址、模型、600 Token 费用、缓存归属和调用明细",
+    "标准与 Flash v1.3 三题同发、停用题排除、逐题拦截、漏答失败、问题组缓存，以及一次用量计费",
+    "拦截结果、无效响应按失败策略处理、缺少用量时费用未知",
+    "超时、网络、JSON 和分数异常；失败放行；Flash 计价；未知价格；模型缓存隔离；基准测试与不支持的余额查询",
+    "服务配置恢复、缓存隔离、重试费用、429 不永久停用密钥、筛选和游标分页",
+    "历史费用不变、审查记录在重启后保留",
+    "租户不能访问审查列表、详情或服务配置；记录不含完整密钥"
+  ],
+  "multi_question_cases": [
+    {
+      "model": "pplx-decider-v1.3",
+      "question_count": 3,
+      "scenario": "all-safe",
+      "result": "pass",
+      "upstream_calls": 1,
+      "input_tokens": 600,
+      "estimated_cost_nano_usd": 12000
+    },
+    {
+      "model": "pplx-decider-v1.3",
+      "question_count": 3,
+      "scenario": "policy_check",
+      "result": "block",
+      "upstream_calls": 1,
+      "input_tokens": 600,
+      "estimated_cost_nano_usd": 12000
+    },
+    {
+      "model": "pplx-decider-v1.3",
+      "question_count": 3,
+      "scenario": "sexual_check",
+      "result": "block",
+      "upstream_calls": 1,
+      "input_tokens": 600,
+      "estimated_cost_nano_usd": 12000
+    },
+    {
+      "model": "pplx-decider-v1.3",
+      "question_count": 3,
+      "scenario": "attack_check",
+      "result": "block",
+      "upstream_calls": 1,
+      "input_tokens": 600,
+      "estimated_cost_nano_usd": 12000
+    },
+    {
+      "model": "pplx-decider-v1.3",
+      "question_count": 3,
+      "scenario": "missing-answer",
+      "result": "unavailable",
+      "upstream_calls": 1,
+      "input_tokens": 600,
+      "estimated_cost_nano_usd": 12000
+    },
+    {
+      "model": "pplx-decider-flash-v1.3",
+      "question_count": 3,
+      "scenario": "all-safe",
+      "result": "pass",
+      "upstream_calls": 1,
+      "input_tokens": 600,
+      "estimated_cost_nano_usd": 6000
+    },
+    {
+      "model": "pplx-decider-flash-v1.3",
+      "question_count": 3,
+      "scenario": "policy_check",
+      "result": "block",
+      "upstream_calls": 1,
+      "input_tokens": 600,
+      "estimated_cost_nano_usd": 6000
+    },
+    {
+      "model": "pplx-decider-flash-v1.3",
+      "question_count": 3,
+      "scenario": "sexual_check",
+      "result": "block",
+      "upstream_calls": 1,
+      "input_tokens": 600,
+      "estimated_cost_nano_usd": 6000
+    },
+    {
+      "model": "pplx-decider-flash-v1.3",
+      "question_count": 3,
+      "scenario": "attack_check",
+      "result": "block",
+      "upstream_calls": 1,
+      "input_tokens": 600,
+      "estimated_cost_nano_usd": 6000
+    },
+    {
+      "model": "pplx-decider-flash-v1.3",
+      "question_count": 3,
+      "scenario": "missing-answer",
+      "result": "unavailable",
+      "upstream_calls": 1,
+      "input_tokens": 600,
+      "estimated_cost_nano_usd": 6000
+    }
+  ],
+  "status": "passed",
+  "node_version": "v22.23.4",
+  "sources": {
+    "src/lib/moderation/providers.mjs": "630f92333f066e9eedd831d313f818fbba287af0703c3390ab518273d32de61d",
+    "src/lib/protocol/jev-intercept.mjs": "47f1f42033789b9d2f6c703c03ed7ea197125d99c9aad8d09e6538d9cd55e6c0",
+    "src/lib/protocol/jev-usage.mjs": "657bee1a0a535aff494369213c81a9b0facb1484b6de7e45644e3255864f7de1",
+    "src/lib/db/repos/moderation-reviews-repo.mjs": "41f9aa1836232d908743ff240f9a46cd7528798447efa2da672377b97262c294",
+    "src/lib/db/repos/jev-usage-repo.mjs": "c41a671c426e783ebca234f10e2ea42058d633f568cf2d669630062c68376114",
+    "src/lib/db/migrations/057_moderation_reviews.sql": "c9a906d87477dec80d4867e4d82552074e30019afa773b07e81eed44ad822b49",
+    "src/lib/admin/panel-routes.mjs": "6d32cffe916c1d8293895f165f0286e74e9003db817d38c24029330fde959755",
+    "src/lib/admin/panel-acl.mjs": "57e2e5cc5cd02b5cfb08759b0f87f936a858c531056b540163abea6b4dcaf41b",
+    "src/server.mjs": "2491fc39e7172d1d2c2e9b5857a10b4106ad1a4ef96b762b81b16f9cc75eab3b",
+    "web/src/features/moderation-reviews/index.tsx": "1c33893069192f3581a75b9837921e144b9de35793bf2964f23aacc160e219d3",
+    "web/src/features/settings/moderation-pane.tsx": "3f902004cb74e9bbddc9e81c229cc66dcb55ed50007f144a950ee2db4987d72f",
+    "test/e2e/moderation-services.e2e.test.mjs": "d5024892908b32a26f57c932c77f68b6128c28bef8928f1e779b01e65c779b43",
+    "test/e2e/helpers/moderation-fetch.mjs": "f0cfe37ce9a1b843eeda35ded733d855f3f25a35928dc3181f4e336823f952c7"
+  }
+}

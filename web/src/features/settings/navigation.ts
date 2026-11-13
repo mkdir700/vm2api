@@ -24,6 +24,7 @@ export const SETTINGS_TABS = [
   ['logs', '日志'],
   ['protocol', '协议'],
   ['redaction', '脱敏'],
+  ['moderation', '审查服务'],
   ['init', '初装'],
   ['health', '探测'],
   ['notify', '通知'],
@@ -57,6 +58,7 @@ export const SETTINGS_NAV_GROUPS: {
     items: [
       { id: 'protocol', icon: Fingerprint },
       { id: 'redaction', icon: ShieldCheck },
+      { id: 'moderation', icon: ShieldCheck },
     ],
   },
   {

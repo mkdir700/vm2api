@@ -10,6 +10,7 @@ export type ViewId =
   | 'proxies'
   | 'models'
   | 'risk'
+  | 'moderation-reviews'
   | 'system'
   | 'keys'
   | 'api'
@@ -31,6 +32,7 @@ export const VIEW_TITLES: Record<ViewId, string> = {
   proxies: '代理池',
   models: '模型',
   risk: '风险审计',
+  'moderation-reviews': '审查记录',
   system: 'system提示词',
   keys: '密钥',
   api: 'API',
@@ -76,6 +78,7 @@ export const ROUTE_VIEWS = {
   '/billing': 'billing',
   '/models': 'models',
   '/risk': 'risk',
+  '/moderation-reviews': 'moderation-reviews',
   '/system': 'system',
   '/api': 'api',
   '/anthropic': 'anthropic',

@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import { useNavigate, useSearch } from '@tanstack/react-router'
+import { Link, useNavigate, useSearch } from '@tanstack/react-router'
 import { VIEW_TITLES } from '@/config/nav'
 import type { UsageLogRow } from '@/types/panel-usage-logs'
 import { ArrowUpRight, RefreshCw } from 'lucide-react'
@@ -19,7 +19,6 @@ import { RiskFeed } from './feed'
 import { GateRail, type StageState } from './gate-rail'
 import { HardRegexSettings } from './hard-regex-settings'
 import { HitTable } from './hits'
-import { JevUsagePanel } from './jev-usage'
 import {
   PASS_REASONS,
   STAGES,
@@ -28,7 +27,6 @@ import {
   feedKindOf,
   share,
 } from './model'
-import { ModelSettings } from './model-settings'
 import {
   distillQueryOptions,
   gateStatsQueryOptions,
@@ -154,11 +152,18 @@ export function RiskAuditPage() {
         </p>
       ) : null}
 
-      {view === 'all' || view === 'jev' ? (
-        <div className='mt-6'>
-          <JevUsagePanel defaultOpen />
-        </div>
-      ) : null}
+      <div className='mt-6 flex gap-4 text-sm'>
+        <Link to='/moderation-reviews' className='text-primary underline'>
+          查看审查记录
+        </Link>
+        <Link
+          to='/settings/$tab'
+          params={{ tab: 'moderation' }}
+          className='text-primary underline'
+        >
+          配置审查服务
+        </Link>
+      </div>
 
       <div
         id='risk-panel'
@@ -308,7 +313,17 @@ export function RiskAuditPage() {
               ) : stage.id === 'refusal' ? (
                 <RefusalSettings />
               ) : (
-                <ModelSettings onDirtyChange={onDirtyChange} />
+                <p className='p-4 text-sm'>
+                  前往{' '}
+                  <Link
+                    to='/settings/$tab'
+                    params={{ tab: 'moderation' }}
+                    className='text-primary underline'
+                  >
+                    设置 → 审查服务
+                  </Link>{' '}
+                  配置模型。
+                </p>
               )}
             </Panel>
           </div>

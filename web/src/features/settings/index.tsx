@@ -53,6 +53,7 @@ import { Socks5Pane } from '@/features/settings/socks5-pane'
 import { StickyPane } from '@/features/settings/sticky-pane'
 import { uploadIntervalOf } from '@/features/settings/telemetry-interval'
 import { TelemetryPane } from '@/features/settings/telemetry-pane'
+import { ModerationSettings } from './moderation-pane'
 import { ProtocolPane } from './protocol-pane'
 import { RedactionPane } from './redaction-pane'
 
@@ -202,7 +203,11 @@ export function SettingsPage() {
     serverJson !== null &&
     Object.keys(draft).length > 0 &&
     JSON.stringify(draft) !== serverJson
-  const hideSave = tab === 'socks5' || tab === 'backup' || tab === 'about'
+  const hideSave =
+    tab === 'socks5' ||
+    tab === 'backup' ||
+    tab === 'about' ||
+    tab === 'moderation'
   const showSaveBar = dirty && !hideSave
 
   const discard = () => {
@@ -500,6 +505,9 @@ export function SettingsPage() {
                     }))
                   }
                 />
+              ) : null}
+              {tab === 'moderation' ? (
+                <ModerationSettings onDirtyChange={() => {}} />
               ) : null}
               {tab === 'socks5' ? <Socks5Pane /> : null}
               {tab === 'backup' ? <BackupPane /> : null}

@@ -104,7 +104,7 @@ export function JevUsagePanel({
   ]
   return (
     <Fold
-      title='JEV 使用记录'
+      title='调用用量与旧版记录'
       defaultOpen={defaultOpen}
       meta={
         summary
@@ -239,8 +239,7 @@ export function JevUsagePanel({
             <p className='text-xs text-muted-foreground'>
               {tokens(summary.total.unknown_usage_requests)} 次未完整返回用量，
               {tokens(summary.total.unknown_cost_requests)}{' '}
-              次费用未知。未知不等于免费；估算使用本版本内置的 2026-10-25
-              公开单价，不含其他系统或组织的用量。
+              次费用未知。未知不等于免费；每次调用保存当时的公开单价和计价版本。不含其他系统或组织的用量。
             </p>
             {summary.storage_errors_since_start > 0 && (
               <p role='alert' className='text-sm text-destructive'>

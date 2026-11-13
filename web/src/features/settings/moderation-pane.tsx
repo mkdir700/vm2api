@@ -16,14 +16,24 @@ import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { StatusMark } from '@/components/status-mark'
+import {
+  FieldLine,
+  Group,
+  ToggleItem,
+  ToggleList,
+} from '@/features/risk/blocks'
+import { jevInterceptQueryOptions } from '@/features/risk/queries'
+import { QuestionBank } from '@/features/risk/question-bank'
 import { SaveBar } from '@/features/settings/save-bar'
-import { FieldLine, Group, ToggleItem, ToggleList } from './blocks'
-import { jevInterceptQueryOptions } from './queries'
-import { QuestionBank } from './question-bank'
 
 const KEY_MAX = 999
 const EXAMPLES = [
-  { id: 'typesafe', label: 'TypeSafe', base_url: 'https://api.typesafe.ai' },
+  {
+    id: 'perplexity',
+    label: 'Perplexity',
+    base_url: 'https://api.perplexity.ai',
+  },
+  { id: 'jev', label: 'TypeSafe', base_url: 'https://api.typesafe.ai' },
   { id: 'laya', label: 'Laya', base_url: 'http://127.0.0.1:8000' },
   { id: 'modernbert', label: 'ModernBERT', base_url: 'http://127.0.0.1:8000' },
 ] as const
@@ -103,7 +113,7 @@ function ownedDiffers(a: JevInterceptConfig, b: JevInterceptConfig) {
 function decisionKey(base: string) {
   const text = base.trim().replace(/\/+$/, '')
   if (!text) return ''
-  if (/\/(systemone|decide)$/i.test(text)) return text.toLowerCase()
+  if (/\/(systemone|decide|decisions)$/i.test(text)) return text.toLowerCase()
   if (/\/v1$/i.test(text)) return `${text}/systemone`.toLowerCase()
   return `${text}/v1/systemone`.toLowerCase()
 }
@@ -114,21 +124,6 @@ function isTypeSafe(base: string) {
   } catch {
     return false
   }
-}
-
-function providerFor(
-  base: string,
-  model: string,
-  previous: JevInterceptConfig['provider']
-): JevInterceptConfig['provider'] {
-  if (isTypeSafe(base)) return 'jev'
-  if (model.trim() === 'english') return 'modernbert'
-  if (
-    !model.trim() &&
-    /^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/i.test(base.trim())
-  )
-    return 'laya'
-  return previous || 'jev'
 }
 
 function savedBases(data: JevInterceptConfig) {
@@ -188,7 +183,7 @@ function probeStatus(row: ProbeRow) {
 }
 
 /** Decision model: connection, scoring and the question bank, saved together. */
-export function ModelSettings({
+export function ModerationSettings({
   onDirtyChange,
 }: {
   onDirtyChange: (dirty: boolean) => void
@@ -229,6 +224,21 @@ export function ModelSettings({
     setChecks({})
   }
 
+  const switchProvider = useMutation({
+    mutationFn: (provider: JevInterceptConfig['provider']) =>
+      api<JevInterceptConfig>('/api/panel/jev-intercept', {
+        method: 'PUT',
+        body: JSON.stringify({ provider }),
+      }),
+    onSuccess: (data) => {
+      qc.setQueryData(jevInterceptQueryOptions().queryKey, data)
+      load(data)
+      setListed([])
+      toast.success('已切换审查服务，后续审查使用新配置')
+    },
+    onError: (error: Error) => toast.error(error.message),
+  })
+
   const patchForm = (uid: string, patch: Partial<EndpointForm>) =>
     setForms(
       (prev) =>
@@ -253,17 +263,12 @@ export function ModelSettings({
         max_state_chars: Number(draft.max_state_chars ?? 16000),
         questions: draft.question_bank || [],
       }
+      body.provider = draft.provider
       if (!filled.length) {
         body.base_url = ''
         body.api_keys = []
-        body.provider = 'jev'
       } else {
         body.base_url = filled[0].base_url.trim()
-        body.provider = providerFor(
-          filled[0].base_url,
-          draft.model,
-          draft.provider || 'jev'
-        )
         body.endpoints = filled.map((form) => {
           const typed = form.keys.map((key) => key.trim()).filter(Boolean)
           const row: Record<string, unknown> = {
@@ -421,7 +426,10 @@ export function ModelSettings({
       setListed(ids)
       setDraft((prev) => {
         if (!prev || prev.model.trim()) return prev
-        const pick = (ids.includes('jev-latest') ? 'jev-latest' : ids[0]) || ''
+        const preferred =
+          prev.providers?.find((provider) => provider.id === prev.provider)
+            ?.default_model || ''
+        const pick = (ids.includes(preferred) ? preferred : ids[0]) || ''
         return pick ? { ...prev, model: pick } : prev
       })
       toast.success(
@@ -475,12 +483,50 @@ export function ModelSettings({
   const setQuestions = (rows: PolicyQuestion[]) =>
     setDraft({ ...draft, question_bank: rows })
   const enabledQuestions = questions.filter((row) => row.enabled).length
-  const modelPlaceholder = isTypeSafe(forms[0]?.base_url || '')
-    ? 'jev-latest'
-    : '留空则由上游路由'
+  const modelPlaceholder =
+    draft.provider === 'perplexity'
+      ? 'pplx-decider-v1.3'
+      : isTypeSafe(forms[0]?.base_url || '')
+        ? 'jev-latest'
+        : '留空则由上游路由'
 
   return (
     <div className='space-y-8 p-4'>
+      <Group
+        title='当前审查服务'
+        hint='切换立即生效。进行中的审查保留原配置。先保存或放弃草稿，再切换服务。'
+      >
+        <Label htmlFor='moderation-provider'>启用的服务</Label>
+        <select
+          id='moderation-provider'
+          className='h-9 rounded-md border bg-background px-3 text-sm'
+          value={draft.provider}
+          disabled={
+            dirty ||
+            switchProvider.isPending ||
+            save.isPending ||
+            fetchModels.isPending ||
+            Object.values(pending).some(Boolean)
+          }
+          onChange={(event) =>
+            switchProvider.mutate(
+              event.target.value as JevInterceptConfig['provider']
+            )
+          }
+        >
+          {(draft.providers || []).map((provider) => (
+            <option key={provider.id} value={provider.id}>
+              {provider.label}
+            </option>
+          ))}
+        </select>
+        {draft.provider === 'perplexity' && (
+          <p className='text-xs text-muted-foreground'>
+            默认使用明确版本 pplx-decider-v1.3。按上游返回的输入 Token
+            与公开单价估算费用。未启用联网检索。
+          </p>
+        )}
+      </Group>
       <Group
         title='何时拦截'
         hint='前三关都没拦的正文才会送到这里。没配地址时这一关跳过。'
@@ -515,7 +561,7 @@ export function ModelSettings({
 
       <Group
         title='连接'
-        hint='按地址管理，不再切换 Jev / Laya / ModernBERT。默认示例是 TypeSafe。同一地址下填写的 Key 会追加；勾选清除才替换。判断基准用的是已保存的题库和阈值。'
+        hint='每个服务分别保存地址、密钥、模型、题库和阈值。同一地址的密钥支持追加；勾选清除后替换。判断基准使用已保存的题库和阈值。'
       >
         <div className='space-y-4'>
           {forms.map((form, index) => {
@@ -723,8 +769,7 @@ export function ModelSettings({
                         {savedKeys.length
                           ? `已存 ${savedKeys.length} 把${hiddenSummary ? `，未展开 ${hiddenSummary}` : ''}。展开后可继续添加。`
                           : '还没有 Key。'}
-                        一键测试先看模型是否可连，再用一句普通说明和一句入侵请求核对判断基准。官方
-                        TypeSafe 没有余额接口，用尽时调用会返回 402。
+                        一键测试先看模型是否可连，再用一句普通说明和一句入侵请求核对判断基准。费用记录在独立的审查记录页面。
                       </p>
                     )}
                   </div>
@@ -733,18 +778,20 @@ export function ModelSettings({
             )
           })}
           <div className='flex flex-wrap gap-2'>
-            {EXAMPLES.map((example) => (
-              <Button
-                key={example.id}
-                type='button'
-                variant='outline'
-                size='sm'
-                className='cursor-pointer'
-                onClick={() => addExample(example.base_url)}
-              >
-                添加 {example.label}
-              </Button>
-            ))}
+            {EXAMPLES.filter((example) => example.id === draft.provider).map(
+              (example) => (
+                <Button
+                  key={example.id}
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  className='cursor-pointer'
+                  onClick={() => addExample(example.base_url)}
+                >
+                  添加 {example.label}
+                </Button>
+              )
+            )}
             <Button
               type='button'
               variant='outline'
@@ -791,7 +838,7 @@ export function ModelSettings({
               id='jev-timeout'
               type='number'
               min={200}
-              max={8000}
+              max={60000}
               className='tabular-nums'
               value={draft.timeout_ms}
               onChange={(e) =>

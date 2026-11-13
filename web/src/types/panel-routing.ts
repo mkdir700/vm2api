@@ -175,7 +175,7 @@ export type JevInterceptConfig = {
   account_plan_types: string[]
   account_ids: string[]
   account_scope?: JevScopeInventory
-  provider: 'jev' | 'laya' | 'modernbert'
+  provider: 'jev' | 'perplexity' | 'laya' | 'modernbert'
   providers?: {
     id: string
     label: string

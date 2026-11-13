@@ -22,6 +22,7 @@ import { Route as AuthenticatedImportRouteImport } from './routes/_authenticated
 import { Route as AuthenticatedKeysRouteImport } from './routes/_authenticated/keys'
 import { Route as AuthenticatedLogsRouteImport } from './routes/_authenticated/logs'
 import { Route as AuthenticatedModelsRouteImport } from './routes/_authenticated/models'
+import { Route as AuthenticatedModerationReviewsRouteImport } from './routes/_authenticated/moderation-reviews'
 import { Route as AuthenticatedOverviewRouteImport } from './routes/_authenticated/overview'
 import { Route as AuthenticatedProxiesRouteImport } from './routes/_authenticated/proxies'
 import { Route as AuthenticatedRiskRouteImport } from './routes/_authenticated/risk'
@@ -99,6 +100,12 @@ const AuthenticatedModelsRoute = AuthenticatedModelsRouteImport.update({
   path: '/models',
   getParentRoute: () => AuthenticatedRouteRoute,
 } as any)
+const AuthenticatedModerationReviewsRoute =
+  AuthenticatedModerationReviewsRouteImport.update({
+    id: '/moderation-reviews',
+    path: '/moderation-reviews',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedOverviewRoute = AuthenticatedOverviewRouteImport.update({
   id: '/overview',
   path: '/overview',
@@ -175,6 +182,7 @@ export interface FileRoutesByFullPath {
   '/keys': typeof AuthenticatedKeysRoute
   '/logs': typeof AuthenticatedLogsRoute
   '/models': typeof AuthenticatedModelsRoute
+  '/moderation-reviews': typeof AuthenticatedModerationReviewsRoute
   '/overview': typeof AuthenticatedOverviewRoute
   '/proxies': typeof AuthenticatedProxiesRoute
   '/risk': typeof AuthenticatedRiskRoute
@@ -200,6 +208,7 @@ export interface FileRoutesByTo {
   '/keys': typeof AuthenticatedKeysRoute
   '/logs': typeof AuthenticatedLogsRoute
   '/models': typeof AuthenticatedModelsRoute
+  '/moderation-reviews': typeof AuthenticatedModerationReviewsRoute
   '/overview': typeof AuthenticatedOverviewRoute
   '/proxies': typeof AuthenticatedProxiesRoute
   '/risk': typeof AuthenticatedRiskRoute
@@ -228,6 +237,7 @@ export interface FileRoutesById {
   '/_authenticated/keys': typeof AuthenticatedKeysRoute
   '/_authenticated/logs': typeof AuthenticatedLogsRoute
   '/_authenticated/models': typeof AuthenticatedModelsRoute
+  '/_authenticated/moderation-reviews': typeof AuthenticatedModerationReviewsRoute
   '/_authenticated/overview': typeof AuthenticatedOverviewRoute
   '/_authenticated/proxies': typeof AuthenticatedProxiesRoute
   '/_authenticated/risk': typeof AuthenticatedRiskRoute
@@ -257,6 +267,7 @@ export interface FileRouteTypes {
     | '/keys'
     | '/logs'
     | '/models'
+    | '/moderation-reviews'
     | '/overview'
     | '/proxies'
     | '/risk'
@@ -282,6 +293,7 @@ export interface FileRouteTypes {
     | '/keys'
     | '/logs'
     | '/models'
+    | '/moderation-reviews'
     | '/overview'
     | '/proxies'
     | '/risk'
@@ -309,6 +321,7 @@ export interface FileRouteTypes {
     | '/_authenticated/keys'
     | '/_authenticated/logs'
     | '/_authenticated/models'
+    | '/_authenticated/moderation-reviews'
     | '/_authenticated/overview'
     | '/_authenticated/proxies'
     | '/_authenticated/risk'
@@ -423,6 +436,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedModelsRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/moderation-reviews': {
+      id: '/_authenticated/moderation-reviews'
+      path: '/moderation-reviews'
+      fullPath: '/moderation-reviews'
+      preLoaderRoute: typeof AuthenticatedModerationReviewsRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/overview': {
       id: '/_authenticated/overview'
       path: '/overview'
@@ -520,6 +540,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedKeysRoute: typeof AuthenticatedKeysRoute
   AuthenticatedLogsRoute: typeof AuthenticatedLogsRoute
   AuthenticatedModelsRoute: typeof AuthenticatedModelsRoute
+  AuthenticatedModerationReviewsRoute: typeof AuthenticatedModerationReviewsRoute
   AuthenticatedOverviewRoute: typeof AuthenticatedOverviewRoute
   AuthenticatedProxiesRoute: typeof AuthenticatedProxiesRoute
   AuthenticatedRiskRoute: typeof AuthenticatedRiskRoute
@@ -545,6 +566,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedKeysRoute: AuthenticatedKeysRoute,
   AuthenticatedLogsRoute: AuthenticatedLogsRoute,
   AuthenticatedModelsRoute: AuthenticatedModelsRoute,
+  AuthenticatedModerationReviewsRoute: AuthenticatedModerationReviewsRoute,
   AuthenticatedOverviewRoute: AuthenticatedOverviewRoute,
   AuthenticatedProxiesRoute: AuthenticatedProxiesRoute,
   AuthenticatedRiskRoute: AuthenticatedRiskRoute,

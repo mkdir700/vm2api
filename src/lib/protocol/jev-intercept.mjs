@@ -1,7 +1,7 @@
 /**
  * Protocol pre-intercept: hard regex, then one safety noul.
  *
- * Jev, local Laya, and ModernBERT share `/v1/systemone`. A score under the
+ * Jev、Laya 和 ModernBERT 使用 `/v1/systemone`；Perplexity 使用 `/v1/decisions`。 A score under the
  * configured line blocks (0.5 unless the panel changes it). One score within
  * 0.08 under that line does not. The same state reuses that verdict for the
  * configured window. A dead model fails open unless fail_open is off.
@@ -9,6 +9,16 @@
  * other HTTP status skips the rest of that host for this call only.
  * A line may be `https://host[/v1/systemone] <key>`, or a bare URL for a keyless host.
  */
+import { createHash, randomUUID } from 'node:crypto'
+import {
+  POLICY_PROVIDERS,
+  providerOf,
+  decisionEndpoint,
+  decisionRequest,
+  retiresKey,
+  PERPLEXITY_MODELS,
+} from '../moderation/providers.mjs'
+import { recordModerationReview } from './jev-usage.mjs'
 import { ErrorCode, ErrorType, makeError } from '../core/errors.mjs'
 import { historyPrefixIntact, refusalUserDocument, refusalUserDocumentCache } from '../core/refusal-similarity.mjs'
 import { isNegatedExtraction, normalizeText } from '../core/distill-detect.mjs'
@@ -41,11 +51,7 @@ export function isPolicyBlockMemory(message) {
   const text = String(message || '').trim()
   return text === POLICY_BLOCK_MESSAGE || text.startsWith(`${POLICY_BLOCK_MESSAGE}:`)
 }
-export const POLICY_PROVIDERS = Object.freeze([
-  { id: 'jev', label: 'Jev', default_model: 'jev-latest', default_base_url: 'https://api.typesafe.ai' },
-  { id: 'laya', label: 'Laya', default_model: '', default_base_url: 'http://127.0.0.1:8000' },
-  { id: 'modernbert', label: 'ModernBERT', default_model: 'english', default_base_url: 'http://127.0.0.1:8000' },
-])
+export { POLICY_PROVIDERS }
 
 /**
  * Which slots the four layers cover. Empty means every account, the old
@@ -106,7 +112,7 @@ export const JEV_PLAN_TYPES = Object.freeze([
 ])
 
 const TIMEOUT_MIN = 200
-const TIMEOUT_MAX = 8000
+const TIMEOUT_MAX = 60000
 const TIMEOUT_DEFAULT = 2000
 const PATTERN_MAX = 50
 const PATTERN_LEN = 400
@@ -377,10 +383,6 @@ function askedIds(cfg) {
 }
 
 const verdictCache = new Map()
-
-function providerOf(id) {
-  return POLICY_PROVIDERS.find((item) => item.id === id) || POLICY_PROVIDERS[0]
-}
 
 export function defaultJevConfig() {
   return {
@@ -852,7 +854,7 @@ export function validateJevPatch(body = {}) {
     problems.push('hard_regex_enabled 必须是布尔')
   }
   if (Object.hasOwn(body, 'provider') && !POLICY_PROVIDERS.some((item) => item.id === body.provider)) {
-    problems.push('provider 只能是 jev、laya、modernbert')
+    problems.push('provider 必须是已注册的审查服务')
   }
   if (Object.hasOwn(body, 'base_url') && body.base_url != null && typeof body.base_url !== 'string') {
     problems.push('base_url 必须是字符串')
@@ -1012,11 +1014,49 @@ export function validateJevPatch(body = {}) {
   return problems
 }
 
+const PROFILE_FIELDS = [
+  'base_url',
+  'api_keys',
+  'model',
+  'timeout_ms',
+  'questions',
+  'question_ids',
+  'safety_instruction',
+  'safety_threshold',
+  'block_if_below',
+  'fail_open',
+  'dedup_sec',
+  'max_state_chars',
+  'expand_base64',
+  'strip_reminders',
+]
+function profileOf(config) {
+  return Object.fromEntries(PROFILE_FIELDS.map((field) => [field, config[field]]))
+}
+
 /** Apply a panel PUT. Omitted keys stay. An empty api_key, or api_keys: [], clears them. */
 export function applyJevPatch(settings, body = {}) {
   const problems = validateJevPatch(body)
   if (problems.length) return { ok: false, problems }
-  const current = normalizeJevConfig(settings.get(JEV_SETTING, null))
+  const stored = settings.get(JEV_SETTING, null) || {}
+  let current = normalizeJevConfig(stored)
+  const profiles = { ...(stored.service_profiles || {}), [current.provider]: profileOf(current) }
+  if (body.provider && body.provider !== current.provider) {
+    const target = providerOf(body.provider)
+    current = normalizeJevConfig({
+      ...current,
+      ...profileOf(
+        normalizeJevConfig({
+          ...defaultJevConfig(),
+          provider: target.id,
+          base_url: target.default_base_url,
+          timeout_ms: target.default_timeout_ms || TIMEOUT_DEFAULT,
+        }),
+      ),
+      ...(profiles[target.id] || {}),
+      provider: target.id,
+    })
+  }
   const flat = Object.hasOwn(body, 'endpoints') ? flattenJevEndpoints(current, body.endpoints) : null
   const next = normalizeJevConfig({
     ...current,
@@ -1034,7 +1074,8 @@ export function applyJevPatch(settings, body = {}) {
     patterns: Object.hasOwn(body, 'patterns') ? body.patterns : current.patterns,
     rules: Object.hasOwn(body, 'rules') ? body.rules : current.rules,
   })
-  settings.set(JEV_SETTING, next)
+  profiles[next.provider] = profileOf(next)
+  settings.set(JEV_SETTING, { ...next, service_profiles: profiles })
   if (flat || Object.hasOwn(body, 'api_keys') || Object.hasOwn(body, 'api_key')) rearmJevKeys(next)
   return { ok: true, config: publicJevConfig(next) }
 }
@@ -1289,14 +1330,8 @@ export function resolvedPolicyModel(cfg) {
  * Full `/v1/systemone` or `/decide` URLs are used as given.
  * A host or `/v1` base gets the Jev path Laya also serves.
  */
-export function decisionUrl(baseUrl) {
-  const base = String(baseUrl || '')
-    .trim()
-    .replace(/\/+$/, '')
-  if (!base) return ''
-  if (/\/(systemone|decide)$/i.test(base)) return base
-  if (/\/v1$/i.test(base)) return `${base}/systemone`
-  return `${base}/v1/systemone`
+export function decisionUrl(baseUrl, provider = 'jev') {
+  return decisionEndpoint(baseUrl, provider)
 }
 
 function policyLine(cfg) {
@@ -1321,21 +1356,25 @@ export function parsePolicyDecision(payload, cfg = {}) {
   if (!answers || typeof answers !== 'object') return null
   const asked = askedIds(cfg)
   const custom = storedSafetyInstruction(cfg.safety_instruction)
-  const ids = custom ? [...asked, 'custom'] : asked
+  const ids = custom ? [...asked, 'custom'] : asked.length ? asked : ['usage_policy']
   const hits = []
   let saw = false
   for (const id of ids) {
     const score = Number(answers[id]?.noul)
-    if (!Number.isFinite(score)) continue
+    if (!Number.isFinite(score) || score < 0 || score > 1 || typeof answers[id]?.noul !== 'number') {
+      if (answers[id] !== undefined) return null
+      continue
+    }
     saw = true
     if (scoreBlocks(score, cfg)) hits.push({ category: id, score })
   }
   if (!saw) {
     const score = Number(answers.safety?.noul)
-    if (!Number.isFinite(score)) return null
+    if (!Number.isFinite(score) || score < 0 || score > 1 || typeof answers.safety?.noul !== 'number') return null
     const hits = scoreBlocks(score, cfg) ? [{ category: 'safety', score }] : []
     return { hits: dropLoneNearMiss(hits, cfg) }
   }
+  if (ids.some((id) => typeof answers[id]?.noul !== 'number')) return null
   return { hits: dropLoneNearMiss(hits, cfg) }
 }
 
@@ -1364,7 +1403,7 @@ function dedupKey(url, model, config, state) {
   const asked = Object.entries(questionsFor(config))
     .map(([id, question]) => `${id}:${question.instructions}`)
     .join('\n')
-  return `${url}\0${model}\0${config.safety_threshold}\0${config.block_if_below}\0${asked}\0${state}`
+  return `${config.provider}\0${JSON.stringify(config.api_keys)}\0${url}\0${model}\0${config.safety_threshold}\0${config.block_if_below}\0${asked}\0${state}`
 }
 
 /** Model catalog lives beside systemone: strip /decide and /v1, then add /v1/models. */
@@ -1402,7 +1441,9 @@ export async function listPolicyModels(
   apiKey = '',
   timeoutMs = TIMEOUT_DEFAULT,
   fetchImpl = globalThis.fetch,
+  provider = 'jev',
 ) {
+  if (provider === 'perplexity') return { url: '', models: [...PERPLEXITY_MODELS] }
   const url = policyModelsUrl(baseUrl)
   if (!url || typeof fetchImpl !== 'function') {
     throw Object.assign(new Error('先填模型地址'), { code: 'base_url_required' })
@@ -1495,7 +1536,7 @@ function jevTargets(config) {
   for (const line of lines) {
     const split = splitKeyLine(line)
     const sourceBase = endpointBase(split.baseUrl || config.base_url)
-    const url = decisionUrl(sourceBase)
+    const url = decisionUrl(sourceBase, config.provider)
     if (!url) continue
     out.push({ url, sourceBase, apiKey: split.apiKey, id: jevKeyId(url, split.apiKey) })
   }
@@ -1521,7 +1562,7 @@ export function publicJevEndpoints(config) {
   const index = new Map()
   const touch = (base) => {
     const shown = endpointBase(base)
-    const decision = decisionUrl(shown)
+    const decision = decisionUrl(shown, normalized.provider)
     if (!decision) return null
     let row = index.get(decision)
     if (!row) {
@@ -1571,7 +1612,7 @@ function flattenJevEndpoints(current, endpoints) {
   const existing = jevTargets(normalized)
   const used = new Set()
   const take = (base) => {
-    const decision = decisionUrl(endpointBase(base))
+    const decision = decisionUrl(endpointBase(base), normalized.provider)
     const found = []
     existing.forEach((target, i) => {
       if (used.has(i) || !target.apiKey || target.url !== decision) return
@@ -1597,7 +1638,7 @@ function flattenJevEndpoints(current, endpoints) {
           .filter(Boolean)
       : null
     const keys = typed == null ? previous : endpoint?.append === true ? [...previous, ...typed] : typed
-    const decision = decisionUrl(base)
+    const decision = decisionUrl(base, normalized.provider)
     if (!keys.length) {
       if (index > 0 && base) lines.push(base)
       return
@@ -1605,7 +1646,7 @@ function flattenJevEndpoints(current, endpoints) {
     for (const key of keys) {
       const split = splitKeyLine(key)
       if (!split.apiKey) continue
-      const bound = split.baseUrl ? decisionUrl(split.baseUrl) : decision
+      const bound = split.baseUrl ? decisionUrl(split.baseUrl, normalized.provider) : decision
       if (index === 0 && bound === decision) lines.push(split.apiKey)
       else if (bound) lines.push(`${bound} ${split.apiKey}`)
     }
@@ -1620,7 +1661,7 @@ function clampTimeout(timeoutMs, fallback = TIMEOUT_DEFAULT) {
 
 function keysForProbe(config, baseUrl, apiKeys, apiKey) {
   const normalized = normalizeJevConfig(config)
-  const decision = decisionUrl(endpointBase(baseUrl) || normalized.base_url)
+  const decision = decisionUrl(endpointBase(baseUrl) || normalized.base_url, normalized.provider)
   const explicit =
     Array.isArray(apiKeys) && apiKeys.some((item) => typeof item === 'string' && item.trim())
       ? apiKeys
@@ -1683,6 +1724,7 @@ function noteProbe(cfg, url, apiKey, model, started, patch) {
     model: model || '',
     key_fingerprint: jevKeyFingerprint(apiKey),
     official_typesafe: isOfficialTypeSafeUrl(url),
+    official_perplexity: isOfficialPerplexityUrl(url),
     outcome: 'network_error',
     duration_ms: Date.now() - started,
     ...patch,
@@ -1701,13 +1743,13 @@ async function probeOneKey({ url, apiKey, model, timeoutMs, cfg, fetchImpl }) {
     message: '模型地址连不上',
   }
   try {
-    await listPolicyModels(url, apiKey, timeoutMs, fetchImpl)
+    await listPolicyModels(url, apiKey, timeoutMs, fetchImpl, cfg.provider)
   } catch (error) {
     const status = Number(error?.status) || 0
     if (status !== 404) {
       row.http_status = status || null
       row.message = statusMessage(status)
-      if (status === 401 || status === 429 || status === 529) retirePolicyKey(url, apiKey)
+      if (retiresKey(cfg.provider, status)) retirePolicyKey(url, apiKey)
       noteProbe(cfg, url, apiKey, model, Date.now(), {
         http_status: status || null,
         outcome: status ? 'http_error' : 'network_error',
@@ -1719,7 +1761,7 @@ async function probeOneKey({ url, apiKey, model, timeoutMs, cfg, fetchImpl }) {
   const questions = questionsFor(cfg)
   const ask = async (state) => {
     const attempt = Date.now()
-    const payload = { state, questions }
+    const payload = decisionRequest(cfg.provider, { state, questions, model })
     if (model) payload.model = model
     let response
     try {
@@ -1738,7 +1780,7 @@ async function probeOneKey({ url, apiKey, model, timeoutMs, cfg, fetchImpl }) {
     }
     const status = Number(response?.status) || 0
     if (!response?.ok) {
-      if (status === 401 || status === 429 || status === 529) retirePolicyKey(url, apiKey)
+      if (retiresKey(cfg.provider, status)) retirePolicyKey(url, apiKey)
       noteProbe(cfg, url, apiKey, model, attempt, { http_status: status || null, outcome: 'http_error' })
       return { ok: false, status }
     }
@@ -1750,7 +1792,7 @@ async function probeOneKey({ url, apiKey, model, timeoutMs, cfg, fetchImpl }) {
     }
     noteProbe(cfg, url, apiKey, model, attempt, {
       http_status: status || 200,
-      outcome: body ? 'success' : 'invalid_response',
+      outcome: parsePolicyDecision(body, cfg) ? 'success' : 'invalid_response',
       usage: body?.usage,
       response_model: body?.model,
     })
@@ -1936,6 +1978,19 @@ export async function probePolicyQuota({
   }
   const wait = clampTimeout(timeoutMs ?? picked.normalized.timeout_ms)
   const keys = picked.keys.length ? picked.keys : ['']
+  if (picked.normalized.provider === 'perplexity')
+    return {
+      results: keys.map((key) => ({
+        masked_key: key ? maskKey(key) : '',
+        key_fingerprint: jevKeyFingerprint(key),
+        status: 'unsupported',
+        remaining: null,
+        unit: null,
+        http_status: null,
+        message: '该服务未提供余额查询接口',
+      })),
+      omitted: picked.omitted,
+    }
   const results = []
   for (const key of keys) results.push(await quotaOne({ baseUrl: base, apiKey: key, timeoutMs: wait, fetchImpl }))
   return { results, omitted: picked.omitted }
@@ -1946,23 +2001,24 @@ let keyCursor = 0
 /**
  * @returns {{ action: 'pass', reason?: string } | { action: 'block', category: string, categories: string[] }}
  */
-export async function classifyJev(text, cfg, fetchImpl = globalThis.fetch, now = Date.now()) {
+async function classifyWithProvider(text, cfg, fetchImpl = globalThis.fetch, now = Date.now()) {
   const config = normalizeJevConfig(cfg)
   const document = prepareInterceptText(text, {
     stripReminders: config.strip_reminders,
     expandBase64: config.expand_base64,
   }).slice(-config.max_state_chars)
-  if (!config.enabled || !config.base_url || !document) return { action: 'pass', reason: 'skip' }
-  const url = decisionUrl(config.base_url)
+  if (!config.enabled || !document) return { action: 'pass', reason: 'skip' }
+  if (!config.base_url) return unavailable(config, '未配置审查地址')
+  const url = decisionUrl(config.base_url, config.provider)
   if (!url || typeof fetchImpl !== 'function') return { action: 'pass', reason: 'skip' }
   const model = resolvedPolicyModel(config)
   const windowMs = config.dedup_sec * 1000
   const key = dedupKey(url, model, config, document)
   if (windowMs > 0) {
     const cached = cachedVerdict(key, now, windowMs)
-    if (cached) return { ...cached, reason: 'replay' }
+    if (cached) return { ...cached, reason: 'replay', source_review_id: cached.review_id }
   }
-  const payload = { state: document, questions: questionsFor(config) }
+  const payload = decisionRequest(config.provider, { state: document, questions: questionsFor(config), model })
   if (model) payload.model = model
   const all = jevTargets(config)
   const targets = all.filter((target) => !retiredJevKeys.has(target.id))
@@ -1983,6 +2039,9 @@ export async function classifyJev(text, cfg, fetchImpl = globalThis.fetch, now =
       model,
       key_fingerprint: jevKeyFingerprint(target.apiKey),
       official_typesafe: isOfficialTypeSafeUrl(target.url),
+      official_perplexity: isOfficialPerplexityUrl(target.url),
+      review_id: cfg.review_id,
+      config_revision: cfg.config_revision,
       outcome: 'network_error',
     }
     try {
@@ -1995,11 +2054,12 @@ export async function classifyJev(text, cfg, fetchImpl = globalThis.fetch, now =
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(config.timeout_ms),
       })
+      attemptUsage.upstream_request_id = response?.headers?.get?.('x-request-id') || ''
       attemptUsage.http_status = Number(response?.status) || null
       attemptUsage.outcome = response?.ok ? 'invalid_response' : 'http_error'
       if (!response?.ok) {
         const status = Number(response?.status) || 0
-        if (status === 401 || status === 429 || status === 529) {
+        if (retiresKey(config.provider, status)) {
           if (target.apiKey) retiredJevKeys.add(target.id)
           continue
         }
@@ -2011,7 +2071,11 @@ export async function classifyJev(text, cfg, fetchImpl = globalThis.fetch, now =
       attemptUsage.usage = responsePayload?.usage
       attemptUsage.response_model = responsePayload?.model
       const decision = parsePolicyDecision(responsePayload, config)
-      if (!decision) return { action: 'pass', reason: 'invalid', state: document }
+      if (!decision) {
+        http = '审查响应缺少有效分数'
+        skipUrl.add(target.url)
+        continue
+      }
       attemptUsage.outcome = 'success'
       const verdict = decision.hits.length
         ? {
@@ -2021,7 +2085,11 @@ export async function classifyJev(text, cfg, fetchImpl = globalThis.fetch, now =
             state: document,
           }
         : { action: 'pass', reason: 'safe', state: document }
-      if (windowMs > 0) verdictCache.set(key, { verdict, at: now })
+      if (windowMs > 0)
+        verdictCache.set(key, {
+          verdict: { ...verdict, review_id: cfg.review_id, response_model: responsePayload?.model || '' },
+          at: now,
+        })
       return verdict
     } catch {
       // Host-level. Do not retire keys, and do not walk the rest of this host.
@@ -2029,8 +2097,70 @@ export async function classifyJev(text, cfg, fetchImpl = globalThis.fetch, now =
       network = true
     } finally {
       attemptUsage.duration_ms = Date.now() - attemptStarted
-      recordJevUsage(attemptUsage)
+      const event = recordJevUsage(attemptUsage)
+      cfg.collect_attempt?.(event)
     }
   }
   return unavailable(config, network ? '网络异常' : http || '密钥失效')
+}
+
+function isOfficialPerplexityUrl(url) {
+  try {
+    return new URL(url).origin === 'https://api.perplexity.ai'
+  } catch {
+    return false
+  }
+}
+
+/** 所有模型审查共用此入口；缓存命中也生成审查记录。 */
+export async function classifyJev(text, cfg, fetchImpl = globalThis.fetch, now = Date.now()) {
+  const started = Date.now()
+  const config = normalizeJevConfig(cfg)
+  const id = randomUUID()
+  const revision = createHash('sha256')
+    .update(JSON.stringify({ provider: config.provider, ...profileOf(config) }))
+    .digest('hex')
+    .slice(0, 16)
+  const attempts = []
+  const verdict = await classifyWithProvider(
+    text,
+    { ...cfg, review_id: id, config_revision: revision, collect_attempt: (attempt) => attempts.push(attempt) },
+    fetchImpl,
+    now,
+  )
+  const cached = verdict.reason === 'replay'
+  const unknown = attempts.filter((attempt) => attempt.estimated_cost_nano_usd === null).length
+  const known = attempts.reduce((total, attempt) => total + (attempt.estimated_cost_nano_usd || 0), 0)
+  const sum = (field) =>
+    cached
+      ? 0
+      : !attempts.length || attempts.some((attempt) => attempt[field] === null)
+        ? null
+        : attempts.reduce((total, attempt) => total + attempt[field], 0)
+  recordModerationReview({
+    id,
+    created_at: new Date(started).toISOString(),
+    request_id: cfg?.policy_request_id || '',
+    provider: config.provider,
+    config_id: config.provider,
+    config_revision: revision,
+    requested_model: resolvedPolicyModel(config),
+    response_model: attempts.at(-1)?.response_model || verdict.response_model || '',
+    result: verdict.reason === 'unavailable' ? 'unavailable' : verdict.reason === 'skip' ? 'skipped' : verdict.action,
+    action: verdict.action,
+    safety_threshold: config.safety_threshold,
+    block_if_below: config.block_if_below ? 1 : 0,
+    reason: verdict.reason || 'policy',
+    categories: JSON.stringify(verdict.categories || []),
+    cache_hit: cached ? 1 : 0,
+    source_review_id: verdict.source_review_id || '',
+    duration_ms: Date.now() - started,
+    attempt_count: attempts.length,
+    input_tokens: sum('input_tokens'),
+    output_tokens: sum('output_tokens'),
+    estimated_cost_nano_usd: cached ? 0 : unknown || !attempts.length ? null : known,
+    known_cost_nano_usd: known,
+    unknown_cost_attempts: unknown,
+  })
+  return { ...verdict, review_id: id }
 }
