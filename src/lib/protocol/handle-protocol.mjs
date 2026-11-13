@@ -1,3 +1,5 @@
+import { stampBillingPromptId } from '../identity/crs-persona.mjs'
+import { requestSlots, requestSlotIdentity, executionContextKey } from '../pool/request-slots.mjs'
 import { observeRequest } from '../observability/tracing.mjs'
 import { applyNativeServerPolicy } from '../identity/native-server-policy.mjs'
 /**
@@ -1591,6 +1593,20 @@ export function createHandleProtocol(deps) {
     try {
       result = await getFailoverRunner().run({
         requestId: logCtx.request_id,
+        requestAffinity:
+          !pinVmId && !requestContext && inferenceBackend !== 'api'
+            ? {
+                key: requestSlotIdentity(req, inbound, protocol),
+                context: executionContextKey([
+                  req.apiKeyKind,
+                  req.apiKeyRecord?.id || 'master',
+                  req.apiKeyRecord?.user_id ?? null,
+                  req.apiKeyRecord?.group_id ?? 1,
+                  callerSession || stickyKey,
+                ]),
+                store: deps.requestSlots || requestSlots,
+              }
+            : null,
         canonicalBody,
         model: canonicalBody.model,
         stickyKey: isProbe ? null : stickyKey,
@@ -1651,17 +1667,19 @@ export function createHandleProtocol(deps) {
           const keptSession = extra.freshSlot ? '' : attemptBound?.sessionId || ''
           const keptAccount = extra.freshSlot ? '' : attemptBound?.accountId || ''
           const keptVm = extra.freshSlot ? '' : attemptBound?.vmId || ''
-          const attemptSessionId = resolveOutboundSessionId(executionSession, {
-            ...sessionContext,
-            accountId: selected.accountId,
-            boundSessionId: keptSession,
-            boundAccountId: keptAccount,
-            boundVmId: keptVm,
-            vmId: selected.vmId,
-            epoch: extra.freshSlot
-              ? `slot:${selected.slotIndex ?? 'x'}:${attemptStartedAt}`
-              : `${attemptStartedAt}:${selected.vmId || extra.attemptNo || ''}`,
-          })
+          const attemptSessionId =
+            extra.executionSessionId ||
+            resolveOutboundSessionId(executionSession, {
+              ...sessionContext,
+              accountId: selected.accountId,
+              boundSessionId: keptSession,
+              boundAccountId: keptAccount,
+              boundVmId: keptVm,
+              vmId: selected.vmId,
+              epoch: extra.freshSlot
+                ? `slot:${selected.slotIndex ?? 'x'}:${attemptStartedAt}`
+                : `${attemptStartedAt}:${selected.vmId || extra.attemptNo || ''}`,
+            })
           if (identity && attemptSessionId) identity.callerSessionId = attemptSessionId
           const credMode = credentialModeFromOauth(selected.vm?.claude || {})
           const modeOverride = slotPersonaModeOverride(selected.vm)
@@ -1771,6 +1789,9 @@ export function createHandleProtocol(deps) {
             logBag.outbound_profile = { cli_version: outboundProfile.cliVersion }
             logBag.official_cc_inference = 'cli-hop'
             logBag.provider = 'local_cli'
+            if (extra.cacheSessionId && !officialPassthrough) {
+              hopBody = stampBillingPromptId(hopBody, extra.cacheSessionId, firstUserText)
+            }
             hopBody = noteCachePrefix(selected, attemptSessionId, hopBody)
             logBag.outbound_summary = summarizeBody(hopBody)
             logBag.cache_continuity = describeCacheContinuity({
@@ -1856,6 +1877,9 @@ export function createHandleProtocol(deps) {
             authScheme: isApiKeyMode(credMode) ? 'apikey' : 'oauth',
             want1m,
           })
+          if (extra.cacheSessionId && !officialPassthrough) {
+            prepared.body = stampBillingPromptId(prepared.body, extra.cacheSessionId, firstUserText)
+          }
           const outbound = noteCachePrefix(
             selected,
             attemptSessionId,

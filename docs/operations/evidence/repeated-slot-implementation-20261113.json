@@ -1,0 +1,258 @@
+{
+  "result": "PASS",
+  "base_commit": "2357417da39b8260a63142cfe9e68c71dea9a6d4",
+  "scope": "native Claude and OpenAI-compatible requests converted to Claude; per-controller SQLite; no production deployment",
+  "migration": "056_request_slot_bindings.sql",
+  "http_e2e": {
+    "tests": 14,
+    "passed": 14,
+    "failed": 0
+  },
+  "signature_regression_checks": 19,
+  "native_checks": [
+    {
+      "name": "production_http_generation_0_completed",
+      "result": "PASS"
+    },
+    {
+      "name": "production_http_generation_1_completed",
+      "result": "PASS"
+    },
+    {
+      "name": "production_http_generation_2_completed",
+      "result": "PASS"
+    },
+    {
+      "name": "production_http_generation_3_completed",
+      "result": "PASS"
+    },
+    {
+      "name": "one_actual_slot_four_execution_sessions",
+      "result": "PASS"
+    },
+    {
+      "name": "four_successful_generations",
+      "result": "PASS"
+    },
+    {
+      "name": "different_owners_inside_same_slot",
+      "result": "PASS"
+    },
+    {
+      "name": "native_external_tool_returned",
+      "result": "PASS"
+    },
+    {
+      "name": "pending_tool_duplicate_rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "native_tool_result_completed",
+      "result": "PASS"
+    },
+    {
+      "name": "completed_tool_history_restores_without_new_tool_call",
+      "result": "PASS"
+    },
+    {
+      "name": "external_effect_executed_once",
+      "result": "PASS"
+    },
+    {
+      "name": "initial_tool_input_regenerates_after_completed_continuation",
+      "result": "PASS"
+    },
+    {
+      "name": "owned_process_groups_cleaned",
+      "result": "PASS"
+    }
+  ],
+  "native_actual_mock_provider_requests": 8,
+  "external_effect_receipt_lines": 1,
+  "live_request_budget": {
+    "used": 9,
+    "limit": 9
+  },
+  "live_provider_requests": [
+    {
+      "ordinal": 6,
+      "control": false,
+      "status": 200,
+      "request_id": "req_011Cgz74EvkHhep8Sd6aoaGd",
+      "prefix": {
+        "tools": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "system": "b8c91145486568946f31559041791aef30879f8a560425f4b50c8ca80c450292",
+        "messages": "c6fd453a0c9c979d75a76460212bd226d716090327d1f1de2c20ae6594c20a18"
+      },
+      "usage": {
+        "input_tokens": 18,
+        "cache_creation_input_tokens": 15395,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 15395,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 5,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "source": "real-provider"
+    },
+    {
+      "ordinal": 7,
+      "control": false,
+      "status": 200,
+      "request_id": "req_011Cgz74c9T1YjVm9CCx9cxu",
+      "prefix": {
+        "tools": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "system": "b8c91145486568946f31559041791aef30879f8a560425f4b50c8ca80c450292",
+        "messages": "c6fd453a0c9c979d75a76460212bd226d716090327d1f1de2c20ae6594c20a18"
+      },
+      "usage": {
+        "input_tokens": 18,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 15395,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 5,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "source": "real-provider"
+    },
+    {
+      "ordinal": 8,
+      "control": false,
+      "status": 200,
+      "request_id": "req_011Cgz74zwPmcP91U18cCjco",
+      "prefix": {
+        "tools": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "system": "b8c91145486568946f31559041791aef30879f8a560425f4b50c8ca80c450292",
+        "messages": "c6fd453a0c9c979d75a76460212bd226d716090327d1f1de2c20ae6594c20a18"
+      },
+      "usage": {
+        "input_tokens": 18,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 15395,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 5,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "source": "real-provider"
+    },
+    {
+      "ordinal": 9,
+      "control": false,
+      "status": 200,
+      "request_id": "req_011Cgz75NM1pEiaQo1MB7Zw5",
+      "prefix": {
+        "tools": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "system": "b8c91145486568946f31559041791aef30879f8a560425f4b50c8ca80c450292",
+        "messages": "c6fd453a0c9c979d75a76460212bd226d716090327d1f1de2c20ae6594c20a18"
+      },
+      "usage": {
+        "input_tokens": 18,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 15395,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 5,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "source": "real-provider"
+    }
+  ],
+  "live_candidate_source": {
+    "src/lib/pool/request-slots.mjs": "c85bfb132e044241a95725cec289e21aa060e8896eb0310dff199c6a17fbd9cb",
+    "src/lib/pool/failover-runner.mjs": "00994f11de8b6f3240efd491618e141e281469e6352b53cea1450ed21285cf25",
+    "src/lib/pool/pool-scheduler.mjs": "260fb10fc930dd897de9a4af945db03ff77f32bd812c48b4129912d9b2315ca0",
+    "src/lib/protocol/handle-protocol.mjs": "2767b6c9475d1bc03b9470b1f5cf8a755ca295894b90ff84cae2e1c67b5d5d1c",
+    "src/lib/core/errors.mjs": "ca66674d3a21809502c0de98d324af688c1a79d34911d77ee690686084f152c1",
+    "src/lib/db/migrations/056_request_slot_bindings.sql": "dd7ed9930940f94f9f7682b41e5934493856aa5075122aa1c084e8fe36bda579"
+  },
+  "final_source": {
+    "src/lib/pool/request-slots.mjs": "f150dc4e152a48b5d72e202c2112481803b04e9fe130fa7489c09043e38d81ce",
+    "src/lib/pool/failover-runner.mjs": "3e3a04ae7650bea531e2c81eb4201a54b2d75c76be65d4423a9a4d5be9358615",
+    "src/lib/pool/pool-scheduler.mjs": "260fb10fc930dd897de9a4af945db03ff77f32bd812c48b4129912d9b2315ca0",
+    "src/lib/protocol/handle-protocol.mjs": "7d8809594222a5e4b97b72e09dfd456cfd93c227166d5910c5af219175b094c9",
+    "src/lib/core/errors.mjs": "ca66674d3a21809502c0de98d324af688c1a79d34911d77ee690686084f152c1",
+    "src/lib/db/migrations/056_request_slot_bindings.sql": "dd7ed9930940f94f9f7682b41e5934493856aa5075122aa1c084e8fe36bda579",
+    "src/lib/transport/crs-mock.mjs": "f25a9786e88a078b0a029fc9b479d962be0a8612b5e94916a2349fe7360af919",
+    "test/e2e/repeated-request-slot.e2e.test.mjs": "468c7574d337723eccfb1c7e4f5ccae365167fb73f8e8d017638a4c67cc83e0c",
+    "test/e2e/repeated-request-native.e2e.py": "94c69fff574b6add663cd7bc11e00f4837c61cdcc1ea6dc4bb7d88a1034a16d5"
+  },
+  "live_validation_boundary": "Live candidate before continuation cache identity inheritance and uncertain-tool-state settlement; final additions verified with production HTTP and real native/CLI mock-provider E2E, not additional live calls",
+  "final_native_runtime_pins": {
+    "hermit": "b54140c31b182a729bf89890c131b039d30fe50c5d4c53b9c866a6cfa2ea3b82",
+    "cli": "677a2ea7bf576cedd20e191d973914ed8a41796f53a63b1923381ddc4d5b5e7d",
+    "tmux": "3784aae06d8714aad1f6e3cab9ee8fc49a09a7d5fa5a0a824267e37e02f655bf",
+    "harness": "94c69fff574b6add663cd7bc11e00f4837c61cdcc1ea6dc4bb7d88a1034a16d5",
+    "api_kernel": "550e4d4e2c530e10794ef04398c17ce78aaadba224af92a85f654f3fdd09e7ae",
+    "gateway_fixture": "08b0057827f3a985a7b69de58ba4c75a30351f748cf861b6e275585b003f6542",
+    "vm2api": "2357417da39b8260a63142cfe9e68c71dea9a6d4",
+    "production_source": {
+      "src/lib/pool/request-slots.mjs": "f150dc4e152a48b5d72e202c2112481803b04e9fe130fa7489c09043e38d81ce",
+      "src/lib/pool/failover-runner.mjs": "3e3a04ae7650bea531e2c81eb4201a54b2d75c76be65d4423a9a4d5be9358615",
+      "src/lib/pool/pool-scheduler.mjs": "260fb10fc930dd897de9a4af945db03ff77f32bd812c48b4129912d9b2315ca0",
+      "src/lib/protocol/handle-protocol.mjs": "7d8809594222a5e4b97b72e09dfd456cfd93c227166d5910c5af219175b094c9",
+      "src/lib/core/errors.mjs": "ca66674d3a21809502c0de98d324af688c1a79d34911d77ee690686084f152c1",
+      "src/lib/db/migrations/056_request_slot_bindings.sql": "dd7ed9930940f94f9f7682b41e5934493856aa5075122aa1c084e8fe36bda579"
+    },
+    "hermit_source": "e8e217cce848faec6abcc895eae5cd095040b75a"
+  },
+  "cleanup": {
+    "native": {
+      "kernel_stopped": true,
+      "owner_count": 7,
+      "all_process_groups_gone": true
+    },
+    "live": {
+      "kernel_stopped": true,
+      "owner_count": 4,
+      "all_process_groups_gone": true
+    },
+    "api_kernel_helpers_stopped": true,
+    "gateway_processes_stopped": true
+  },
+  "not_run": [
+    "Linux release image acceptance",
+    "Live OpenAI provider",
+    "Production ingress deployment",
+    "Multi-process shared database and cross-deployment-group lifetime"
+  ],
+  "production_config_changed": false,
+  "deployed": false,
+  "pushed": false,
+  "initial_base_commit": "605808afa110f3f391208ac6fca076bbee20dc9f",
+  "concurrent_commit_preserved": {
+    "commit": "2357417d",
+    "subject": "fix: use fork repository for updates and remove sidebar header",
+    "overlaps_task_files": false,
+    "modified_by_this_task": false
+  }
+}

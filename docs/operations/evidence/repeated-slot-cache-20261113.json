@@ -1,0 +1,256 @@
+{
+  "result": "PASS",
+  "vm2api_commit": "605808afa110f3f391208ac6fca076bbee20dc9f",
+  "origin_main": "605808afa110f3f391208ac6fca076bbee20dc9f",
+  "production_implementation": false,
+  "production_deployment": false,
+  "live_authorization": {
+    "limit": 6,
+    "used": 5,
+    "additional_calls_planned": 0
+  },
+  "native_boundary": "macOS isolated Hermit/CLI slot -> bounded credential relay inside kin-02 -> https://api.anthropic.com/v1/messages; no production slot coordinator used",
+  "live_summary": {
+    "worker_exit_code": 0,
+    "mode": "live",
+    "live_calls": 5,
+    "authorized_live_limit": 6,
+    "actual_provider_requests": 3,
+    "prefixes_identical": true,
+    "real_cache_verified": true,
+    "failures": []
+  },
+  "native_checks": [
+    {
+      "name": "execution_0_completed",
+      "result": "PASS"
+    },
+    {
+      "name": "same_completed_execution_rejected",
+      "result": "PASS"
+    },
+    {
+      "name": "execution_2_completed",
+      "result": "PASS"
+    },
+    {
+      "name": "execution_3_completed",
+      "result": "PASS"
+    },
+    {
+      "name": "three_successful_generations",
+      "result": "PASS"
+    },
+    {
+      "name": "different_owners_inside_same_slot",
+      "result": "PASS"
+    },
+    {
+      "name": "owned_process_groups_cleaned",
+      "result": "PASS"
+    }
+  ],
+  "provider_requests": [
+    {
+      "ordinal": 1,
+      "control": false,
+      "status": 200,
+      "request_id": "req_011Cgz2iX45toEM1Eq9nCdyu",
+      "prefix": {
+        "tools": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "system": "c37ff8d5823a6f55be273fdcf674d32f09ba7aee0d18dd02f67a53fe76a31845",
+        "messages": "c6fd453a0c9c979d75a76460212bd226d716090327d1f1de2c20ae6594c20a18"
+      },
+      "usage": {
+        "input_tokens": 18,
+        "cache_creation_input_tokens": 14079,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 14079,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 5,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "source": "real-provider"
+    },
+    {
+      "ordinal": 2,
+      "control": false,
+      "status": 200,
+      "request_id": "req_011Cgz2iuHZUVr1yLDCFL8rV",
+      "prefix": {
+        "tools": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "system": "c37ff8d5823a6f55be273fdcf674d32f09ba7aee0d18dd02f67a53fe76a31845",
+        "messages": "c6fd453a0c9c979d75a76460212bd226d716090327d1f1de2c20ae6594c20a18"
+      },
+      "usage": {
+        "input_tokens": 18,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 14079,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 5,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "source": "real-provider"
+    },
+    {
+      "ordinal": 3,
+      "control": false,
+      "status": 200,
+      "request_id": "req_011Cgz2jGhuPKpdYVbgnMtaQ",
+      "prefix": {
+        "tools": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "system": "c37ff8d5823a6f55be273fdcf674d32f09ba7aee0d18dd02f67a53fe76a31845",
+        "messages": "c6fd453a0c9c979d75a76460212bd226d716090327d1f1de2c20ae6594c20a18"
+      },
+      "usage": {
+        "input_tokens": 18,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 14079,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 5,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "source": "real-provider"
+    },
+    {
+      "ordinal": 4,
+      "control": true,
+      "status": 200,
+      "request_id": "req_011Cgz2jaz1DNgoxu2E8sRLG",
+      "prefix": {
+        "tools": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "system": "c37ff8d5823a6f55be273fdcf674d32f09ba7aee0d18dd02f67a53fe76a31845",
+        "messages": "c6fd453a0c9c979d75a76460212bd226d716090327d1f1de2c20ae6594c20a18"
+      },
+      "usage": {
+        "input_tokens": 18,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 14079,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 5,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "source": "real-provider"
+    },
+    {
+      "ordinal": 5,
+      "control": true,
+      "status": 200,
+      "request_id": "req_011Cgz2jt7szb1xC7s92gT3z",
+      "prefix": {
+        "tools": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "system": "c37ff8d5823a6f55be273fdcf674d32f09ba7aee0d18dd02f67a53fe76a31845",
+        "messages": "c6fd453a0c9c979d75a76460212bd226d716090327d1f1de2c20ae6594c20a18"
+      },
+      "usage": {
+        "input_tokens": 18,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 14079,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 5,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "source": "real-provider"
+    }
+  ],
+  "actual_prefix_including_cache_markers_identical": true,
+  "changed_top_level_fields": [
+    "metadata"
+  ],
+  "affinity_boundary": "experimental proxy -> real vm2api HTTP scheduler -> mock upstream; not production implementation",
+  "affinity_checks": [
+    {
+      "name": "concurrent_first_requests_one_binding_one_actual_slot",
+      "result": "PASS",
+      "requests": 6,
+      "slot": "vm-sim-01"
+    },
+    {
+      "name": "canonical_input_and_stream_delivery_preserve_binding",
+      "result": "PASS"
+    },
+    {
+      "name": "different_principal_separate_binding",
+      "result": "PASS"
+    },
+    {
+      "name": "busy_slot_waits_then_times_out_without_fallback",
+      "result": "PASS"
+    },
+    {
+      "name": "unavailable_bound_slot_no_dispatch_to_idle_alternative",
+      "result": "PASS"
+    },
+    {
+      "name": "restart_restores_same_slot_binding",
+      "result": "PASS"
+    }
+  ],
+  "signature_regression_checks": 19,
+  "cleanup": {
+    "kernel_stopped": true,
+    "owner_count": 3,
+    "all_process_groups_gone": true
+  },
+  "runtime_pins": {
+    "hermit": "b54140c31b182a729bf89890c131b039d30fe50c5d4c53b9c866a6cfa2ea3b82",
+    "cli": "677a2ea7bf576cedd20e191d973914ed8a41796f53a63b1923381ddc4d5b5e7d",
+    "tmux": "3784aae06d8714aad1f6e3cab9ee8fc49a09a7d5fa5a0a824267e37e02f655bf",
+    "harness": "2d264b57d2944e50ae8fc013091f28bb2c1ff0efd2b42e34e8b33cc5fd448b22",
+    "vm2api": "605808afa110f3f391208ac6fca076bbee20dc9f",
+    "hermit_source": "e8e217cce848faec6abcc895eae5cd095040b75a"
+  },
+  "files": {
+    "test/e2e/repeated-slot-cache-experiment.py": "2d264b57d2944e50ae8fc013091f28bb2c1ff0efd2b42e34e8b33cc5fd448b22",
+    "test/e2e/repeated-slot-affinity-prototype.e2e.test.mjs": "6733f880ff104b3e8da431d41045aa752e39c7c7a76bae4ca4581e70d924bff3"
+  },
+  "not_run": [
+    "Linux production-image native runtime acceptance",
+    "Full production sub2api -> vm2api -> Hermit repeat routing integration",
+    "External tool side-effect replay acceptance",
+    "OpenAI live-provider cache acceptance"
+  ],
+  "remote_state_at_close": {
+    "main": "605808afa110f3f391208ac6fca076bbee20dc9f",
+    "observation": "ls-remote matched local HEAD; reflog update by push at 2026-11-13 09:02:03 +0800; no push executed by this turn; actor unknown"
+  }
+}

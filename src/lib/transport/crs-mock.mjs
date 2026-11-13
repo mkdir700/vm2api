@@ -202,6 +202,8 @@ export function mockCrsPayload(options = {}) {
 }
 
 export async function emitMockSse(onEvent, payload) {
+  const delay = Number(process.env.KIN_MOCK_DELAY_MS || 0)
+  if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay))
   const msg = payload.body
   const lines = []
   const push = (event, data) => {

@@ -438,6 +438,7 @@ export function mapUpstreamError(status, body, headers = {}) {
       details: body.error.details,
     })
   }
+  if (['bound_slot_unavailable', 'request_slot_store_unavailable'].includes(inboundCode)) return { status: 503, body }
   if (inboundCode === ErrorCode.COMPLETED_REQUEST_DUPLICATE) {
     return makeError({
       type: ErrorType.INVALID_REQUEST,

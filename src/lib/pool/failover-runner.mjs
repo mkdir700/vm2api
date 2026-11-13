@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto'
+import { requestSlotFailure } from './request-slots.mjs'
 import {
   classifyUpstreamResult,
   isFableModel,
@@ -592,8 +594,27 @@ export class FailoverRunner {
   }
 
   async run(args = {}) {
-    const sessionKey = String(args.stickyKey || '')
-    if (!sessionKey) return this.runOnce(args)
+    const keys =
+      args.queueKeys ||
+      [
+        ...new Set(
+          [args.requestAffinity ? 'request:' + args.requestAffinity.key : '', String(args.stickyKey || '')].filter(
+            Boolean,
+          ),
+        ),
+      ].sort()
+    const [sessionKey, ...remaining] = keys
+    if (!sessionKey) {
+      const result = await this.runOnce(args)
+      if (args.requestAffinity?.started) {
+        try {
+          args.requestAffinity.store.finish(args.requestAffinity.key, args.requestAffinity.context, result)
+        } catch {
+          return { ...result, ...requestSlotFailure('request_slot_store_unavailable'), usage: usageOf(result) }
+        }
+      }
+      return result
+    }
     const previous = this.sessionTails.get(sessionKey) || Promise.resolve()
     let releaseTurn
     const turn = new Promise((resolve) => {
@@ -603,13 +624,13 @@ export class FailoverRunner {
     this.sessionTails.set(sessionKey, tail)
     try {
       await waitForSessionTurn(previous, args.signal, this.config.session_queue_timeout_ms)
-      return await this.runOnce(args)
+      return await this.run({ ...args, queueKeys: remaining })
     } catch (error) {
       if (error?.code === 'request_cancelled') return clientCancelledResult()
       if (error?.code === 'session_queue_timeout') {
         const retryMs = Number(this.config.session_queue_timeout_ms)
         return poolOverloadedError({
-          reason: 'session_queue_timeout',
+          reason: args.requestAffinity ? 'request_slot_queue_timeout' : 'session_queue_timeout',
           retry_after_ms: Number.isFinite(retryMs) && retryMs > 0 ? retryMs : 1000,
         })
       }
@@ -628,6 +649,7 @@ export class FailoverRunner {
 
   async runOnce({
     requestId,
+    requestAffinity = null,
     canonicalBody,
     model,
     stickyKey = null,
@@ -652,6 +674,24 @@ export class FailoverRunner {
   } = {}) {
     if (!this.scheduler) throw new Error('FailoverRunner requires a scheduler')
     if (typeof callAttempt !== 'function') throw new Error('FailoverRunner requires callAttempt')
+    let requestBinding = null,
+      priorExecution = null
+    if (requestAffinity) {
+      try {
+        requestBinding = requestAffinity.store.get(requestAffinity.key)
+        priorExecution = requestAffinity.store.state(requestAffinity.key, requestAffinity.context)
+      } catch {
+        return requestSlotFailure('request_slot_store_unavailable')
+      }
+    }
+    const executionSessionId = priorExecution
+      ? priorExecution.state === 'complete'
+        ? randomUUID()
+        : priorExecution.session_id
+      : requestBinding
+        ? randomUUID()
+        : null
+    const freshExecution = priorExecution?.state === 'complete' || (!!requestBinding && !priorExecution)
     const startedAt = Date.now()
     const budget = new AttemptCoordinator({
       maxSameUnitRetries: Number(this.config.max_same_account_retries ?? 1),
@@ -713,7 +753,7 @@ export class FailoverRunner {
           if (prev?.accountId && prev.accountId !== account.accountId && !ownMove) continue
           let guard = opts
           if (prev) guard = { ...opts, ifGeneration: prev.generation || 0 }
-          if (freshSlot || opts?.replaceSession) guard = { ...guard, replaceSession: true }
+          if (freshSlot || freshExecution || opts?.replaceSession) guard = { ...guard, replaceSession: true }
           if (ownMove) guard = { ...guard, allowMove: true }
           this.stickyRouter.bind(key, payload, guard)
           pinBaseline.set(key, this.stickyRouter.resolve?.(key) || null)
@@ -810,6 +850,7 @@ export class FailoverRunner {
           signal,
           deadline: repairPending ? Math.max(deadline, Date.now() + REPAIR_HOP_WAIT_MS) : deadline,
           pinVmId,
+          requiredVmId: requestBinding?.vm_id || null,
           familyVmId,
           deviceVmId: currentDeviceVmId,
           deviceKey,
@@ -868,8 +909,30 @@ export class FailoverRunner {
         }
       }
       if (!selected?.ok) {
+        if (requestBinding && !['all_accounts_busy', 'pool_queue_timeout'].includes(selected?.reason)) {
+          return requestSlotFailure('bound_slot_unavailable', { vm_id: requestBinding.vm_id })
+        }
         const exhausted = selectionFailure(selected, { excluded, lastPolicy, lastResult, hops: budget.hops })
         return preferLastResult(lastResult, lastPolicy, exhausted, attribution())
+      }
+      if (requestAffinity) {
+        let claimed
+        try {
+          claimed = requestAffinity.store.claim(requestAffinity.key, selected, requestAffinity.context)
+        } catch {
+          selected.release?.()
+          return requestSlotFailure('request_slot_store_unavailable')
+        }
+        if (claimed.vm_id !== selected.vmId) {
+          selected.release?.()
+          requestBinding = claimed
+          continue
+        }
+        if (claimed.account_id !== selected.accountId) {
+          selected.release?.()
+          return requestSlotFailure('bound_slot_unavailable')
+        }
+        requestBinding = claimed
       }
       repairPending = false
       snapshotPins()
@@ -918,6 +981,8 @@ export class FailoverRunner {
           typeof applyAttempt === 'function'
             ? await applyAttempt(clone(attemptBody), selected, {
                 attemptNo,
+                executionSessionId,
+                cacheSessionId: requestBinding?.cache_session_id,
                 repaired,
                 // Assemblers may rebuild from caller input for each selected
                 // slot. Replay the same repairs on that freshly rendered body.
@@ -938,6 +1003,10 @@ export class FailoverRunner {
         const body = wrappedAttempt ? prepared.body : prepared
         const attemptMeta = wrappedAttempt ? prepared.meta : null
         if (attemptMeta?.sessionId) {
+          if (requestAffinity) {
+            requestAffinity.store.start(requestAffinity.key, requestAffinity.context, String(attemptMeta.sessionId))
+            requestAffinity.started = true
+          }
           outboundSessionId = String(attemptMeta.sessionId)
           outboundSessionAccountId = selected.accountId
           bindAll(
@@ -1096,7 +1165,7 @@ export class FailoverRunner {
             return { ...result, ...attribution(), finalState: result?.terminalState || 'rejected', policy }
           }
         }
-        if (!shouldContinue(policy)) {
+        if (requestAffinity || !shouldContinue(policy)) {
           releaseStickySlots()
           return { ...result, ...attribution(), finalState: result?.terminalState || 'rejected', policy }
         }
@@ -1117,7 +1186,10 @@ export class FailoverRunner {
         const invalidPreparation =
           (error?.status === 400 &&
             ['invalid_cache_control', 'invalid_thinking_signature'].includes(error.body?.error?.code)) ||
-          (error?.status === 503 && error.body?.error?.code === 'thinking_signature_store_unavailable')
+          (error?.status === 503 &&
+            ['thinking_signature_store_unavailable', 'request_slot_store_unavailable'].includes(
+              error.body?.error?.code,
+            ))
         noteHop(invalidPreparation ? { upstreamExecutions: 0 } : null)
         if (error?.code === 'response_sent') {
           this.attemptsRepo?.complete?.(requestId, attemptNo, {
@@ -1210,7 +1282,7 @@ export class FailoverRunner {
           terminalState: result.terminalState,
           latencyMs: Date.now() - attemptStarted,
         })
-        if (committed || !shouldContinue(policy)) {
+        if (committed || requestAffinity || !shouldContinue(policy)) {
           releaseStickySlots()
           return { ...result, ...attribution(), finalState: result.terminalState, policy }
         }

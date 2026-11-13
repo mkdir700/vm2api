@@ -482,6 +482,7 @@ export class PoolScheduler extends EventEmitter {
     deadline = null,
     allowWait = true,
     pinVmId = null,
+    requiredVmId = null,
     familyVmId = null,
     deviceVmId = null,
     ownerScope = PLATFORM_SCOPE,
@@ -536,6 +537,7 @@ export class PoolScheduler extends EventEmitter {
         excluded: blocked,
         signal,
         pinVmId,
+        requiredVmId,
         ownerScope,
         keyScope,
         quotaRequest,
@@ -654,6 +656,7 @@ export class PoolScheduler extends EventEmitter {
   async selectSeat({
     model,
     seatKey,
+    requiredVmId = null,
     stickyKey = null,
     stickyKeys = null,
     excluded = new Set(),
@@ -727,12 +730,21 @@ export class PoolScheduler extends EventEmitter {
             keyScope,
             quotaRequest,
             onlyVmIds: new Set([held.vmId]),
+            requiredVmId,
           })
           const home = candidates[0]
           checkedHomeOnly = !!home && (!home.busy || stickyShouldWait(home.waitReason, home.cooldownReason))
         }
         if (!checkedHomeOnly) {
-          candidates = await this.eligibleCandidates({ model, excluded, signal, ownerScope, keyScope, quotaRequest })
+          candidates = await this.eligibleCandidates({
+            model,
+            excluded,
+            signal,
+            ownerScope,
+            keyScope,
+            quotaRequest,
+            requiredVmId,
+          })
         }
         // A grant can land while eligibility was being re-read.
         if (ticket?.granted) return finish(ticket.granted)
@@ -1048,6 +1060,7 @@ export class PoolScheduler extends EventEmitter {
     excluded = new Set(),
     signal = undefined,
     pinVmId = null,
+    requiredVmId = null,
     ownerScope = /** @type {import('../admin/resource-owner.mjs').OwnerScope} */ (PLATFORM_SCOPE),
     keyScope = null,
     quotaRequest = null,
@@ -1063,6 +1076,7 @@ export class PoolScheduler extends EventEmitter {
     const pin = pinVmId ? String(pinVmId).trim() : ''
     const entries = []
     for (const summary of summaries) {
+      if (requiredVmId && summary.id !== requiredVmId) continue
       if (onlyVmIds && !onlyVmIds.has(summary.id)) continue
       if (signal?.aborted) throw makeAbortError()
       if (pin && summary.id !== pin) continue
