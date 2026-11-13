@@ -16,7 +16,7 @@ const MODULE_PROJECT = path.resolve(__dirname, '..', '..', '..')
 const execFileAsync = promisify(execFile)
 const UPGRADE_SCRIPT = fs.readFileSync(path.join(MODULE_PROJECT, 'scripts', 'panel-upgrade.sh'), 'utf8')
 
-export const GITHUB_REPO = 'dofastted/vm2api'
+export const GITHUB_REPO = 'true-router/vm2api'
 export const INSTALL_SCRIPT_URL = `https://raw.githubusercontent.com/${GITHUB_REPO}/main/deploy/install.sh`
 export const DOCKER_SOCK = '/var/run/docker.sock'
 
@@ -297,14 +297,14 @@ export async function buildUpdateStatus({ projectRoot: root, currentVersion, upg
       update_available: false,
       check_status: 'managed',
       published_at: null,
-      html_url: 'https://github.com/mkdir700/vm2api',
+      html_url: `https://github.com/${GITHUB_REPO}`,
       name: 'Hermit 集成镜像',
       notes: '请在部署主机重新运行 Hermit 部署命令。',
       changelog: [],
       needs_wrap_cli_sync: false,
       upgrade_command: '',
       check_command: '',
-      repo: 'mkdir700/vm2api',
+      repo: GITHUB_REPO,
       source_error: null,
       managed_runtime: 'hermit',
       ...(upgrade ? { upgrade } : {}),

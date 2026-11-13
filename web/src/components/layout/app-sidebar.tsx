@@ -4,10 +4,8 @@ import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
-  SidebarHeader,
   SidebarRail,
 } from '@/components/ui/sidebar'
-import { AppTitle } from './app-title'
 import { navGroupsFor, sidebarData } from './data/sidebar-data'
 import { NavGroup } from './nav-group'
 import { NavUser } from './nav-user'
@@ -19,9 +17,6 @@ export function AppSidebar() {
   const groups = navGroupsFor(me?.views)
   return (
     <Sidebar collapsible={collapsible} variant={variant}>
-      <SidebarHeader>
-        <AppTitle version={me?.version} />
-      </SidebarHeader>
       <SidebarContent>
         {groups.map((group) => (
           <NavGroup key={group.title} {...group} />
