@@ -358,77 +358,6 @@ test('529 stays on the overload column and does not open the unit circuit', () =
   assert.equal(policy.decision.action, 'next_unit')
 })
 
-test('signature error has one scoped repair', () => {
-  const policy = classifyUpstreamResult(
-    {
-      status: 400,
-      body: { error: { message: 'thinking.signature: Field required' } },
-    },
-    { repaired: false, signatureRepair: true },
-  )
-  assert.equal(policy.action, 'repair-and-retry')
-  const body = repairAnthropicRequest(
-    {
-      thinking: { type: 'enabled', budget_tokens: 1000 },
-      messages: [
-        {
-          role: 'assistant',
-          content: [
-            { type: 'thinking', thinking: 'x' },
-            { type: 'text', text: 'keep' },
-          ],
-        },
-      ],
-    },
-    policy,
-  )
-  assert.equal(body.thinking, undefined)
-  assert.deepEqual(body.messages[0].content, [
-    { type: 'text', text: 'x' },
-    { type: 'text', text: 'keep' },
-  ])
-  const second = classifyUpstreamResult(
-    {
-      status: 400,
-      body: { error: { message: 'thinking.signature: Field required' } },
-    },
-    { repaired: true },
-  )
-  assert.equal(second.action, 'stop')
-})
-
-test('invalid thinking signature converts signed blocks to text', () => {
-  const policy = classifyUpstreamResult(
-    {
-      status: 400,
-      body: { error: { message: 'messages.1.content.0: Invalid `signature` in `thinking` block' } },
-    },
-    { signatureRepair: true },
-  )
-  assert.equal(policy.action, 'repair-and-retry')
-  const body = repairAnthropicRequest(
-    {
-      thinking: { type: 'adaptive' },
-      messages: [
-        {
-          role: 'assistant',
-          content: [
-            { type: 'thinking', thinking: 'draft', signature: 'bad_sig' },
-            { type: 'redacted_thinking', data: 'xx', signature: 'also_bad' },
-            { type: 'text', text: 'visible' },
-          ],
-        },
-      ],
-    },
-    policy,
-  )
-  assert.equal(body.thinking, undefined)
-  assert.deepEqual(body.messages[0].content, [
-    { type: 'text', text: 'draft' },
-    { type: 'text', text: 'visible' },
-  ])
-})
-
 test('fable 504 cools only the fable family', () => {
   const policy = classifyUpstreamResult(
     {
@@ -834,15 +763,6 @@ test('signature 400 is passed through by default', () => {
   assert.equal(policy.reason, 'invalid_request')
   assert.equal(policy.action, 'stop')
   assert.equal(shouldContinue(policy), false)
-})
-
-test('signatureRepair=true repairs and retries the signature 400', () => {
-  const policy = classifyUpstreamResult(SIGNATURE_400, {
-    model: 'claude-sonnet-5',
-    signatureRepair: true,
-  })
-  assert.equal(policy.reason, 'signature_repairable')
-  assert.equal(policy.action, 'repair-and-retry')
 })
 
 test('signatureRepair=false passes the upstream signature 400 back to the caller', () => {

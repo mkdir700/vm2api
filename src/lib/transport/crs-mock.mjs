@@ -72,6 +72,30 @@ export function mockCrsPayload(options = {}) {
       : 'tool_use'
   }
   const text = process.env.KIN_MOCK_TEXT || 'pong'
+  if (scenario === 'invalid_thinking_signature') {
+    return {
+      ok: false,
+      status: 400,
+      via: 'go-worker',
+      headers: {},
+      body: { error: { type: 'invalid_request_error', message: 'Invalid signature in thinking block' } },
+    }
+  }
+  if (scenario === 'signed_thinking') {
+    return {
+      ok: true,
+      status: 200,
+      via: 'go-worker',
+      body: message({
+        content: [
+          { type: 'thinking', thinking: 'Synthetic signed reasoning.', signature: 'synthetic-signature-'.repeat(20) },
+          { type: 'redacted_thinking', data: 'synthetic-redacted-'.repeat(20) },
+          { type: 'text', text: 'PONG' },
+        ],
+      }),
+      headers: {},
+    }
+  }
   if (scenario === 'completed_request_duplicate') {
     return {
       ok: false,

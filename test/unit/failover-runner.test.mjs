@@ -526,49 +526,6 @@ function badGateway(message = 'net/http: timeout awaiting response headers') {
   }
 }
 
-test('signature error is repaired once on the same account when enabled', async () => {
-  const scheduler = new Scheduler([candidate(1)])
-  const runner = new FailoverRunner({ scheduler, config: { signature_repair: true } })
-  let calls = 0
-  const result = await runner.run({
-    requestId: 'req-4',
-    canonicalBody: {
-      model: 'claude-opus-test',
-      thinking: { type: 'enabled' },
-      messages: [
-        {
-          role: 'assistant',
-          content: [
-            { type: 'thinking', thinking: 'x' },
-            { type: 'text', text: 'keep' },
-          ],
-        },
-      ],
-    },
-    model: 'claude-opus-test',
-    callAttempt: ({ body }) => {
-      calls++
-      if (calls === 1) {
-        return {
-          ok: false,
-          status: 400,
-          terminalState: 'rejected',
-          body: { error: { message: 'thinking.signature: Field required' } },
-        }
-      }
-      assert.equal(body.thinking, undefined)
-      assert.deepEqual(body.messages[0].content, [
-        { type: 'text', text: 'x' },
-        { type: 'text', text: 'keep' },
-      ])
-      return success('repaired')
-    },
-  })
-  assert.equal(result.ok, true)
-  assert.equal(result.attemptCount, 2)
-  assert.equal(calls, 2)
-})
-
 test('search history repair still runs when the rejected hop outlived the deadline', async () => {
   const scheduler = new Scheduler([candidate(1)])
   const runner = new FailoverRunner({ scheduler, config: { total_retry_deadline_ms: 20 } })

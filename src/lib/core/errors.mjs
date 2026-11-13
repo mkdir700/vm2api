@@ -40,6 +40,8 @@ export const ErrorCode = {
   INVALID_FIELD: 'invalid_field',
   INVALID_MESSAGES: 'invalid_messages',
   INVALID_CONTENT: 'invalid_content',
+  INVALID_THINKING_SIGNATURE: 'invalid_thinking_signature',
+  THINKING_SIGNATURE_STORE_UNAVAILABLE: 'thinking_signature_store_unavailable',
   // model
   MODEL_REQUIRED: 'model_required',
   MODEL_NOT_SUPPORTED: 'model_not_supported',
@@ -426,6 +428,16 @@ export function incompleteAssistantClientError(result = {}) {
 export function mapUpstreamError(status, body, headers = {}) {
   const upType = upstreamErrorType(body)
   const inboundCode = body?.error?.code || null
+  if ([ErrorCode.INVALID_THINKING_SIGNATURE, ErrorCode.THINKING_SIGNATURE_STORE_UNAVAILABLE].includes(inboundCode)) {
+    return makeError({
+      type: inboundCode === ErrorCode.INVALID_THINKING_SIGNATURE ? ErrorType.INVALID_REQUEST : ErrorType.API,
+      code: inboundCode,
+      message: body.error.message,
+      param: body.error.param,
+      status: inboundCode === ErrorCode.INVALID_THINKING_SIGNATURE ? 400 : 503,
+      details: body.error.details,
+    })
+  }
   if (inboundCode === ErrorCode.COMPLETED_REQUEST_DUPLICATE) {
     return makeError({
       type: ErrorType.INVALID_REQUEST,

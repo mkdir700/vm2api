@@ -1114,8 +1114,11 @@ export class FailoverRunner {
         }
         budget.noteSwitch(selected.accountId, selected.vmId, { spill: policy.reason === 'slot_busy' })
       } catch (error) {
-        const invalidCache = error?.status === 400 && error.body?.error?.code === 'invalid_cache_control'
-        noteHop(invalidCache ? { upstreamExecutions: 0 } : null)
+        const invalidPreparation =
+          (error?.status === 400 &&
+            ['invalid_cache_control', 'invalid_thinking_signature'].includes(error.body?.error?.code)) ||
+          (error?.status === 503 && error.body?.error?.code === 'thinking_signature_store_unavailable')
+        noteHop(invalidPreparation ? { upstreamExecutions: 0 } : null)
         if (error?.code === 'response_sent') {
           this.attemptsRepo?.complete?.(requestId, attemptNo, {
             upstreamStatus: 403,
@@ -1137,7 +1140,7 @@ export class FailoverRunner {
             finalState: 'policy_block',
           }
         }
-        if (invalidCache) {
+        if (invalidPreparation) {
           this.attemptsRepo?.complete?.(requestId, attemptNo, {
             upstreamStatus: 0,
             errorScope: 'request',
@@ -1149,7 +1152,7 @@ export class FailoverRunner {
           releaseStickySlots()
           return {
             ok: false,
-            status: 400,
+            status: error.status,
             body: error.body,
             terminalState: 'invalid_request',
             finalState: 'invalid_request',

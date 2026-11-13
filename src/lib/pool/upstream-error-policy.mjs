@@ -322,7 +322,6 @@ function classifyUpstreamResultRaw(
     oauth401CooldownMs = DEFAULT_OAUTH_401_COOLDOWN_MS,
     credentialGeneration = null,
     priorAuth401Generation = null,
-    signatureRepair = false,
     usage = null,
   } = {},
 ) {
@@ -524,17 +523,10 @@ function classifyUpstreamResultRaw(
   }
   if (status === 400) {
     const hay = `${code} ${message}`
-    // Default off. Turning this on drops thinking history and retries, so the
-    // client sees 200 and never learns the upstream rejected the signature.
-    // Probe / forged signatures need the 400. Search / prefill / tool-pair
-    // / schema / adaptive repairs are independent of this switch.
-    if (!repaired && signatureRepair && SIGNATURE_PATTERNS.some((pattern) => pattern.test(hay))) {
-      return {
-        scope: 'request',
-        action: 'repair-and-retry',
-        reason: 'signature_repairable',
-        cooldownUntil: null,
-      }
+    // Signature rejection is terminal, including when legacy signature repair
+    // is enabled. Removing signed history changes the request's meaning.
+    if (SIGNATURE_PATTERNS.some((pattern) => pattern.test(hay))) {
+      return { scope: 'request', action: 'stop', reason: 'invalid_request', cooldownUntil: null }
     }
     if (!repaired && SEARCH_HISTORY_PATTERNS.some((pattern) => pattern.test(hay))) {
       return {

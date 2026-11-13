@@ -177,6 +177,7 @@ import { formatPoolSelectionSummary } from '../pool/pool-scheduler.mjs'
 import { extraHeadersFromLimitError, isAccountQuotaExhausted } from '../pool/quota-window.mjs'
 import {
   filterThinkingForAccount,
+  validateThinkingHistory,
   recordThinkingOwners,
   thinkingOwners as defaultThinkingOwners,
 } from '../pool/thinking-owner.mjs'
@@ -707,6 +708,22 @@ export function createHandleProtocol(deps) {
     logBag.has_tools = Array.isArray(inbound?.tools) && inbound.tools.length > 0
     logBag.session_id = sessionIdForLog(extractCallerSession({ inbound, headers: req.headers }))
     logBag.reasoning_effort = reasoningEffortOf(inbound)
+
+    // Check raw Messages history before any probe, sanitizer or persona rewrite
+    // can remove invalid thinking. API-backed requests retain upstream validation.
+    if (protocol === 'anthropic.messages' && resolveInferenceBackend(req) !== 'api') {
+      try {
+        validateThinkingHistory(inbound, { store: thinkingOwnerStore })
+      } catch (error) {
+        if (!error.body?.error) throw error
+        stats.errors++
+        logBag.error_code = error.body.error.code
+        logBag.error_message = error.body.error.message
+        logBag.attempt_count = 0
+        logBag.final_state = 'invalid_request'
+        return json(res, error.status, error.body)
+      }
+    }
 
     const fp = fingerprintRequest(req, inbound)
     // Before the health probe: its synthesized or fail-closed replies would otherwise answer
@@ -1598,8 +1615,7 @@ export function createHandleProtocol(deps) {
         deliveryMode,
         signal: clientAbort.signal,
         applyAttempt: async (body, selected, extra = {}) => {
-          // Only this account's own thinking replays as thinking. Another
-          // account's signature, or one with no record, goes out as text.
+          // Ownership must match this account; never repair signed history into text.
           const owned = filterThinkingForAccount(body, selected.accountId, thinkingOwnerStore)
           body = owned.body
           if (owned.kept || owned.converted || owned.dropped) {

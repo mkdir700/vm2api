@@ -39,6 +39,8 @@ const CODE_MAP = {
   invalid_field: 'request',
   invalid_messages: 'request',
   invalid_content: 'request',
+  invalid_thinking_signature: 'signature',
+  thinking_signature_store_unavailable: 'other',
   invalid_request: 'request',
   model_required: 'request',
   model_not_supported: 'request',
