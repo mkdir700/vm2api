@@ -29,6 +29,7 @@ const UNSCHEDULABLE_REASONS = Object.freeze({
   proxy_required: '未绑代理',
   proxy_desynced: '代理失配',
   runtime_start_failed: '启动失败',
+  kernel_unsupported: '内核不受支持',
   circuit_escalated: '熔断升级',
   legacy_unknown: '待确认',
 })

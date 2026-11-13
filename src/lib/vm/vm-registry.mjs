@@ -76,6 +76,7 @@ export function getVm(projectRoot, id) {
 }
 
 export function summarizeVm(vm, projectRoot = null, routing = null) {
+  const kernel = kernelDataplaneStatus(vm, routing)
   const kind = normalizeVmKind(vm)
   const codex = kind.kind === 'codex' ? summarizeCodexSlot(projectRoot, vm) : null
   const quota = codex?.usage?.quota || {}
@@ -176,11 +177,11 @@ export function summarizeVm(vm, projectRoot = null, routing = null) {
     claude_code_version: vm.claude_code_version || null,
     stats: vm.stats || {},
     fingerprint: vm.fingerprint || null,
-    schedulable: kernelDataplaneStatus(vm, routing).ok && vm.schedulable !== false,
+    schedulable: kernel.ok && vm.schedulable !== false,
     schedule_manual: vm.schedule_manual === true,
-    schedule_disabled_reason: vm.schedule_disabled_reason || null,
+    schedule_disabled_reason: kernel.ok ? vm.schedule_disabled_reason || null : kernel.code,
     schedule_off: vm.schedule_off === true,
-    unschedulable: vm.unschedulable || null,
+    unschedulable: kernel.ok ? vm.unschedulable || null : { reason: kernel.code, detail: { message: kernel.error } },
     schedule_hold: vm.schedule_hold || null,
     temp_unschedulable_until: vm.claude?.temp_unschedulable_until || vm.temp_unschedulable_until || null,
     temp_unschedulable_reason: vm.claude?.temp_unschedulable_reason || vm.temp_unschedulable_reason || null,

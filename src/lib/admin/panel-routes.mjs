@@ -2909,6 +2909,14 @@ export function createPanelHandler(ctx) {
             body: { ids: targets.all ? undefined : targets.ids, restart: body.restart !== false },
           },
           async (syncArgs) => {
+            // Recheck the locked batch before changing any slot or the global default.
+            if (
+              syncArgs.body.ids.some((id) => !kernelDataplaneStatus(getVm(cfg.paths.project, id), ctx.routingConfig).ok)
+            )
+              return json(res, 409, {
+                ok: false,
+                error: { code: 'kernel_install_required', message: '旧内核已移除，请通过内核页安装默认内核或 Hermit' },
+              })
             const previous = structuredClone(ctx.routingConfig)
             try {
               if (targets.all) {
@@ -5948,7 +5956,7 @@ export function createPanelHandler(ctx) {
         }
         const personaProblems = [
           ...panel.validatePersonaRoutingPatch(body),
-          ...validateInferenceRoutingPatch(body),
+          ...validateInferenceRoutingPatch(body, ctx.routingConfig.inference || {}),
           ...validateTelemetryRoutingPatch(body),
         ]
         if (personaProblems.length) {
@@ -5979,9 +5987,13 @@ export function createPanelHandler(ctx) {
           applied = appliedDuringSwitch ?? (await persistRoutingPatch(body))
         } catch (error) {
           restoreRoutingRuntime(previousRoutingConfig)
-          return json(res, 503, {
+          const needsInstall = error?.code === 'kernel_install_required'
+          return json(res, needsInstall ? 409 : 503, {
             ok: false,
-            error: { code: 'routing_persist_failed', message: String(error?.message || error) },
+            error: {
+              code: needsInstall ? error.code : 'routing_persist_failed',
+              message: String(error?.message || error),
+            },
           })
         }
         return json(

@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.083 — 2026-11-13
+
+- Allow unrelated settings saves when historical Crag fields remain in the routing configuration. Preserve retired selections and support repeated saves from older clients.
+- Block global and legacy dataplane changes that would bypass the required supported-kernel installation. Reject mixed batches before changing any selected slot.
+- Recover failed migrations by retaining the old Crag container in a stopped state with automatic restart disabled. Preserve credentials and permit a subsequent explicit supported installation.
+- Report unsupported kernels as the actual scheduling cause. Update recovery messages and derive release fixture URLs from the configured repository.
+- Delegate Hermit client implementation declarations to its bundled Claude Code instead of forwarding the gateway's synthetic declarations.
+- Preserve client-supplied mid-conversation system messages across both native and non-native request paths without model-based filtering or rewriting.
+- Add HTTP and lifecycle end-to-end coverage. The isolated Linux compatibility, retirement, Hermit installation, restart, and seat suites pass all 17 tests. The frontend production build passes.
+
+No new database migration is introduced relative to 1.4.082. Existing retired slots remain blocked until an administrator explicitly installs a supported kernel. Publishing this tag does not itself confirm a production deployment.
+
 ## 1.4.082 — 2026-11-13
 
 - 相同原生 Claude 请求持久绑定同一个 slot。已完成请求再次调用时创建独立生成，保持缓存前缀；slot 忙时排队，不可用或权限收窄时明确失败，不跨 slot 重试。

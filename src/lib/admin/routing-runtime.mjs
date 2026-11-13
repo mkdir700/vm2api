@@ -20,6 +20,7 @@ import {
   normalizeSessionSlots,
   resolveInferenceEngine,
   resolveKernelDataplane,
+  kernelDataplaneStatus,
 } from '../vm/slot-engine.mjs'
 import { writeHermitKernelConfig } from '../vm/hermit-runtime.mjs'
 import { slotExec } from '../vm/slot-runtime.mjs'
@@ -447,6 +448,17 @@ export function createRoutingRuntime(ctx) {
   }
 
   async function persistRoutingPatch(body = {}) {
+    const current = getRouting()
+    if (body.inference && Object.hasOwn(body.inference, 'dataplane')) {
+      const desired = { ...current, inference: { ...current.inference, ...body.inference } }
+      const needsInstall = listVms(ctx.cfg.paths.project).some(
+        (vm) => !kernelDataplaneStatus(vm, current).ok && kernelDataplaneStatus(vm, desired).ok,
+      )
+      if (needsInstall)
+        throw Object.assign(new Error('请先为旧内核槽位安装默认内核或 Hermit，再修改全局内核'), {
+          code: 'kernel_install_required',
+        })
+    }
     const hasCodexQuota = body?.codex && Object.prototype.hasOwnProperty.call(body.codex, 'quota')
     if (hasCodexQuota) validateOpenAIQuotaPatch(body.codex.quota)
     validateInferenceWebsocketPatch(body)

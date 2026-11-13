@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { startGateway, api } from '../harness.mjs'
+import { GITHUB_REPO } from '../../src/lib/admin/release.mjs'
 
 // Failure inventory: docs/operations/crag-removal.md.
 test('the HTTP control plane rejects retired kernels and keeps supported kernels available', async () => {
@@ -181,7 +182,7 @@ test('HTTP release updates no longer require retired payload assets', async () =
           assets: names.map((name, index) => ({
             name,
             size: elf.length,
-            url: `https://api.github.com/repos/dofastted/vm2api/releases/assets/${index + 1}`,
+            url: `https://api.github.com/repos/${GITHUB_REPO}/releases/assets/${index + 1}`,
           })),
         }),
       )

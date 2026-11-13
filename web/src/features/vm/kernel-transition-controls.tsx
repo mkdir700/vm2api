@@ -44,15 +44,18 @@ export function KernelTransitionControls({
         if (action !== 'apply' && !pending.some((row) => row.id === id))
           continue
         try {
-          const result = await api<{ unchanged?: boolean }>(
-            `/api/panel/vms/${encodeURIComponent(id)}/kernel-transition`,
-            {
-              method: 'POST',
-              body: JSON.stringify({ action, target }),
-            }
-          )
+          const result = await api<{
+            unchanged?: boolean
+            requires_install?: boolean
+          }>(`/api/panel/vms/${encodeURIComponent(id)}/kernel-transition`, {
+            method: 'POST',
+            body: JSON.stringify({ action, target }),
+          })
+          const rollbackMessage = result.requires_install
+            ? '原容器已保留并停用，请安装默认内核或 Hermit'
+            : '回滚完成'
           receipts.push(
-            `${id}：${action === 'apply' ? (result.unchanged ? '当前版本和运行状态保持不变' : '切换完成，可回滚') : action === 'rollback' ? '回滚完成' : '已确认当前内核'}`
+            `${id}：${action === 'apply' ? (result.unchanged ? '当前版本和运行状态保持不变' : '切换完成，可回滚') : action === 'rollback' ? rollbackMessage : '已确认当前内核'}`
           )
         } catch (error) {
           receipts.push(

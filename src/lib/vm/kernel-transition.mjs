@@ -394,7 +394,13 @@ export async function runKernelTransition({
     rollbackStarted = true
     await restore(project, vm, t, routing)
     watchdog?.reset?.(id)
-    return { ok: true, rolled_back: true, transition: publicKernelTransition(getVm(project, id)) }
+    const restored = getVm(project, id)
+    return {
+      ok: true,
+      rolled_back: true,
+      requires_install: !kernelDataplaneStatus(restored, routing).ok,
+      transition: publicKernelTransition(restored),
+    }
   } catch (error) {
     if (rollbackStarted || (began && ['stopping', 'retaining', 'starting', 'checking', 'applied'].includes(t?.state))) {
       try {
@@ -422,15 +428,17 @@ export async function runKernelTransition({
         record.kernel_transition = t
       })
     }
+    let message = error.code ? error.message : '内核切换失败，请检查容器和文件权限'
+    if (began && t?.state === 'rolled_back') {
+      const recovery = kernelDataplaneStatus(getVm(project, id), routing).ok
+        ? '已恢复原内核'
+        : '原容器已保留并停用，请安装默认内核或 Hermit'
+      message = `${error.code ? error.message : '目标内核切换失败'}；${recovery}`
+    }
     return {
       ok: false,
       code: error.code || 'kernel_transition_failed',
-      error:
-        began && t?.state === 'rolled_back'
-          ? `${error.code ? error.message : '目标内核切换失败'}；已恢复原内核`
-          : error.code
-            ? error.message
-            : '内核切换失败，请检查容器和文件权限',
+      error: message,
       transition: publicKernelTransition(getVm(project, id)),
     }
   } finally {
@@ -442,7 +450,7 @@ async function restore(project, vm, t, routing) {
   const previous = { ...vm }
   replaceSelection(previous, t.previous)
   const supported = kernelDataplaneStatus(previous, routing)
-  if (!supported.ok) throw fail(supported.code, supported.error)
+  // Retired selections can be restored as stopped data, never as running kernels.
   save(project, vm.id, t, 'rolling_back')
   const old = await inspect(vm, t.backup)
   let current = await inspect(vm, t.container)
@@ -479,8 +487,14 @@ async function restore(project, vm, t, routing) {
     restored.proxy = vm.proxy
     // Commit the old selection before restarting; credentials are read from current files.
     patchVmRecord(project, vm.id, (record) => replaceSelection(record, t.previous))
-    await docker(vm, ['update', `--restart=${t.restart_policy}`, t.container])
-    if (t.previous_running) {
+    await docker(vm, ['update', `--restart=${supported.ok ? t.restart_policy : 'no'}`, t.container])
+    if (!supported.ok) {
+      const retained = await inspect(vm, t.container)
+      if (retained?.State?.Running) await docker(vm, ['stop', '--time', '30', t.container])
+      const halted = await inspect(vm, t.container)
+      if (!halted || halted.State?.Running || halted.HostConfig?.RestartPolicy?.Name !== 'no')
+        throw fail('kernel_stop_unconfirmed', '旧容器停止或自动重启策略尚未确认')
+    } else if (t.previous_running) {
       if (!current?.State?.Running) await clearStoppedKernelSocket(project, vm)
       await docker(vm, ['start', t.container])
       const ready =
@@ -497,9 +511,12 @@ async function restore(project, vm, t, routing) {
   release(project, vm.id, t, (record) => {
     record.kernel_transition = t
     replaceSelection(record, t.previous)
-    record.status = t.previous_status
+    record.status = supported.ok ? t.previous_status : 'stopped'
     const restored = { ...record, runtime: t.previous_runtime || record.runtime }
     runtimePatch(restored, inspectContainer(t.container), { routing })
     record.runtime = restored.runtime
+    if (!supported.ok) {
+      record.runtime = { ...record.runtime, stopped: true, pid: null, ip: null }
+    }
   })
 }

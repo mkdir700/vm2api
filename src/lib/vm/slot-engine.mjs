@@ -131,6 +131,8 @@ export function normalizeInferenceConfig(raw = {}) {
     session_slots: normalizeSessionSlots(raw.session_slots),
     session_idle_ttl_seconds: normalizeSessionIdleTtlSeconds(raw.session_idle_ttl_seconds),
     dataplane: normalizeKernelDataplane(raw.dataplane),
+    // Preserve historical metadata on unrelated saves; validation forbids new values.
+    ...(Object.hasOwn(raw, 'crag_kernel_version') ? { crag_kernel_version: raw.crag_kernel_version } : {}),
   }
 }
 
@@ -328,7 +330,7 @@ export function parseSlotPolicyTargets(body = {}) {
   return { ok: true, all: false, ids }
 }
 
-export function validateInferenceRoutingPatch(body = {}) {
+export function validateInferenceRoutingPatch(body = {}, current = {}) {
   if (!body || typeof body !== 'object' || body.inference == null) return []
   if (typeof body.inference !== 'object' || Array.isArray(body.inference)) {
     return ['inference 必须是对象']
@@ -378,11 +380,19 @@ export function validateInferenceRoutingPatch(body = {}) {
   }
   if (Object.prototype.hasOwnProperty.call(body.inference, 'dataplane')) {
     const parsed = parseKernelDataplanePatch(body.inference.dataplane)
-    if (!parsed.ok) errors.push(parsed.error)
-    else if (!parsed.value) errors.push('inference.dataplane 必须是 wrap 或 cc')
+    if (
+      !parsed.ok &&
+      normalizeKernelDataplane(body.inference.dataplane) !== normalizeKernelDataplane(current.dataplane)
+    )
+      errors.push(parsed.error)
+    else if (parsed.ok && !parsed.value) errors.push('inference.dataplane 必须是 wrap 或 cc')
     else if (parsed.value === 'hermit') errors.push('Hermit 必须通过版本包接口绑定具体槽位')
   }
-  if (Object.prototype.hasOwnProperty.call(body.inference, 'crag_kernel_version'))
+  if (
+    Object.hasOwn(body.inference, 'crag_kernel_version') &&
+    (!Object.hasOwn(current, 'crag_kernel_version') ||
+      body.inference.crag_kernel_version !== current.crag_kernel_version)
+  )
     errors.push('crag_kernel_version 已移除')
   return errors
 }

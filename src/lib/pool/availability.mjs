@@ -264,6 +264,15 @@ export function evaluateAccount({
   const source = sourceOf(probe, account, quota, extras)
   const probedAt = probe?.at || probe?.probed_at || null
   const base = { source, probed_at: probedAt, in_pool: inPool }
+  if (disabledReason === 'kernel_unsupported') {
+    return finish(base, {
+      key: 'bad',
+      text: '内核不受支持',
+      accept: false,
+      usable: false,
+      reason: 'kernel_unsupported',
+    })
+  }
   const pol = policyOf({ policy })
 
   if (!token && !refresh) {

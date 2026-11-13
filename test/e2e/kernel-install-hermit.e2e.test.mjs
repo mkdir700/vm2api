@@ -38,6 +38,8 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
     fs.mkdirSync(path.join(project, 'config'), { recursive: true })
     fs.writeFileSync(path.join(project, 'config/routing.json'), JSON.stringify(routing))
     const vm = seedVm({ project })
+    vm.dataplane = 'crag'
+    vm.crag_kernel_version = 'v2'
     writeWorkerCredentialFile(path.join(project, 'vms/vm-sim-01/cli-home'), {
       type: 'apikey',
       api_key: 'sk-ant-api03-synthetic-install-test-key',
@@ -142,6 +144,32 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
       'image_failure_sends_no_lifecycle_commands',
       preflightCommands.every((args) => !['stop', 'rm', 'rename', 'update'].includes(args[0])),
     )
+    fs.writeFileSync(path.join(project, 'fail-run'), '1')
+    const retiredFailure = await install([target])
+    fs.unlinkSync(path.join(project, 'fail-run'))
+    fs.writeFileSync(path.join(artifact, 'retired-failed-install.json'), JSON.stringify(retiredFailure, null, 2))
+    const retiredRecovered = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json')))
+    check('retired_failure_is_reported', retiredFailure.status === 200 && !retiredFailure.json.data.items[0].ok)
+    check('retired_failure_releases_transition', retiredRecovered.kernel_transition.state === 'rolled_back')
+    check(
+      'retired_failure_keeps_old_selection',
+      retiredRecovered.dataplane === 'crag' && retiredRecovered.crag_kernel_version === 'v2',
+    )
+    check('retired_failure_stops_slot', retiredRecovered.status === 'stopped' && retiredRecovered.runtime.stopped)
+    check(
+      'retired_failure_preserves_credentials',
+      JSON.stringify(retiredRecovered.claude) === JSON.stringify(vm.claude),
+    )
+    const retiredContainers = JSON.parse(fs.readFileSync(path.join(project, 'docker-state.json')))
+    check(
+      'retired_failure_preserves_original_container',
+      Object.keys(retiredContainers).length === 1 && retiredContainers['kin-sim-01'].Id === 'fixture-original',
+    )
+    check(
+      'retired_failure_disables_restart',
+      !retiredContainers['kin-sim-01'].State.Running &&
+        retiredContainers['kin-sim-01'].HostConfig.RestartPolicy.Name === 'no',
+    )
     for (let i = 0; i < 2; i++) {
       const result = await install([target])
       fs.writeFileSync(path.join(artifact, `install-${i}.json`), JSON.stringify(result, null, 2))
@@ -152,6 +180,7 @@ test('the shared install HTTP endpoint installs Hermit and leaves the slot stopp
       const record = JSON.parse(fs.readFileSync(path.join(project, 'vms/vm-sim-01.json')))
       check(`install_${i}_stopped`, record.status === 'stopped' && record.runtime.stopped && record.schedule_off)
       check(`install_${i}_binding`, record.dataplane === 'hermit' && record.kernel_package.version === '0.1.0-ui-e2e')
+      check(`install_${i}_removes_retired_version`, !Object.hasOwn(record, 'crag_kernel_version'))
       check(`install_${i}_legacy_capacity`, record.kernel_package.native_session_pool !== true)
       check(`install_${i}_credentials`, JSON.stringify(record.claude) === JSON.stringify(vm.claude))
       check(
