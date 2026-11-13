@@ -395,7 +395,7 @@ function dumpSessionEnvelope(envelope) {
     const rec = {
       ts: new Date().toISOString(),
       hop: 'go-worker-envelope',
-      note: 'This is the JSON body+headers the slot worker POSTs to api.anthropic.com/v1/messages. Authorization is attached by the worker from OAuth and is not in this envelope.',
+      note: 'This is the slot request envelope, not an observation of the provider HTTP wire. Native Hermit builds its provider request with bundled Claude Code. Credentials are attached inside the slot.',
       stream: envelope.stream,
       delivery_mode: envelope.delivery_mode,
       headers,
@@ -429,6 +429,13 @@ export function prepareWorkerPayload({
     credentialMode: credMode,
     want1m: want1m === true,
   })
+  if (exec?.vm?.dataplane === 'hermit') {
+    // Bundled Claude Code owns its implementation identity. Keep protocol
+    // controls and session correlation, but do not declare another CLI/SDK.
+    for (const name of Object.keys(headers)) {
+      if (/^(user-agent|x-app|x-stainless-.*)$/i.test(name)) delete headers[name]
+    }
+  }
   const displayed =
     requestContext?.purpose === 'auto_mode_classifier' || repaired
       ? body
