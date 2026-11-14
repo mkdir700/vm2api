@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.085 — 2026-11-14
+
+- 修复原生 Messages 请求因本地没有思考块来源记录而被错误拒绝的问题。未知来源、旧版记录、账号归属不同和来源记录存储故障不再触发本地签名拒绝。
+- 仅校验思考块字段结构。HTTP hop、cli-hop 和 native_server 原样保留结构合法的思考块及签名，由上游决定是否接受。
+- 保留上游签名错误直接返回的行为，不自动改写历史、重试或切换账号。移除旧签名修复控件并更新协议说明。
+- 通过 32 项真实 HTTP 网关与模拟上游检查，包含流式和非流式请求、来源存储故障、各出站路径、格式错误与上游签名拒绝。
+
+相对 1.4.083 不新增数据库迁移。本版本不包含未发布的审查功能及其迁移。真实上游验签结果仍取决于账号、模型和会话上下文。
+
 ## 1.4.083 — 2026-11-13
 
 - Allow unrelated settings saves when historical Crag fields remain in the routing configuration. Preserve retired selections and support repeated saves from older clients.
