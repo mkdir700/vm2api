@@ -1,4 +1,5 @@
 import { CircleAlert } from 'lucide-react'
+import { createPortal } from 'react-dom'
 import { Button } from '@/components/ui/button'
 
 /**
@@ -20,7 +21,7 @@ export function SaveBar({
   onSave: () => void
   onDiscard: () => void
 }) {
-  return (
+  return createPortal(
     <div className='pointer-events-none fixed inset-x-0 bottom-4 z-40 flex justify-center px-4'>
       <div
         role='status'
@@ -53,6 +54,7 @@ export function SaveBar({
           </Button>
         </div>
       </div>
-    </div>
+    </div>,
+    document.body
   )
 }
