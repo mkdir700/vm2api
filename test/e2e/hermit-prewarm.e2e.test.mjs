@@ -11,6 +11,7 @@ import { installKernelPackage } from '../../src/lib/vm/kernel-packages.mjs'
 import { writeWorkerCredentialFile } from '../../src/lib/oauth/oauth-credentials.mjs'
 import { startGateway, seedVm, api, REPO_ROOT } from '../harness.mjs'
 
+// Cache failure inventory: docs/operations/native-system-cache-e2e.md.
 // 失败方式见 ADR 0071：能力门控失效、预热提前发送模型请求、领取或工具续接
 // 使用不同 owner、阶段计时丢失、控制面退出后残留进程。只模拟 Docker 执行边界。
 test('HTTP controller uses real Hermit prewarm and preserves native tool ownership', {
@@ -60,7 +61,13 @@ test('HTTP controller uses real Hermit prewarm and preserves native tool ownersh
           model: body.model,
           content: [],
           stop_reason: null,
-          usage: { input_tokens: 10, output_tokens: 1 },
+          usage: {
+            input_tokens: 10,
+            output_tokens: 1,
+            cache_read_input_tokens: captures.length === 1 ? 0 : 4096,
+            cache_creation_input_tokens: 512,
+            cache_creation: { ephemeral_1h_input_tokens: 512, ephemeral_5m_input_tokens: 0 },
+          },
         },
       },
       { type: 'content_block_start', index: 0, content_block: block },
@@ -116,6 +123,8 @@ test('HTTP controller uses real Hermit prewarm and preserves native tool ownersh
     writeWorkerCredentialFile(path.join(project, 'vms/vm-hermit/cli-home'), { type: 'apikey', api_key: key })
     const routing = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'src/config/routing.json')))
     routing.compatibility.official_cc_passthrough = true
+    routing.compatibility.persona_preset = 'native_server'
+    routing.compatibility.cache_ttl = '1h'
     routing.kernel_watchdog = { enabled: false }
     routing.credential_refresh = { enabled: false }
     routing.inference = { ...routing.inference, session_slots: 2, health_ttl_ms: 0 }
@@ -188,13 +197,14 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     nativeRoot = config.session.root.replace('/run/kin', run)
     check('capability_sets_private_flag', config.session_prewarm === true && config.session_capacity === 2)
     const initial = [{ role: 'user', content: 'PREWARM_INTEGRATION' }]
-    const request = (messages) =>
+    const request = (messages, { stream = false, system = 'SYNTHETIC_FIXED_CACHE_PREFIX' } = {}) =>
       api(gw, 'POST', '/v1/messages', {
         headers: { 'x-claude-code-session-id': '10101010-1010-4010-8010-101010101010' },
         body: {
           model: 'claude-sonnet-4-6',
           max_tokens: 128,
-          stream: false,
+          stream,
+          system,
           metadata: {
             user_id: JSON.stringify({
               device_id: 'prewarm-device',
@@ -209,11 +219,13 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
     save('first.json', first.json)
     check('real_cli_returns_external_tool', first.status === 200 && first.json.stop_reason === 'tool_use')
     const use = first.json.content.find((block) => block.type === 'tool_use')
-    const second = await request([
+    const continued = [
       ...initial,
       { role: 'assistant', content: first.json.content },
       { role: 'user', content: [{ type: 'tool_result', tool_use_id: use.id, content: 'EXTERNAL_RECEIPT' }] },
-    ])
+      { role: 'system', content: 'SYNTHETIC_PER_TURN_BUDGET_9000' },
+    ]
+    const second = await request(continued)
     save('second.json', second.json)
     check('real_cli_continues_tool_result', second.status === 200 && second.json.stop_reason === 'end_turn')
     state = await snapshot()
@@ -229,6 +241,75 @@ os.execv(binary,[binary,'--mode','vm2api-slot','--config',str(translated)])
       state.requests.every((r) => r.upstream_timing?.first_protocol_ms != null && r.timings_ms?.pool_wait != null),
     )
     check('exact_provider_count', captures.length === 2)
+    check(
+      'assembled_cache_usage_preserved',
+      second.json.usage.cache_read_input_tokens === 4096 && second.json.usage.cache_creation_input_tokens === 512,
+    )
+    const clean = (value) =>
+      JSON.parse(JSON.stringify(value, (key, item) => (key === 'cache_control' ? undefined : item)))
+    const fixedSystem = JSON.stringify(clean(captures[0].system))
+    const fixedTools = JSON.stringify(clean(captures[0].tools))
+    let history = [...continued, { role: 'assistant', content: second.json.content }]
+    for (let round = 2; round <= 5; round++) {
+      history.push(
+        { role: 'user', content: `SYNTHETIC_CONTINUE_${round}` },
+        { role: 'system', content: `SYNTHETIC_PER_TURN_BUDGET_${9000 - round}` },
+      )
+      const reply = await request(history, { stream: true })
+      check(`stream_${round}_completed`, reply.status === 200)
+      const events = reply.text
+        .split('\n')
+        .filter((line) => line.startsWith('data:'))
+        .map((line) => JSON.parse(line.slice(5)))
+      const start = events.find((event) => event.type === 'message_start')
+      check(
+        `stream_${round}_cache_usage`,
+        start?.message?.usage?.cache_read_input_tokens === 4096 &&
+          start?.message?.usage?.cache_creation_input_tokens === 512,
+      )
+      const content = events
+        .filter((event) => event.type === 'content_block_delta' && event.delta?.type === 'text_delta')
+        .map((event) => event.delta.text)
+        .join('')
+      history.push({ role: 'assistant', content: [{ type: 'text', text: content }] })
+    }
+    state = await snapshot()
+    check(
+      'all_append_only_turns_reuse_owner',
+      state.requests.length === 6 &&
+        new Set(state.requests.map((row) => row.native_owner)).size === 1 &&
+        state.requests.slice(1).every((row) => row.selection === 'owner_reused'),
+    )
+    for (let i = 1; i < captures.length; i++) {
+      check(`provider_${i}_fixed_system`, JSON.stringify(clean(captures[i].system)) === fixedSystem)
+      check(`provider_${i}_fixed_tools`, JSON.stringify(clean(captures[i].tools)) === fixedTools)
+      check(
+        `provider_${i}_retains_history`,
+        JSON.stringify(clean(captures[i].messages.slice(0, captures[i - 1].messages.length))) ===
+          JSON.stringify(clean(captures[i - 1].messages)),
+      )
+    }
+    check(
+      'provider_ttl_1h',
+      captures.every((body) => JSON.stringify(body).includes('"ttl":"1h"')),
+    )
+    const negative = await request([...history, { role: 'user', content: 'SYNTHETIC_CHANGED_PREFIX' }], {
+      system: 'SYNTHETIC_REPLACED_CACHE_PREFIX',
+    })
+    check('changed_system_completes', negative.status === 200)
+    state = await snapshot()
+    check(
+      'changed_system_replaces_owner',
+      state.requests.at(-1).selection === 'context_replacement' &&
+        state.requests.at(-1).native_owner !== state.requests[0].native_owner,
+    )
+    check('negative_control_changes_provider_system', JSON.stringify(clean(captures.at(-1).system)) !== fixedSystem)
+    save('cache-contract.json', {
+      simulated_usage_only: true,
+      real_provider_cache: 'NOT RUN',
+      calls: captures.length,
+      owners: state.requests.map((row) => row.native_owner),
+    })
     passed = true
   } finally {
     try {

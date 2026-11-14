@@ -19,7 +19,10 @@
     "fetch:payload": "node scripts/fetch-payload.mjs",
     "test:web": "pnpm -C web test",
     "format": "biome format --write && gofmt -w worker && pnpm -C web format",
-    "format:check": "biome format && node scripts/check-gofmt.mjs && pnpm -C web format:check"
+    "format:check": "biome format && node scripts/check-gofmt.mjs && pnpm -C web format:check",
+    "test:cache": "node --test test/e2e/native-system-cache.e2e.test.mjs test/e2e/native-server-environment.e2e.test.mjs test/e2e/session-cache.e2e.test.mjs test/e2e/compaction-cache.e2e.test.mjs",
+    "test:cache:native": "node scripts/test-cache-native.mjs",
+    "test:cache:live": "python3 test/e2e/repeated-request-native.e2e.py --growing-context --live --model claude-sonnet-4-6"
   },
   "dependencies": {
     "@opentelemetry/api": "1.10.0",
