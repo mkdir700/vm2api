@@ -178,7 +178,6 @@ import { ensureWorkerCredential } from '../transport/go-worker-client.mjs'
 import { formatPoolSelectionSummary } from '../pool/pool-scheduler.mjs'
 import { extraHeadersFromLimitError, isAccountQuotaExhausted } from '../pool/quota-window.mjs'
 import {
-  filterThinkingForAccount,
   validateThinkingHistory,
   recordThinkingOwners,
   thinkingOwners as defaultThinkingOwners,
@@ -711,11 +710,11 @@ export function createHandleProtocol(deps) {
     logBag.session_id = sessionIdForLog(extractCallerSession({ inbound, headers: req.headers }))
     logBag.reasoning_effort = reasoningEffortOf(inbound)
 
-    // Check raw Messages history before any probe, sanitizer or persona rewrite
-    // can remove invalid thinking. API-backed requests retain upstream validation.
+    // Validate raw Messages structure before normalization. Local provenance is
+    // diagnostic only; upstream validation decides whether signed history is valid.
     if (protocol === 'anthropic.messages' && resolveInferenceBackend(req) !== 'api') {
       try {
-        validateThinkingHistory(inbound, { store: thinkingOwnerStore })
+        validateThinkingHistory(inbound)
       } catch (error) {
         if (!error.body?.error) throw error
         stats.errors++
@@ -1631,16 +1630,6 @@ export function createHandleProtocol(deps) {
         deliveryMode,
         signal: clientAbort.signal,
         applyAttempt: async (body, selected, extra = {}) => {
-          // Ownership must match this account; never repair signed history into text.
-          const owned = filterThinkingForAccount(body, selected.accountId, thinkingOwnerStore)
-          body = owned.body
-          if (owned.kept || owned.converted || owned.dropped) {
-            const { kept, converted, dropped, unknown } = owned
-            logBag.hop_meta = {
-              ...logBag.hop_meta,
-              thinking_owner: { account_id: selected.accountId, kept, converted, dropped, unknown },
-            }
-          }
           if (claudeScopePending()) {
             const blocked = await applyProtocolIntercept({
               req,
@@ -1692,13 +1681,9 @@ export function createHandleProtocol(deps) {
           }
           const entrypointNow = ccEntrypointFromRouting(routingNow)
           const repaired = extra.repaired === true
-          const preserveThinkingBlocks =
-            !repaired &&
-            routingNow?.failover?.signature_repair !== true &&
-            (!keptAccount || keptAccount === selected.accountId)
-          // cli-node receives the cleaned body after this boundary. Keep every
-          // thinking block on the first hop and only let a repaired retry strip it.
-          const preserveCliHopThinkingBlocks = !repaired
+          // Neither account changes nor legacy repair settings authorize rewriting
+          // opaque thinking history. Let the upstream validate the original blocks.
+          const preserveThinkingBlocks = true
           const resolvedPersona = resolveSlotPersonaPreset(selected.vm, routingNow)
           const nativeServer = resolvedPersona === 'native_server'
           const cliHop = !nativeServer && resolveOfficialCcInference(selected.vm, routingNow) === 'cli-hop'
@@ -1730,8 +1715,6 @@ export function createHandleProtocol(deps) {
                 identity,
                 entrypoint: entrypointNow,
               })
-              // The re-render starts from the raw caller body; re-apply this account's thinking ownership to it.
-              hopBody = filterThinkingForAccount(hopBody, selected.accountId, thinkingOwnerStore).body
               for (const policy of extra.repairs || []) hopBody = repairAnthropicRequest(hopBody, policy)
             }
             hopBody = prepareCliHopBody(hopBody, {
@@ -1740,7 +1723,7 @@ export function createHandleProtocol(deps) {
               cacheTtl: requestedCacheTtl,
               requestContext,
               preserveSystem: false,
-              preserveThinkingBlocks: preserveCliHopThinkingBlocks,
+              preserveThinkingBlocks,
               preserveCallerEnvironment,
               autoCompactWindow: ctx.autoCompactWindow,
               routing: routingNow,

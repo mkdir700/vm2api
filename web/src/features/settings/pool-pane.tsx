@@ -60,7 +60,6 @@ const FAILOVER_DEFAULTS = {
   total_retry_deadline_ms: 120000,
   oauth_401_cooldown_ms: 120000,
   same_account_retry_max_hop_ms: 10000,
-  signature_repair: false,
   stream_idle_timeout_ms: 180000,
   eager_tool_streaming: true,
 }
@@ -522,7 +521,6 @@ export function PoolPane({
         oauth_401_cooldown_ms: failoverDraft.oauth_401_cooldown_ms,
         same_account_retry_max_hop_ms:
           failoverDraft.same_account_retry_max_hop_ms,
-        signature_repair: failoverDraft.signature_repair,
         delivery_mode: failoverDraft.delivery_mode,
         stream_idle_timeout_ms: failoverDraft.stream_idle_timeout_ms,
         eager_tool_streaming: failoverDraft.eager_tool_streaming !== false,
@@ -1011,23 +1009,6 @@ export function PoolPane({
                     updateDraft('failover', { delivery_mode: value })
                   }
                 />
-                <div className='flex items-center justify-between gap-4 rounded-md border px-3 py-2.5'>
-                  <div>
-                    <Label htmlFor='failover-signature-repair'>
-                      启用签名修复
-                    </Label>
-                    <p className='text-xs leading-5 text-muted-foreground'>
-                      仅对可修复的签名错误执行一次修复跳转。
-                    </p>
-                  </div>
-                  <Switch
-                    id='failover-signature-repair'
-                    checked={failoverDraft.signature_repair === true}
-                    onCheckedChange={(value) =>
-                      updateDraft('failover', { signature_repair: value })
-                    }
-                  />
-                </div>
               </>
             ) : null}
             {open === 'circuit' ? (

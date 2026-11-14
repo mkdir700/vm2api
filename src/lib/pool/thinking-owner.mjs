@@ -1,6 +1,6 @@
 /**
- * Record the exact thinking blocks returned by each account. Unknown,
- * modified, or differently owned blocks must never be repaired into text.
+ * Record thinking provenance for diagnostics. Local records do not establish
+ * signature validity; only the upstream can validate opaque signed history.
  */
 import crypto from 'node:crypto'
 import { getDb } from '../db/database.mjs'
@@ -109,52 +109,39 @@ function thinkingBlocks(body) {
   return blocks
 }
 
-function signatureError(param, unavailable = false) {
-  const code = unavailable ? ErrorCode.THINKING_SIGNATURE_STORE_UNAVAILABLE : ErrorCode.INVALID_THINKING_SIGNATURE
-  const message = unavailable
-    ? '思考签名来源记录不可用。请稍后重试。'
-    : '思考签名无效或来源无法确认。请使用当前账号返回的完整、未修改的思考块。'
+function thinkingFieldError(param, message) {
   return Object.assign(
     new Error(message),
     makeError({
-      type: unavailable ? ErrorType.API : ErrorType.INVALID_REQUEST,
-      code,
+      type: ErrorType.INVALID_REQUEST,
+      code: ErrorCode.INVALID_FIELD,
       message,
-      status: unavailable ? 503 : 400,
+      status: 400,
       param,
-      details: { retryable: unavailable },
+      details: { retryable: false },
     }),
-    { code },
   )
 }
 
-/** Validate caller input before normalization, then check ownership per attempt. */
-export function validateThinkingHistory(body, { accountId = null, store = thinkingOwners } = {}) {
+/** Validate structure only. Opaque signatures are verified by the upstream. */
+export function validateThinkingHistory(body) {
   const blocks = thinkingBlocks(body)
-  if (!blocks.length) return 0
-  const keys = blocks.map(({ block, role, param }) => {
-    const key = role === 'assistant' ? thinkingSignatureKey(block) : null
-    if (!key) throw signatureError(param)
-    return key
-  })
-  let owners
-  try {
-    owners = store.ownersOf([...new Set(keys)])
-  } catch {
-    throw signatureError(blocks[0].param, true)
-  }
-  if (!owners) throw signatureError(blocks[0].param, true)
-  for (const [index, key] of keys.entries()) {
-    const owner = owners.get(key)
-    if (!owner || (accountId != null && owner !== String(accountId))) throw signatureError(blocks[index].param)
+  for (const { block, role, param } of blocks) {
+    if (role !== 'assistant') {
+      throw thinkingFieldError(param.replace(/\.content\.\d+$/, '.role'), '思考块只能出现在 assistant 消息中。')
+    }
+    if (!['thinking', 'redacted_thinking'].includes(block.type)) {
+      throw thinkingFieldError(`${param}.type`, '思考块的 type 必须是 thinking 或 redacted_thinking。')
+    }
+    if (block.type === 'thinking' && typeof block.thinking !== 'string') {
+      throw thinkingFieldError(`${param}.thinking`, '思考块的 thinking 必须是字符串，可以为空。')
+    }
+    const field = block.type === 'thinking' ? 'signature' : 'data'
+    if (typeof block[field] !== 'string' || !block[field].trim()) {
+      throw thinkingFieldError(`${param}.${field}`, `思考块的 ${field} 必须是非空字符串。`)
+    }
   }
   return blocks.length
-}
-
-/** Keep verified thinking unchanged; fail closed instead of converting it. */
-export function filterThinkingForAccount(body, accountId, store = thinkingOwners) {
-  const kept = validateThinkingHistory(body, { accountId, store })
-  return { body, kept, converted: 0, dropped: 0, unknown: 0 }
 }
 
 /** Bind the thinking blocks of a served response to the account that produced them. */

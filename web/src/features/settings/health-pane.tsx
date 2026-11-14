@@ -78,10 +78,8 @@ function DeferredIntInput({
 export function HealthPane(props: HealthPaneProps) {
   const {
     title,
-    failover,
     healthProbe,
     compatibility,
-    onFailoverChange,
     onHealthProbeChange,
     onCompatibilityChange,
   } = props
@@ -216,7 +214,7 @@ export function HealthPane(props: HealthPaneProps) {
         onProbeChange={setProbe}
         onRealChange={setReal}
       />
-      <SignatureRepairCard failover={failover} onChange={onFailoverChange} />
+      <ThinkingSignatureCard />
     </>
   )
 }
@@ -343,41 +341,15 @@ function SnapshotLine({
   )
 }
 
-function SignatureRepairCard({
-  failover,
-  onChange,
-}: {
-  failover: Obj
-  onChange: (next: Obj) => void
-}) {
-  // 默认值在 gateway HEAD 与工作区之间相反（!== false vs === true），
-  // 所以不硬编码默认态，严格按 GET /routing 的实际值回显。
-  const enabled = failover.signature_repair === true
+function ThinkingSignatureCard() {
   return (
     <Card>
       <CardHeader>
-        <CardTitle>签名修复</CardTitle>
+        <CardTitle>思考签名校验</CardTitle>
       </CardHeader>
-      <CardContent className='flex items-start justify-between gap-4'>
-        <div className='space-y-1 text-sm text-muted-foreground'>
-          <p>
-            上游因思考签名返回 400 时，剥掉思考历史后重试一次，客户端最终看到
-            200。
-          </p>
-          <p>
-            关闭则保留同账号的 thinking / signature
-            块（缺少字段时补齐空字段），把 400 原样透传；切账号的清理和 cli-node
-            自身行为不受此开关改变。 其它修复（搜索 / 预填 / 工具配对 / schema /
-            自适应）不受此开关影响。
-          </p>
-        </div>
-        <Switch
-          checked={enabled}
-          onCheckedChange={(checked) =>
-            onChange({ ...failover, signature_repair: checked })
-          }
-          aria-label='签名修复'
-        />
+      <CardContent className='space-y-1 text-sm text-muted-foreground'>
+        <p>思考块原样发送给上游。本地来源记录不作为签名有效性的判断依据。</p>
+        <p>上游返回签名错误时直接结束请求，不自动删除思考历史或重试。</p>
       </CardContent>
     </Card>
   )

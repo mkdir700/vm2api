@@ -177,10 +177,7 @@ export function alignSamplingWithThinking(body = {}) {
  * signed chain, including later valid thinking and redacted_thinking. Turns
  * left with no content are dropped. redacted_thinking stays when it carries
  * data on 5.5, otherwise when its signature is usable. The preserve path
- * (cli-hop first hop, default HTTP hop) skips the chain rule and keeps a
- * signed block as-is, empty text and redacted_thinking included. A thinking
- * block without a usable signature (missing, empty, shorter than 24, dummy)
- * is dropped instead of forwarded with an empty signature.
+ * skips all history filtering and delegates signature validation to upstream.
  */
 export function stripInvalidThinkingBlocks(body = {}, { preserveThinkingBlocks = false } = {}) {
   if (!Array.isArray(body.messages)) return body
@@ -197,9 +194,10 @@ export function stripInvalidThinkingBlocks(body = {}, { preserveThinkingBlocks =
       const type = block?.type
       if (type === 'thinking' || type === 'redacted_thinking') {
         if ((keepSigned || preserveThinkingBlocks) && message.role === 'assistant') {
-          // Omitted thinking keeps empty text; redacted thinking keeps encrypted data.
+          // Native Messages ingress already checks structure. Other callers of
+          // this sanitizer may still contain unsigned blocks; do not invent a signature.
           if (preserveThinkingBlocks) {
-            if (type === 'redacted_thinking' || hasUsableThinkingSignature(block.signature)) {
+            if (type === 'redacted_thinking' || (typeof block.signature === 'string' && block.signature.trim())) {
               content.push(block)
             } else {
               changed = true
