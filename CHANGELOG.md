@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.4.087 — 2026-11-15
+
+- Add Perplexity moderation and independent configurations for Jev, Perplexity, Laya, and ModernBERT. Preserve the selected model, thresholds, provider attempts, token usage, and historical prices in separate moderation records.
+- Add a moderation records page with provider, model, and outcome filters, cursor pagination, summaries, and call details. Move moderation controls into Settings and keep the save bar visible while editing.
+- Add persistent deployment drain and resume transactions. Preserve scheduling holds across process restarts, reject new inference during maintenance, and require kernel drain evidence before deployment can proceed.
+- Expand HTTP cache regression coverage across growing system context, model changes, transports, session inspection, and compaction. Align Hermit prewarm acceptance with the complete CLI readiness phase.
+
+Upgrade applies migration `057_moderation_reviews.sql`. Existing release-related HTTP and lifecycle end-to-end checks pass (11 passed, one real-Hermit check skipped); the frontend production build passes. Full CI is not green: the source revision has failing frontend unit assertions. No real paid Perplexity request or real-provider cache acceptance was run for this release. Automatic production rollout is disabled in this repository; publication does not confirm a production deployment.
+
 ## 1.4.086 — 2026-11-14
 
 - 保留 Hermit 原生恢复冲突的错误码。恢复结果不明或工具投递状态不明时返回 409。
