@@ -128,15 +128,31 @@ export function mockCrsPayload(options = {}) {
       },
     }
   }
-  if (['native_preparation_failed', 'native_control_unavailable', 'native_generation_failed'].includes(scenario)) {
+  if (
+    [
+      'native_preparation_failed',
+      'native_control_unavailable',
+      'native_generation_failed',
+      'native_preparation_outcome_unknown',
+      'native_resume_outcome_unknown',
+      'native_tool_delivery_unknown',
+    ].includes(scenario)
+  ) {
     return {
       ok: false,
-      status: 502,
+      status: ['native_resume_outcome_unknown', 'native_tool_delivery_unknown'].includes(scenario) ? 409 : 502,
       via: 'go-worker',
       transportError: false,
       body: {
         type: 'error',
-        error: { type: 'api_error', code: scenario, message: scenario, details: { retryable: false } },
+        error: {
+          type: ['native_resume_outcome_unknown', 'native_tool_delivery_unknown'].includes(scenario)
+            ? 'invalid_request_error'
+            : 'api_error',
+          code: scenario,
+          message: scenario,
+          details: { retryable: false },
+        },
       },
       headers: {},
     }

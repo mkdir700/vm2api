@@ -75,6 +75,9 @@ export const ErrorCode = {
   KERNEL_UNAVAILABLE: 'kernel_unavailable',
   KERNEL_ERROR: 'kernel_error',
   NATIVE_PREPARATION_FAILED: 'native_preparation_failed',
+  NATIVE_PREPARATION_OUTCOME_UNKNOWN: 'native_preparation_outcome_unknown',
+  NATIVE_RESUME_OUTCOME_UNKNOWN: 'native_resume_outcome_unknown',
+  NATIVE_TOOL_DELIVERY_UNKNOWN: 'native_tool_delivery_unknown',
   NATIVE_CONTROL_UNAVAILABLE: 'native_control_unavailable',
   NATIVE_GENERATION_FAILED: 'native_generation_failed',
   NATIVE_OPERATION_UNSUPPORTED: 'native_operation_unsupported',
@@ -118,6 +121,9 @@ export const KERNEL_FAILURE_STATUS = Object.freeze({
   [ErrorCode.KERNEL_ERROR]: 502,
   [ErrorCode.KERNEL_UNAVAILABLE]: 503,
   [ErrorCode.NATIVE_PREPARATION_FAILED]: 502,
+  [ErrorCode.NATIVE_PREPARATION_OUTCOME_UNKNOWN]: 502,
+  [ErrorCode.NATIVE_RESUME_OUTCOME_UNKNOWN]: 409,
+  [ErrorCode.NATIVE_TOOL_DELIVERY_UNKNOWN]: 409,
   [ErrorCode.NATIVE_CONTROL_UNAVAILABLE]: 502,
   [ErrorCode.NATIVE_GENERATION_FAILED]: 502,
   [ErrorCode.NATIVE_OPERATION_UNSUPPORTED]: 501,
@@ -439,6 +445,15 @@ export function mapUpstreamError(status, body, headers = {}) {
     })
   }
   if (['bound_slot_unavailable', 'request_slot_store_unavailable'].includes(inboundCode)) return { status: 503, body }
+  if ([ErrorCode.NATIVE_RESUME_OUTCOME_UNKNOWN, ErrorCode.NATIVE_TOOL_DELIVERY_UNKNOWN].includes(inboundCode)) {
+    return makeError({
+      type: ErrorType.API,
+      code: inboundCode,
+      message: body.error.message,
+      status: 409,
+      details: { upstream_status: status, retryable: false },
+    })
+  }
   if (inboundCode === ErrorCode.COMPLETED_REQUEST_DUPLICATE) {
     return makeError({
       type: ErrorType.INVALID_REQUEST,

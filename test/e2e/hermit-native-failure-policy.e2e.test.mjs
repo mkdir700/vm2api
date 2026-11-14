@@ -14,6 +14,9 @@ test('native session failures stop without account hopping or provider blame', a
   try {
     for (const [code, status] of [
       ['native_preparation_failed', 502],
+      ['native_preparation_outcome_unknown', 502],
+      ['native_resume_outcome_unknown', 409],
+      ['native_tool_delivery_unknown', 409],
       ['native_control_unavailable', 502],
       ['native_generation_failed', 502],
       ['native_operation_unsupported', 501],
