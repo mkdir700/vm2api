@@ -231,6 +231,7 @@ export function createKernelWatchdog({
   }
 
   async function checkVm(vm, routing) {
+    if (vm.schedule_hold?.detail?.deployment === true) return
     const supported = kernelDataplaneStatus(vm, routing)
     if (!supported.ok) return // An explicit supported-kernel installation is required.
     const probed = probeVm(vm)

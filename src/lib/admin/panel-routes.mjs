@@ -1,4 +1,5 @@
 import { ModerationReviewsRepo } from '../db/repos/moderation-reviews-repo.mjs'
+import { DeploymentLifecycle, deploymentActive } from '../vm/deployment-lifecycle.mjs'
 import { runKernelTransition, publicKernelTransition } from '../vm/kernel-transition.mjs'
 import { resolveHermitPackage } from '../vm/hermit-runtime.mjs'
 import { installKernelPackage, getKernelPackage, MAX_KERNEL_PACKAGE_BYTES } from '../vm/kernel-packages.mjs'
@@ -638,6 +639,7 @@ function slotProxyHint(px = {}, label = null) {
 }
 
 export function createPanelHandler(ctx) {
+  const deployment = new DeploymentLifecycle(ctx)
   // A checkout can change under a live Node process; report its boot version.
   const runningVersion = readLocalVersion(ctx.cfg?.paths?.project)
   const json = (...args) => ctx.json(...args)
@@ -1533,6 +1535,32 @@ export function createPanelHandler(ctx) {
             status: 403,
           }).body,
         )
+      }
+      if (p === '/api/panel/deployment') {
+        if (panelIdentity(req).role !== 'admin')
+          return json(res, 403, { ok: false, error: { code: 'admin_required', message: '需要管理员权限' } })
+        if (req.method !== 'POST') return json(res, 405, { ok: false })
+        try {
+          const body = await readBody(req, 8192)
+          const result = await serializeKernelChange(() => deployment.run(body?.action, body))
+          return json(res, 200, panel.ok(result))
+        } catch (error) {
+          return json(res, 409, {
+            ok: false,
+            error: { code: error.code || 'deployment_failed', message: '发布阶段未完成，保持当前调度状态' },
+          })
+        }
+      }
+      if (!['GET', 'HEAD', 'OPTIONS'].includes(req.method) && deploymentActive(cfg.paths.project)) {
+        // 只允许发布事务内的固定包上传与内核切换。其他写操作不能改变冻结范围。
+        const owner = deployment.read()
+        const permitted =
+          req.method === 'POST' &&
+          req.headers['x-vm2api-deployment'] === owner.id &&
+          ['updating', 'ready'].includes(owner.state) &&
+          (p === '/api/panel/kernel-packages' || /^\/api\/panel\/vms\/[^/]+\/kernel-transition$/.test(p))
+        if (!permitted)
+          return json(res, 409, { ok: false, error: { code: 'deployment_active', message: '发布事务正在控制实例' } })
       }
       if (
         denyIfUserMissesVm(req, res, {

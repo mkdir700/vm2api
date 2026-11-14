@@ -456,7 +456,8 @@ export async function powerOnSlot({
       else if (by === 'recover_ok') applyClearUnschedulable(record, { by })
       else if (by === 'start' && record.unschedulable?.reason === 'runtime_start_failed') {
         applyClearUnschedulable(record, { by: 'operator' })
-      } else if (by !== 'migration') applyClearUnschedulable(record, { by: 'credential_present' })
+      } else if (by !== 'migration' && by !== 'deployment')
+        applyClearUnschedulable(record, { by: 'credential_present' })
       deriveScheduleFields(record)
       const next = { status: 'running' }
       if (runtime) {
@@ -637,7 +638,7 @@ export async function reviveDownSlots({
 }) {
   const revived = []
   for (const vm of vms) {
-    if (vm?.status !== 'running') continue
+    if (vm?.status !== 'running' || vm.schedule_hold?.detail?.deployment === true) continue
     if (vm.migration_pending || ['running', 'needs_attention'].includes(vm.slot_migration?.status)) continue
     const nodeId = vmNodeId(vm)
     if (nodeId && !linkReady(nodeId)) continue

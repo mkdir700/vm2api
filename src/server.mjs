@@ -1,4 +1,5 @@
 import { setupObservability } from './lib/observability/tracing.mjs'
+import { deploymentActive } from './lib/vm/deployment-lifecycle.mjs'
 import { RolloutGroup } from './lib/rollout/group.mjs'
 import { rustKernelHealth } from './lib/transport/rust-kernel-client.mjs'
 import { slotExec } from './lib/vm/slot-runtime.mjs'
@@ -1090,7 +1091,9 @@ cliNodeGuard = createCliNodeGuard({
   liveTokens: () => slotShell.liveShellTokens?.() || [],
 })
 
+const deploymentRequests = new Set()
 const handlePanel = createPanelHandler({
+  deploymentInflight: () => deploymentRequests.size,
   json,
   writeSSEHeaders,
   readBody,
@@ -1283,6 +1286,19 @@ const server = http.createServer(async (req, res) => {
 
     if (isTelemetryPath(p)) {
       return json(res, 200, telemetryInterceptResponse(p))
+    }
+
+    if (
+      deploymentActive(cfg.paths.project) &&
+      (p.startsWith('/v1/') || p === '/messages' || p === '/chat/completions' || p === '/responses')
+    ) {
+      return json(res, 503, { error: { type: 'overloaded_error', code: 'deployment_active', message: '实例正在维护' } })
+    }
+    if (p.startsWith('/v1/') || p === '/messages' || p === '/chat/completions' || p === '/responses') {
+      deploymentRequests.add(res)
+      const finished = () => deploymentRequests.delete(res)
+      res.once('finish', finished)
+      res.once('close', finished)
     }
 
     if (

@@ -74,6 +74,7 @@ export async function restoreHermitKernels(projectRoot, vms) {
       .filter(
         (vm) =>
           vm.status === 'running' &&
+          vm.schedule_hold?.detail?.deployment !== true &&
           vm.dataplane === 'hermit' &&
           !vm.node_id &&
           !vm.migration_pending &&
